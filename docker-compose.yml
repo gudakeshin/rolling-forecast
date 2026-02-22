@@ -1,0 +1,74 @@
+# ──────────────────────────────────────────────────────────
+# Rolling Forecast — Docker Compose
+# ──────────────────────────────────────────────────────────
+#
+# Usage:
+#   Development:  docker compose up --build
+#   Production:   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#   Logs:         docker compose logs -f backend
+#   Stop:         docker compose down
+#
+# ──────────────────────────────────────────────────────────
+
+services:
+  # ── Backend (FastAPI) ─────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: forecast-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      - APP_ENV=development
+      - DATABASE_URL=sqlite:///./rolling_forecast.db
+    volumes:
+      # Mount source for hot-reload in dev
+      - ./backend/app:/app/app
+      - ./backend/skills:/app/skills
+      - ./backend/seed_data:/app/seed_data
+      # Persist database and uploads outside container
+      - forecast-db:/app/data
+      - forecast-uploads:/app/uploads
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+      --reload-dir app
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  # ── Frontend (Vite dev server) ────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: builder
+    container_name: forecast-frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/index.html:/app/index.html
+    command: npx vite --host 0.0.0.0 --port 5173
+    environment:
+      - NODE_ENV=development
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  forecast-db:
+    driver: local
+  forecast-uploads:
+    driver: local

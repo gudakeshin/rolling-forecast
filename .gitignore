@@ -1,0 +1,56 @@
+# Environment & secrets
+.env
+*.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Uploads & data
+backend/uploads/
+backend/data/
+
+# ChromaDB vector store
+backend/data/chroma/
+
+# Node
+node_modules/
+frontend/node_modules/
+
+# Build output
+frontend/dist/
+frontend/build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+
+# OS
+Thumbs.db
+
+# Cursor
+.cursor/

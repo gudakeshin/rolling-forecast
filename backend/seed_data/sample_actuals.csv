@@ -1,0 +1,1189 @@
+account_code,account_name,category,business_unit,geography,product_line,period,value,currency
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2023-01,3194852.35,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2023-01,1176006.78,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2023-01,467214.4,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2023-01,1635252.31,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2023-01,791263.24,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2023-01,500517.2,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2023-01,551267.97,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2023-01,394432.1,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2023-01,241522.62,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2023-01,123415.03,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2023-01,88264.67,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2023-02,3237955.76,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2023-02,1343581.42,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2023-02,479721.57,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2023-02,1640977.79,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2023-02,736814.48,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2023-02,466931.36,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2023-02,572966.98,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2023-02,389571.58,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2023-02,225668.08,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2023-02,154647.01,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2023-02,89154.02,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2023-03,2977316.05,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2023-03,1279897.61,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2023-03,531104.79,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2023-03,1788702.54,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2023-03,751367.75,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2023-03,494355.98,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2023-03,586459.7,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2023-03,433895.42,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2023-03,258228.18,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2023-03,147416.2,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2023-03,48107.08,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2023-04,3508793.58,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2023-04,1378425.48,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2023-04,542209.24,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2023-04,1895768.74,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2023-04,789580.77,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2023-04,508745.21,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2023-04,587712.84,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2023-04,368487.76,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2023-04,270383.27,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2023-04,145144.39,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2023-04,109213.24,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2023-05,3267487.62,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2023-05,1343851.97,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2023-05,523100.46,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2023-05,1962251.62,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2023-05,804367.36,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2023-05,487495.15,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2023-05,636350.16,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2023-05,438128.05,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2023-05,235679.06,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2023-05,167436.86,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2023-05,102009.74,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2023-06,3035131.92,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2023-06,1264384.78,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2023-06,486406.07,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2023-06,1640560.39,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2023-06,721050.26,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2023-06,588103.83,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2023-06,614482.85,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2023-06,400095.72,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2023-06,248488.99,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2023-06,155119.19,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2023-06,103326.61,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2023-07,3106408.9,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2023-07,1302150.09,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2023-07,502425.59,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2023-07,1809097.69,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2023-07,833017.0,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2023-07,542353.43,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2023-07,697158.86,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2023-07,438574.0,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2023-07,265206.81,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2023-07,144848.67,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2023-07,109546.5,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2023-08,3173885.82,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2023-08,1424816.87,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2023-08,504820.17,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2023-08,1845230.7,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2023-08,702812.92,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2023-08,517014.62,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2023-08,498232.92,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2023-08,378035.08,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2023-08,262885.07,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2023-08,143997.58,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2023-08,96723.32,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2023-09,3462761.59,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2023-09,1372558.17,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2023-09,566221.49,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2023-09,1718027.32,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2023-09,846873.77,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2023-09,521982.25,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2023-09,665575.65,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2023-09,457072.46,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2023-09,246907.37,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2023-09,146935.25,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2023-09,106043.93,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2023-10,3470375.66,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2023-10,1454824.66,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2023-10,585431.69,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2023-10,2225754.93,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2023-10,831404.07,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2023-10,548185.53,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2023-10,677399.22,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2023-10,478850.5,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2023-10,248514.32,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2023-10,164533.4,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2023-10,97659.99,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2023-11,3225447.97,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2023-11,1393374.98,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2023-11,561935.37,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2023-11,2031952.09,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2023-11,793970.38,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2023-11,543309.14,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2023-11,616511.63,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2023-11,402107.95,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2023-11,260723.5,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2023-11,186646.0,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2023-11,120407.97,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2023-12,3819048.03,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2023-12,1325275.2,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2023-12,626486.02,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2023-12,3021381.02,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2023-12,922380.22,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2023-12,663139.21,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2023-12,778305.35,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2023-12,446146.2,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2023-12,271448.37,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2023-12,181482.57,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2023-12,116784.24,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2024-01,3177783.87,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2024-01,1265816.51,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2024-01,472021.98,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2024-01,1720947.78,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2024-01,784304.73,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2024-01,458708.12,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2024-01,705241.89,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2024-01,454776.89,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2024-01,252016.86,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2024-01,155724.27,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2024-01,97566.73,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2024-02,2965134.89,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2024-02,1221546.33,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2024-02,576592.27,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2024-02,1848050.48,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2024-02,687348.15,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2024-02,530166.81,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2024-02,691478.98,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2024-02,392083.01,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2024-02,352685.45,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2024-02,162540.57,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2024-02,107643.06,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2024-03,3375249.95,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2024-03,1350532.98,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2024-03,535067.92,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2024-03,1971584.22,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2024-03,834394.39,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2024-03,540549.41,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2024-03,694689.26,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2024-03,443920.74,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2024-03,271750.28,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2024-03,157455.74,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2024-03,110755.69,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2024-04,3828205.27,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2024-04,1318332.05,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2024-04,499611.04,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2024-04,2084118.53,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2024-04,748044.06,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2024-04,500729.8,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2024-04,619922.33,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2024-04,454854.73,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2024-04,270596.35,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2024-04,165059.23,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2024-04,113446.3,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2024-05,4022951.91,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2024-05,1441889.03,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2024-05,596834.47,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2024-05,1977902.68,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2024-05,901132.44,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2024-05,589600.1,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2024-05,652210.27,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2024-05,546312.53,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2024-05,285731.88,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2024-05,165405.52,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2024-05,104595.84,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2024-06,3557952.28,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2024-06,1231672.81,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2024-06,558254.61,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2024-06,2161207.05,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2024-06,845164.01,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2024-06,551379.71,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2024-06,661317.73,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2024-06,422831.11,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2024-06,247942.92,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2024-06,146178.32,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2024-06,110191.07,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2024-07,3394524.47,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2024-07,1378099.36,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2024-07,583694.0,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2024-07,1744463.76,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2024-07,743984.82,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2024-07,565204.42,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2024-07,615158.8,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2024-07,382655.64,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2024-07,279155.13,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2024-07,166242.13,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2024-07,102784.11,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2024-08,3108869.21,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2024-08,1089362.36,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2024-08,573556.12,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2024-08,1611970.32,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2024-08,830019.67,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2024-08,524826.93,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2024-08,650011.76,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2024-08,410826.27,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2024-08,255199.41,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2024-08,149316.0,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2024-08,117559.62,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2024-09,3423008.48,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2024-09,1379443.76,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2024-09,513517.76,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2024-09,2181919.92,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2024-09,763414.93,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2024-09,530714.76,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2024-09,642789.84,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2024-09,398515.2,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2024-09,278089.04,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2024-09,175944.61,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2024-09,102525.99,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2024-10,3820854.74,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2024-10,1484892.4,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2024-10,579565.49,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2024-10,2194389.71,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2024-10,847344.43,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2024-10,594031.75,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2024-10,789299.79,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2024-10,515953.9,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2024-10,302266.52,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2024-10,165027.0,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2024-10,110751.98,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2024-11,3986965.35,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2024-11,1471447.35,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2024-11,453462.98,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2024-11,2058504.76,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2024-11,863650.19,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2024-11,705942.18,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2024-11,777163.06,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2024-11,497149.47,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2024-11,300834.35,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2024-11,182845.4,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2024-11,121987.93,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2024-12,4034934.62,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2024-12,1573277.6,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2024-12,665126.57,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2024-12,2213359.55,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2024-12,1057257.22,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2024-12,572767.44,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2024-12,834293.96,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2024-12,530316.33,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2024-12,274280.71,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2024-12,214038.07,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2024-12,120928.11,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2025-01,3699361.71,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2025-01,1308091.83,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2025-01,481142.64,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2025-01,1927705.29,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2025-01,784824.87,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2025-01,529141.31,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2025-01,673526.29,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2025-01,417045.52,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2025-01,254358.07,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2025-01,156543.23,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2025-01,97268.36,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2025-02,5335359.44,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2025-02,1422705.82,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2025-02,574557.06,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2025-02,1872919.1,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2025-02,686559.0,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2025-02,608452.49,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2025-02,643336.06,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2025-02,454116.7,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2025-02,278756.41,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2025-02,162221.8,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2025-02,101825.87,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2025-03,3478061.13,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2025-03,1271874.66,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2025-03,539428.04,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2025-03,1827786.72,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2025-03,947589.68,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2025-03,599868.85,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2025-03,681671.9,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2025-03,424748.97,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2025-03,261988.46,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2025-03,167241.63,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2025-03,120326.06,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2025-04,4265420.95,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2025-04,1305451.85,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2025-04,601661.23,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2025-04,1933702.01,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2025-04,838667.88,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2025-04,580816.07,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2025-04,654216.38,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2025-04,455334.36,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2025-04,271037.99,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2025-04,166643.85,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2025-04,121891.61,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2025-05,3842684.69,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2025-05,1544949.39,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2025-05,559868.15,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2025-05,2136924.63,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2025-05,780319.33,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2025-05,589076.15,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2025-05,736013.08,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2025-05,415053.21,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2025-05,280155.75,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2025-05,176714.38,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2025-05,125691.12,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2025-06,3606686.65,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2025-06,1499173.05,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2025-06,636573.57,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2025-06,2105538.5,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2025-06,855009.88,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2025-06,593247.41,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2025-06,664533.9,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2025-06,465383.83,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2025-06,285961.92,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2025-06,177566.92,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2025-06,112310.79,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2025-07,3763884.57,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2025-07,1367235.67,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2025-07,597861.51,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2025-07,1927240.01,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2025-07,724659.27,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2025-07,523736.04,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2025-07,677071.82,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2025-07,503701.66,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2025-07,298107.95,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2025-07,142884.53,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2025-07,101035.43,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2025-08,3932657.1,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2025-08,1462469.5,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2025-08,649213.98,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2025-08,1897568.49,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2025-08,790276.04,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2025-08,562981.27,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2025-08,649733.97,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2025-08,480687.42,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2025-08,270088.05,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2025-08,164877.78,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2025-08,104359.09,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2025-09,4049164.68,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2025-09,1383528.22,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2025-09,608721.17,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2025-09,2342626.54,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2025-09,776909.46,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2025-09,653554.19,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2025-09,723832.87,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2025-09,435993.0,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2025-09,298065.13,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2025-09,186496.63,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2025-09,111772.97,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2025-10,4106767.13,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2025-10,1699588.23,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2025-10,589737.94,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2025-10,1992397.07,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2025-10,909359.39,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2025-10,614010.79,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2025-10,790165.73,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2025-10,483888.07,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2025-10,148337.16,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2025-10,180790.02,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2025-10,114211.45,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2025-11,3659470.11,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2025-11,1271616.76,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2025-11,652660.88,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2025-11,1974506.25,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2025-11,1016614.69,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2025-11,600920.7,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2025-11,762321.26,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2025-11,452910.07,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2025-11,340386.25,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2025-11,191874.56,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2025-11,116981.8,USD
+NO-REV-001,North America - Product Revenue,Revenue,North America,North America,All Products,2025-12,4047895.68,USD
+NO-REV-002,North America - Service Revenue,Revenue,North America,North America,All Products,2025-12,1622004.32,USD
+NO-REV-003,North America - Subscription Revenue,Revenue,North America,North America,All Products,2025-12,729014.38,USD
+NO-COGS-001,North America - Material Costs,COGS,North America,North America,All Products,2025-12,2544468.51,USD
+NO-COGS-002,North America - Labor Costs,COGS,North America,North America,All Products,2025-12,985445.58,USD
+NO-COGS-003,North America - Fulfillment,COGS,North America,North America,All Products,2025-12,686730.24,USD
+NO-OPEX-001,North America - Sales & Marketing,OpEx,North America,North America,All Products,2025-12,913927.16,USD
+NO-OPEX-002,North America - R&D,OpEx,North America,North America,All Products,2025-12,600722.62,USD
+NO-OPEX-003,North America - G&A,OpEx,North America,North America,All Products,2025-12,337388.66,USD
+NO-OPEX-004,North America - Rent & Facilities,OpEx,North America,North America,All Products,2025-12,204244.4,USD
+NO-OPEX-005,North America - IT & Software,OpEx,North America,North America,All Products,2025-12,133385.19,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2023-01,2035985.42,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2023-01,718736.67,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2023-01,279876.5,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2023-01,1069020.81,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2023-01,428265.22,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2023-01,256853.53,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2023-01,365049.21,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2023-01,230754.03,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2023-01,154966.81,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2023-01,88015.64,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2023-01,55899.52,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2023-02,1760234.96,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2023-02,800903.16,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2023-02,308216.68,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2023-02,1047260.35,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2023-02,465398.57,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2023-02,261774.67,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2023-02,378930.8,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2023-02,253374.76,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2023-02,139369.03,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2023-02,85556.05,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2023-02,59545.19,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2023-03,1785548.38,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2023-03,751060.29,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2023-03,321447.19,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2023-03,1138975.67,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2023-03,422662.18,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2023-03,342322.61,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2023-03,391674.2,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2023-03,261937.39,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2023-03,151412.65,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2023-03,99548.32,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2023-03,68282.05,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2023-04,2015888.69,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2023-04,727622.3,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2023-04,290813.38,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2023-04,1079542.07,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2023-04,540825.92,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2023-04,341112.56,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2023-04,359780.43,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2023-04,251032.39,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2023-04,152875.83,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2023-04,98554.16,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2023-04,61576.15,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2023-05,2030357.53,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2023-05,818569.87,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2023-05,276464.84,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2023-05,1093563.02,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2023-05,480580.15,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2023-05,320313.45,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2023-05,365504.7,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2023-05,292712.16,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2023-05,175846.56,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2023-05,89892.53,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2023-05,67385.52,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2023-06,1934732.75,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2023-06,788259.19,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2023-06,352878.73,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2023-06,1139638.52,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2023-06,507804.28,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2023-06,311438.99,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2023-06,372986.06,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2023-06,243532.52,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2023-06,156614.24,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2023-06,85013.41,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2023-06,73445.92,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2023-07,1855449.21,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2023-07,789678.56,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2023-07,316744.22,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2023-07,1118603.16,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2023-07,523897.35,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2023-07,310028.55,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2023-07,341615.76,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2023-07,288752.55,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2023-07,129364.52,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2023-07,82679.87,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2023-07,69222.7,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2023-08,2024190.5,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2023-08,806204.17,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2023-08,297047.23,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2023-08,1021852.01,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2023-08,414260.33,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2023-08,355952.28,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2023-08,344967.91,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2023-08,236456.2,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2023-08,143587.32,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2023-08,90299.44,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2023-08,59669.14,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2023-09,2165170.91,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2023-09,885485.21,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2023-09,296999.98,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2023-09,1092388.91,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2023-09,496175.39,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2023-09,284100.19,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2023-09,404116.93,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2023-09,258291.96,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2023-09,157458.27,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2023-09,91065.11,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2023-09,63076.77,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2023-10,2064579.45,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2023-10,849929.39,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2023-10,340884.84,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2023-10,1353869.14,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2023-10,509994.18,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2023-10,286988.89,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2023-10,482590.04,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2023-10,304551.98,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2023-10,156915.14,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2023-10,83228.93,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2023-10,61787.07,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2023-11,2200615.94,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2023-11,839332.5,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2023-11,158602.39,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2023-11,1119568.79,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2023-11,480261.9,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2023-11,340002.87,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2023-11,308769.62,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2023-11,255581.2,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2023-11,185863.38,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2023-11,93974.08,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2023-11,69183.18,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2023-12,2416439.93,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2023-12,935773.57,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2023-12,382192.13,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2023-12,1363846.21,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2023-12,604499.63,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2023-12,354539.81,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2023-12,411284.85,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2023-12,299705.07,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2023-12,280632.6,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2023-12,107294.91,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2023-12,69763.65,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2024-01,1933245.21,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2024-01,382640.03,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2024-01,300084.79,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2024-01,1078001.64,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2024-01,438988.9,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2024-01,306204.42,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2024-01,365894.29,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2024-01,229835.64,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2024-01,145140.24,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2024-01,93023.07,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2024-01,67041.23,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2024-02,2005175.97,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2024-02,696254.29,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2024-02,262213.99,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2024-02,1007161.13,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2024-02,487923.18,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2024-02,282140.01,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2024-02,394610.56,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2024-02,259216.4,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2024-02,153881.74,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2024-02,83046.05,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2024-02,58980.94,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2024-03,2051266.27,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2024-03,822276.71,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2024-03,292877.91,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2024-03,1237044.87,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2024-03,493051.56,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2024-03,331263.24,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2024-03,402530.38,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2024-03,280692.85,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2024-03,162707.92,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2024-03,101079.39,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2024-03,61160.29,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2024-04,2407725.81,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2024-04,829749.49,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2024-04,313267.76,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2024-04,1673048.78,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2024-04,428160.74,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2024-04,336514.1,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2024-04,392742.68,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2024-04,267912.61,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2024-04,169876.06,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2024-04,149714.03,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2024-04,61590.91,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2024-05,3373320.72,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2024-05,938348.69,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2024-05,357620.99,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2024-05,1175508.18,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2024-05,452035.74,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2024-05,307852.57,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2024-05,426234.34,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2024-05,277301.75,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2024-05,169319.48,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2024-05,106285.22,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2024-05,68481.83,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2024-06,2111189.35,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2024-06,851692.99,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2024-06,358855.5,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2024-06,1324288.2,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2024-06,533597.35,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2024-06,367546.57,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2024-06,381794.75,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2024-06,306609.84,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2024-06,159498.33,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2024-06,102569.94,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2024-06,67478.12,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2024-07,1891801.78,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2024-07,868359.39,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2024-07,316520.88,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2024-07,1061970.27,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2024-07,496917.63,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2024-07,311040.73,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2024-07,415003.79,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2024-07,251437.45,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2024-07,160550.74,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2024-07,106772.43,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2024-07,62255.0,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2024-08,2082300.57,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2024-08,870049.06,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2024-08,328443.71,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2024-08,1045916.64,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2024-08,432363.29,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2024-08,307725.75,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2024-08,399037.45,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2024-08,284536.3,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2024-08,173549.22,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2024-08,90884.68,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2024-08,63095.36,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2024-09,2434486.66,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2024-09,744555.53,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2024-09,342919.72,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2024-09,1119250.18,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2024-09,565575.64,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2024-09,372829.2,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2024-09,416166.91,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2024-09,263634.37,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2024-09,191285.14,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2024-09,96809.68,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2024-09,70089.77,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2024-10,2280724.57,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2024-10,955742.63,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2024-10,308955.53,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2024-10,1278572.36,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2024-10,557574.86,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2024-10,386669.64,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2024-10,485165.91,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2024-10,272190.86,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2024-10,168543.07,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2024-10,99862.27,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2024-10,66999.45,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2024-11,2618419.79,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2024-11,947679.94,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2024-11,320758.42,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2024-11,1303098.04,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2024-11,499221.97,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2024-11,361951.19,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2024-11,433497.08,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2024-11,290140.66,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2024-11,170747.12,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2024-11,111546.57,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2024-11,75982.11,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2024-12,2287034.24,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2024-12,974058.63,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2024-12,389165.65,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2024-12,1404608.85,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2024-12,582709.09,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2024-12,334834.27,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2024-12,492095.86,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2024-12,325026.67,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2024-12,186974.66,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2024-12,113286.29,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2024-12,74200.92,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2025-01,2205726.57,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2025-01,790243.14,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2025-01,312059.82,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2025-01,1191351.22,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2025-01,515977.96,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2025-01,286532.27,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2025-01,406496.76,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2025-01,216803.54,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2025-01,156214.53,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2025-01,95527.38,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2025-01,69511.7,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2025-02,2231869.37,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2025-02,725015.2,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2025-02,331293.01,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2025-02,1276099.11,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2025-02,502238.77,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2025-02,321173.87,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2025-02,427549.43,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2025-02,264270.58,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2025-02,168042.13,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2025-02,88604.74,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2025-02,65038.47,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2025-03,2519575.6,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2025-03,863998.64,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2025-03,319329.54,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2025-03,1200077.62,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2025-03,470817.73,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2025-03,340498.92,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2025-03,390248.75,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2025-03,254199.65,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2025-03,167793.27,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2025-03,107368.21,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2025-03,70063.86,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2025-04,2846555.22,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2025-04,871244.68,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2025-04,348296.85,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2025-04,1096235.98,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2025-04,584767.78,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2025-04,317069.57,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2025-04,396557.16,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2025-04,272111.42,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2025-04,188822.37,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2025-04,98100.39,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2025-04,79892.44,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2025-05,2391270.68,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2025-05,906158.85,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2025-05,353340.31,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2025-05,1220223.18,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2025-05,507769.88,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2025-05,318483.12,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2025-05,398931.4,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2025-05,314142.14,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2025-05,183145.05,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2025-05,117724.0,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2025-05,67583.36,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2025-06,2094892.65,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2025-06,869406.83,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2025-06,328235.85,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2025-06,1234144.09,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2025-06,463724.06,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2025-06,298516.23,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2025-06,427222.96,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2025-06,310043.34,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2025-06,178555.53,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2025-06,108148.27,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2025-06,69756.17,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2025-07,2223703.71,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2025-07,761604.05,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2025-07,320692.21,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2025-07,1285741.16,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2025-07,468372.35,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2025-07,330611.56,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2025-07,440172.46,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2025-07,273163.21,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2025-07,171322.61,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2025-07,99235.24,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2025-07,70971.76,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2025-08,2330988.86,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2025-08,794031.88,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2025-08,304784.62,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2025-08,1025163.84,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2025-08,522085.03,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2025-08,345247.22,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2025-08,473710.41,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2025-08,270424.18,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2025-08,166889.19,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2025-08,102718.81,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2025-08,68734.74,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2025-09,2278982.81,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2025-09,840454.62,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2025-09,355660.22,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2025-09,1241566.96,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2025-09,531507.23,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2025-09,375279.2,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2025-09,426260.68,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2025-09,257891.63,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2025-09,169907.66,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2025-09,105094.29,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2025-09,71273.52,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2025-10,2473782.22,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2025-10,921578.09,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2025-10,316228.72,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2025-10,1175650.21,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2025-10,573579.18,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2025-10,361492.03,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2025-10,486322.97,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2025-10,296635.21,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2025-10,179157.93,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2025-10,105365.33,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2025-10,71841.02,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2025-11,2491716.03,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2025-11,947902.07,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2025-11,404276.99,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2025-11,1188870.7,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2025-11,514213.58,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2025-11,373115.72,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2025-11,472137.65,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2025-11,479069.57,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2025-11,186452.96,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2025-11,105393.32,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2025-11,70543.61,USD
+EM-REV-001,EMEA - Product Revenue,Revenue,EMEA,EMEA,All Products,2025-12,2741805.15,USD
+EM-REV-002,EMEA - Service Revenue,Revenue,EMEA,EMEA,All Products,2025-12,1042965.57,USD
+EM-REV-003,EMEA - Subscription Revenue,Revenue,EMEA,EMEA,All Products,2025-12,435913.05,USD
+EM-COGS-001,EMEA - Material Costs,COGS,EMEA,EMEA,All Products,2025-12,1406661.39,USD
+EM-COGS-002,EMEA - Labor Costs,COGS,EMEA,EMEA,All Products,2025-12,589540.33,USD
+EM-COGS-003,EMEA - Fulfillment,COGS,EMEA,EMEA,All Products,2025-12,355920.18,USD
+EM-OPEX-001,EMEA - Sales & Marketing,OpEx,EMEA,EMEA,All Products,2025-12,486281.04,USD
+EM-OPEX-002,EMEA - R&D,OpEx,EMEA,EMEA,All Products,2025-12,315455.77,USD
+EM-OPEX-003,EMEA - G&A,OpEx,EMEA,EMEA,All Products,2025-12,210545.36,USD
+EM-OPEX-004,EMEA - Rent & Facilities,OpEx,EMEA,EMEA,All Products,2025-12,130226.71,USD
+EM-OPEX-005,EMEA - IT & Software,OpEx,EMEA,EMEA,All Products,2025-12,82897.05,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2023-01,956402.39,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2023-01,360405.9,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2023-01,145743.64,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2023-01,492929.25,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2023-01,213475.45,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2023-01,155585.04,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2023-01,175386.49,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2023-01,111949.5,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2023-01,68235.86,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2023-01,42523.12,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2023-01,30680.67,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2023-02,988760.11,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2023-02,303285.65,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2023-02,148129.0,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2023-02,489910.67,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2023-02,237681.96,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2023-02,138059.65,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2023-02,173695.26,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2023-02,111384.23,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2023-02,76745.12,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2023-02,43219.28,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2023-02,29005.16,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2023-03,963480.9,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2023-03,396962.67,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2023-03,151109.99,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2023-03,492567.82,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2023-03,210171.25,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2023-03,155363.12,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2023-03,171249.67,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2023-03,122911.23,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2023-03,69840.49,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2023-03,44276.09,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2023-03,15101.34,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2023-04,1153773.2,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2023-04,396502.62,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2023-04,158185.49,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2023-04,575399.48,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2023-04,219675.22,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2023-04,164954.65,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2023-04,195934.73,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2023-04,127073.45,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2023-04,77812.25,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2023-04,46280.74,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2023-04,30872.26,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2023-05,1026520.44,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2023-05,352830.01,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2023-05,182966.51,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2023-05,593086.99,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2023-05,266357.73,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2023-05,164468.55,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2023-05,180869.23,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2023-05,65145.58,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2023-05,81768.66,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2023-05,48407.58,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2023-05,32265.62,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2023-06,1067085.49,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2023-06,399988.94,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2023-06,168190.82,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2023-06,605860.47,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2023-06,275733.77,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2023-06,164277.03,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2023-06,196751.66,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2023-06,123307.68,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2023-06,84285.38,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2023-06,51685.65,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2023-06,28339.43,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2023-07,505651.1,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2023-07,533009.51,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2023-07,147234.31,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2023-07,514658.12,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2023-07,227576.79,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2023-07,162806.93,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2023-07,191030.65,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2023-07,112705.19,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2023-07,84216.39,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2023-07,50391.01,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2023-07,28178.49,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2023-08,1005291.89,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2023-08,378630.74,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2023-08,164365.54,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2023-08,494692.99,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2023-08,238261.7,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2023-08,157103.66,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2023-08,189543.7,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2023-08,124316.91,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2023-08,69594.88,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2023-08,47866.12,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2023-08,31964.77,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2023-09,1060066.34,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2023-09,399155.4,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2023-09,177910.35,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2023-09,622177.48,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2023-09,231806.14,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2023-09,165009.42,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2023-09,154667.02,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2023-09,120171.89,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2023-09,76849.15,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2023-09,48209.95,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2023-09,31213.11,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2023-10,994982.9,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2023-10,383989.09,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2023-10,153600.9,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2023-10,532939.86,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2023-10,213414.94,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2023-10,166591.21,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2023-10,195165.05,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2023-10,113716.52,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2023-10,86808.41,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2023-10,48854.91,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2023-10,32371.4,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2023-11,1195412.62,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2023-11,414030.21,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2023-11,174962.17,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2023-11,595154.15,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2023-11,245196.68,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2023-11,157430.54,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2023-11,192358.96,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2023-11,134516.09,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2023-11,91075.35,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2023-11,42870.8,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2023-11,30833.99,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2023-12,1228590.24,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2023-12,467843.46,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2023-12,170725.92,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2023-12,631464.11,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2023-12,294368.9,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2023-12,178137.1,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2023-12,221801.8,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2023-12,145451.37,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2023-12,100276.49,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2023-12,60645.25,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2023-12,55646.01,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2024-01,957050.47,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2024-01,391143.63,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2024-01,150404.56,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2024-01,501442.9,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2024-01,211135.89,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2024-01,150992.93,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2024-01,197874.85,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2024-01,116034.2,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2024-01,65846.18,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2024-01,45951.48,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2024-01,32722.57,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2024-02,1045067.21,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2024-02,354334.33,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2024-02,156234.42,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2024-02,574006.4,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2024-02,225476.44,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2024-02,149029.52,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2024-02,179236.2,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2024-02,122234.57,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2024-02,71170.18,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2024-02,47110.48,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2024-02,31514.84,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2024-03,1062606.38,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2024-03,399985.31,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2024-03,73570.73,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2024-03,551712.86,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2024-03,231919.35,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2024-03,146375.23,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2024-03,199122.22,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2024-03,126284.08,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2024-03,72790.32,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2024-03,51800.85,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2024-03,32256.79,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2024-04,1147068.2,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2024-04,418200.0,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2024-04,159189.37,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2024-04,544068.7,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2024-04,257223.62,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2024-04,182694.68,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2024-04,204464.4,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2024-04,127075.14,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2024-04,41974.5,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2024-04,50320.97,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2024-04,32298.83,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2024-05,1150740.02,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2024-05,377846.72,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2024-05,155175.93,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2024-05,556303.31,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2024-05,259293.82,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2024-05,168957.55,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2024-05,209128.41,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2024-05,143857.21,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2024-05,87357.9,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2024-05,56715.3,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2024-05,35958.18,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2024-06,1059450.23,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2024-06,395544.47,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2024-06,163335.79,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2024-06,603892.64,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2024-06,239049.91,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2024-06,86439.28,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2024-06,205749.82,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2024-06,150296.56,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2024-06,87610.07,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2024-06,44233.08,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2024-06,32272.16,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2024-07,1192804.81,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2024-07,540005.37,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2024-07,219167.69,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2024-07,683835.32,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2024-07,286244.29,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2024-07,189735.15,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2024-07,271631.29,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2024-07,167977.27,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2024-07,110363.54,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2024-07,59495.43,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2024-07,39303.11,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2024-08,1278849.6,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2024-08,499192.71,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2024-08,207521.17,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2024-08,698636.3,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2024-08,315921.08,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2024-08,201485.57,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2024-08,233149.05,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2024-08,164796.11,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2024-08,108159.52,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2024-08,58606.2,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2024-08,42551.01,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2024-09,1401465.44,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2024-09,479971.41,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2024-09,116339.4,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2024-09,754213.53,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2024-09,323126.48,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2024-09,187120.18,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2024-09,246111.63,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2024-09,250245.34,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2024-09,105681.29,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2024-09,69199.85,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2024-09,42249.9,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2024-10,1332374.02,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2024-10,542626.83,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2024-10,239769.36,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2024-10,802700.46,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2024-10,362950.14,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2024-10,225234.04,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2024-10,260280.38,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2024-10,199757.69,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2024-10,107507.24,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2024-10,71872.75,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2024-10,41558.23,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2024-11,1605708.3,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2024-11,606308.44,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2024-11,247161.76,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2024-11,749167.23,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2024-11,355395.98,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2024-11,220370.47,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2024-11,247639.24,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2024-11,175280.88,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2024-11,127766.31,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2024-11,76644.0,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2024-11,43019.74,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2024-12,1626025.85,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2024-12,644858.87,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2024-12,231225.1,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2024-12,909365.58,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2024-12,399147.42,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2024-12,246781.1,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2024-12,283901.59,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2024-12,197585.69,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2024-12,112023.42,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2024-12,80514.17,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2024-12,48833.68,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2025-01,1454164.48,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2025-01,523473.12,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2025-01,193987.87,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2025-01,616579.78,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2025-01,309514.84,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2025-01,202460.51,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2025-01,256797.49,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2025-01,154020.8,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2025-01,102618.3,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2025-01,64120.04,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2025-01,42763.69,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2025-02,1511577.36,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2025-02,577494.91,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2025-02,214449.72,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2025-02,746235.36,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2025-02,328534.32,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2025-02,186468.86,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2025-02,229416.82,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2025-02,157173.1,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2025-02,106128.79,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2025-02,61716.52,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2025-02,35746.36,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2025-03,1345846.53,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2025-03,554538.31,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2025-03,260961.54,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2025-03,673748.03,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2025-03,320500.77,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2025-03,236081.83,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2025-03,264984.45,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2025-03,159965.82,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2025-03,111492.5,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2025-03,71936.42,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2025-03,42459.99,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2025-04,1525400.73,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2025-04,522955.22,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2025-04,206772.09,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2025-04,751753.01,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2025-04,349411.86,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2025-04,252053.99,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2025-04,300520.43,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2025-04,172023.18,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2025-04,113473.66,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2025-04,67814.48,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2025-04,47216.37,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2025-05,1287769.9,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2025-05,569272.32,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2025-05,199880.52,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2025-05,910017.91,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2025-05,376214.56,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2025-05,215641.83,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2025-05,315352.08,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2025-05,168191.82,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2025-05,115791.26,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2025-05,34326.77,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2025-05,47696.49,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2025-06,1164098.78,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2025-06,563031.06,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2025-06,219374.78,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2025-06,746576.1,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2025-06,347899.94,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2025-06,215614.68,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2025-06,286945.32,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2025-06,192442.68,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2025-06,58401.77,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2025-06,73379.0,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2025-06,60835.04,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2025-07,1498177.96,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2025-07,594888.34,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2025-07,207964.98,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2025-07,780582.25,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2025-07,291797.81,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2025-07,194650.46,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2025-07,265689.32,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2025-07,174153.42,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2025-07,110114.72,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2025-07,68738.26,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2025-07,48429.68,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2025-08,1420350.2,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2025-08,540001.35,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2025-08,207616.92,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2025-08,811361.63,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2025-08,313252.87,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2025-08,214210.88,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2025-08,273784.92,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2025-08,175739.83,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2025-08,109411.05,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2025-08,61619.38,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2025-08,44718.38,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2025-09,1729347.31,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2025-09,524709.34,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2025-09,212871.79,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2025-09,851748.73,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2025-09,351817.43,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2025-09,252845.73,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2025-09,262550.2,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2025-09,196077.4,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2025-09,118069.17,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2025-09,64626.41,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2025-09,44122.12,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2025-10,1552138.5,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2025-10,560499.75,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2025-10,257328.1,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2025-10,877453.02,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2025-10,345573.22,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2025-10,235868.94,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2025-10,305174.74,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2025-10,189951.42,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2025-10,135811.39,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2025-10,74176.15,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2025-10,44980.39,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2025-11,1483290.49,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2025-11,661647.22,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2025-11,238845.42,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2025-11,870845.12,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2025-11,296319.46,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2025-11,246693.33,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2025-11,266611.05,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2025-11,177576.04,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2025-11,133852.78,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2025-11,72264.3,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2025-11,48002.0,USD
+AP-REV-001,APAC - Product Revenue,Revenue,APAC,APAC,All Products,2025-12,1964933.96,USD
+AP-REV-002,APAC - Service Revenue,Revenue,APAC,APAC,All Products,2025-12,703505.85,USD
+AP-REV-003,APAC - Subscription Revenue,Revenue,APAC,APAC,All Products,2025-12,293046.61,USD
+AP-COGS-001,APAC - Material Costs,COGS,APAC,APAC,All Products,2025-12,1004510.64,USD
+AP-COGS-002,APAC - Labor Costs,COGS,APAC,APAC,All Products,2025-12,417652.49,USD
+AP-COGS-003,APAC - Fulfillment,COGS,APAC,APAC,All Products,2025-12,292045.93,USD
+AP-OPEX-001,APAC - Sales & Marketing,OpEx,APAC,APAC,All Products,2025-12,299339.91,USD
+AP-OPEX-002,APAC - R&D,OpEx,APAC,APAC,All Products,2025-12,197832.41,USD
+AP-OPEX-003,APAC - G&A,OpEx,APAC,APAC,All Products,2025-12,118720.07,USD
+AP-OPEX-004,APAC - Rent & Facilities,OpEx,APAC,APAC,All Products,2025-12,69398.77,USD
+AP-OPEX-005,APAC - IT & Software,OpEx,APAC,APAC,All Products,2025-12,26568.9,USD
