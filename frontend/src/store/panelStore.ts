@@ -10,7 +10,7 @@ interface PanelState {
 
   openPanel: (type: string, params: Record<string, any>) => void;
   closePanel: () => void;
-  setPanelData: (data: PanelData) => void;
+  setPanelData: (data: PanelData | null) => void;
   setLoading: (loading: boolean) => void;
 }
 

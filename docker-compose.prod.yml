@@ -7,19 +7,31 @@
 # ──────────────────────────────────────────────────────────
 
 services:
+  db:
+    profiles: []  # enable postgres in prod
+    restart: unless-stopped
+
   backend:
     command: >
+      sh -c "alembic upgrade head &&
       uvicorn app.main:app
       --host 0.0.0.0
       --port 8000
-      --workers 2
+      --workers 2"
     volumes:
-      # No source mount in production
       - forecast-db:/app/data
       - forecast-uploads:/app/uploads
+      - forecast-exports:/app/exports
     environment:
       - APP_ENV=production
       - LOG_LEVEL=WARNING
+      - SEED_DEMO_USERS=false
+      - ALLOW_OPEN_REGISTRATION=false
+      - DATABASE_URL=postgresql://forecast:forecast@db:5432/rolling_forecast
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost}
+    depends_on:
+      db:
+        condition: service_healthy
 
   frontend:
     build:
@@ -29,4 +41,10 @@ services:
     command: ["nginx", "-g", "daemon off;"]
     ports:
       - "80:80"
-    volumes: []  # No source mount in production
+    volumes: []
+    depends_on:
+      - backend
+
+volumes:
+  forecast-exports:
+    driver: local

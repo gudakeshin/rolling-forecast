@@ -189,13 +189,21 @@ class DependencyGraphManager:
     def _calculate_value(
         self, source_values: dict[int, dict], formula: str | None
     ) -> float:
-        """Calculate a dependent value from its sources."""
+        """Calculate a dependent value from its sources.
+
+        Formula support:
+        - Arithmetic over named placeholders: ``{123} + {456} - {789}`` (line item ids)
+        - Category aliases: ``Revenue - COGS``, ``Gross Margin - OpEx``
+        - Falls back to relationship_type sum/subtract/multiply when formula is absent
+          or cannot be evaluated safely.
+        """
         if formula:
-            # TODO: Parse and evaluate formula expressions
-            # For now, fall back to sum/subtract logic
-            pass
+            evaluated = self._evaluate_formula(formula, source_values)
+            if evaluated is not None:
+                return evaluated
 
         total = 0.0
+        first = True
         for source_id, info in source_values.items():
             relationship = info["relationship"]
             value = info["value"] * info["weight"]
@@ -205,11 +213,82 @@ class DependencyGraphManager:
             elif relationship == "subtract":
                 total -= value
             elif relationship == "multiply":
-                total *= value if total != 0 else value
+                total = value if first and total == 0 else total * value
             else:
                 total += value
+            first = False
 
         return total
+
+    def _evaluate_formula(
+        self, formula: str, source_values: dict[int, dict]
+    ) -> float | None:
+        """Safely evaluate a restricted arithmetic formula."""
+        import ast
+        import operator
+        import re
+
+        # Build name -> value map from graph node metadata + source ids
+        G = self._load_graph()
+        env: dict[str, float] = {}
+        for source_id, info in source_values.items():
+            val = float(info["value"]) * float(info.get("weight", 1.0))
+            env[str(source_id)] = val
+            node = G.nodes.get(source_id, {})
+            name = (node.get("name") or "").strip().lower()
+            category = (node.get("category") or "").strip().lower()
+            if name:
+                env[name] = val
+            if category and category != name:
+                env[category] = env.get(category, 0.0) + val
+
+        expr = formula.strip()
+        # Replace {id} placeholders
+        expr = re.sub(
+            r"\{(\d+)\}",
+            lambda m: str(env.get(m.group(1), 0.0)),
+            expr,
+        )
+        # Replace known names/categories (longest first to avoid partial replaces)
+        for key in sorted(env.keys(), key=len, reverse=True):
+            if key.isdigit():
+                continue
+            pattern = re.compile(re.escape(key), re.IGNORECASE)
+            expr = pattern.sub(str(env[key]), expr)
+
+        # Only allow digits, operators, dots, spaces, parentheses
+        if not re.fullmatch(r"[0-9+\-*/().\s]+", expr):
+            logger.warning("Formula rejected (unsafe chars): %s -> %s", formula, expr)
+            return None
+
+        ops = {
+            ast.Add: operator.add,
+            ast.Sub: operator.sub,
+            ast.Mult: operator.mul,
+            ast.Div: operator.truediv,
+            ast.USub: operator.neg,
+            ast.UAdd: operator.pos,
+        }
+
+        def _eval(node):
+            if isinstance(node, ast.Expression):
+                return _eval(node.body)
+            if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+                return float(node.value)
+            if isinstance(node, ast.Num):  # pragma: no cover - py<3.8 compat
+                return float(node.n)
+            if isinstance(node, ast.BinOp) and type(node.op) in ops:
+                return ops[type(node.op)](_eval(node.left), _eval(node.right))
+            if isinstance(node, ast.UnaryOp) and type(node.op) in ops:
+                return ops[type(node.op)](_eval(node.operand))
+            raise ValueError(f"Unsupported expression node: {type(node)}")
+
+        try:
+            tree = ast.parse(expr, mode="eval")
+            return float(_eval(tree))
+        except Exception as e:
+            logger.warning("Formula evaluation failed for '%s': %s", formula, e)
+            return None
 
     def add_dependency(
         self, dependent_id: int, source_id: int, relationship_type: str = "sum", weight: float = 1.0

@@ -262,6 +262,15 @@ class GenerateBaselineSkill(BaseSkill):
         models_to_test = params.get("models_to_test", None)  # None = all models
         random_seed = params.get("random_seed", 42)
 
+        # Soft gate: prefer plan_forecast before baseline (warn, do not hard-block)
+        plan_done = context.context_manager.get_memory("last_plan_id") or context.context_manager.get_memory("plan_forecast_complete")
+        plan_warning = None
+        if not plan_done and not params.get("skip_plan_check"):
+            plan_warning = (
+                "Note: plan_forecast was not run in this session. "
+                "Proceeding with baseline generation; run plan_forecast first for model selection guidance."
+            )
+
         # Get dataset
         dataset_id = params.get("dataset_id") or context.context_manager.get_memory("last_dataset_id")
         if not dataset_id:
@@ -611,16 +620,22 @@ class GenerateBaselineSkill(BaseSkill):
             version, horizon, dataset, model_type, summary, elapsed,
             all_warnings, all_flags, high_count, medium_count, low_count,
             unique_remediation,
+            plan_warning=plan_warning,
         )
 
     def _build_success_response(
         self, version, horizon, dataset, model_type, summary, elapsed,
         warnings, flags, high_count, medium_count, low_count, remediation_items,
+        plan_warning=None,
     ) -> SkillResult:
         """Build the rich response with confidence scores, remediation, and actions."""
         total_scored = high_count + medium_count + low_count
 
-        content_blocks = [
+        content_blocks = []
+        if plan_warning:
+            content_blocks.append(self._text_block(f"**Planning note:** {plan_warning}"))
+
+        content_blocks.extend([
             self._text_block(
                 f"Generated baseline forecast **{version.name}** with a {horizon}-month horizon. "
                 f"Confidence scoring complete."
@@ -645,7 +660,7 @@ class GenerateBaselineSkill(BaseSkill):
                     {"metric": "Model selection", "value": "Auto (walk-forward CV)" if model_type == "auto" else model_type},
                 ],
             ),
-        ]
+        ])
 
         # Confidence distribution table
         content_blocks.append(

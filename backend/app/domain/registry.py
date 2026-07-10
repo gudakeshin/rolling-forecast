@@ -150,19 +150,50 @@ class SkillsRegistry:
         return results
 
     def get_for_role(self, role: str) -> list[BaseSkill]:
-        """Get skills available for a given role."""
-        return self.list_all()
+        """Get skills available for a given role permission flag or role name.
+
+        ``role`` may be a permission key (generate/override/review/...) or a
+        role name (admin/analyst/reviewer/...). Admin gets all skills.
+        """
+        role_permissions = {
+            "admin": {"input", "generate", "override", "review", "publish", "admin"},
+            "analyst": {"input", "generate", "override"},
+            "reviewer": {"input", "generate", "override", "review"},
+            "publisher": {"input", "generate", "override", "review", "publish"},
+            "input_provider": {"input"},
+            "manager": {"input", "generate", "override", "review"},  # alias
+        }
+        # Direct permission key
+        if role in {"input", "generate", "override", "review", "publish", "admin"}:
+            allowed = {role, "input"} if role != "admin" else role_permissions["admin"]
+            if role == "admin":
+                return self.list_all()
+        else:
+            allowed = role_permissions.get(role, {"input"})
+
+        if "admin" in allowed:
+            return self.list_all()
+
+        result = []
+        for skill in self._skills.values():
+            required = skill.required_role or "generate"
+            if required in allowed or required == "input":
+                result.append(skill)
+        return result
 
     def as_langchain_tools(self, context: SkillContext) -> list[StructuredTool]:
         """
-        Convert all registered skills into LangChain tools.
+        Convert role-filtered skills into LangChain tools.
         
         Each skill becomes a StructuredTool that the ReACT agent can invoke.
         The tool description is enriched with the .md definition's full_description
         (including "When to Use" and examples) for better LLM tool selection.
         """
+        role_name = getattr(getattr(context, "user", None), "role", None)
+        role_key = role_name.name if role_name else getattr(context, "user_role", "analyst")
+        skills = self.get_for_role(role_key)
         tools = []
-        for skill in self._skills.values():
+        for skill in skills:
             tool = self._skill_to_tool(skill, context)
             tools.append(tool)
         return tools

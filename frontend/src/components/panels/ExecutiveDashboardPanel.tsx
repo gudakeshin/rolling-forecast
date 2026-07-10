@@ -635,16 +635,40 @@ export function ExecutiveDashboardPanel({ data }: { data: any }) {
         </div>
         <button
           onClick={async () => {
+            if (!d.version?.id) {
+              alert('No version id available for export');
+              return;
+            }
             setIsExporting(true);
-            await new Promise((r) => setTimeout(r, 1200));
-            alert('PowerPoint export is coming soon.');
-            setIsExporting(false);
+            try {
+              const token = localStorage.getItem('forecast-auth');
+              let authHeader = '';
+              try {
+                const parsed = token ? JSON.parse(token) : null;
+                authHeader = parsed?.state?.token ? `Bearer ${parsed.state.token}` : '';
+              } catch { /* ignore */ }
+              const res = await fetch(`/api/executive/board-pack/${d.version.id}?format=pptx`, {
+                headers: authHeader ? { Authorization: authHeader } : {},
+              });
+              if (!res.ok) throw new Error('Export failed');
+              const blob = await res.blob();
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `${d.version.name || 'forecast'}_board_pack.pptx`;
+              a.click();
+              URL.revokeObjectURL(url);
+            } catch (e: any) {
+              alert(e.message || 'Board pack export failed');
+            } finally {
+              setIsExporting(false);
+            }
           }}
           disabled={isExporting}
           className="flex items-center gap-1 px-2 py-1 bg-surface-800/60 border border-surface-700/50 rounded-lg text-[9px] text-surface-400 hover:text-white hover:border-deloitte-green/30 transition-all disabled:opacity-50"
         >
           {isExporting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
-          Export
+          Export PPT
         </button>
       </div>
     </div>

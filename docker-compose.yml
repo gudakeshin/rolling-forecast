@@ -11,7 +11,24 @@
 # ──────────────────────────────────────────────────────────
 
 services:
-  # ── Backend (FastAPI) ─────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: forecast-db
+    environment:
+      POSTGRES_USER: forecast
+      POSTGRES_PASSWORD: forecast
+      POSTGRES_DB: rolling_forecast
+    ports:
+      - "5432:5432"
+    volumes:
+      - forecast-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forecast -d rolling_forecast"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    profiles: ["postgres"]
+
   backend:
     build:
       context: ./backend
@@ -24,12 +41,11 @@ services:
     environment:
       - APP_ENV=development
       - DATABASE_URL=sqlite:///./rolling_forecast.db
+      - CORS_ORIGINS=http://localhost:5173,http://localhost:3000
     volumes:
-      # Mount source for hot-reload in dev
       - ./backend/app:/app/app
       - ./backend/skills:/app/skills
       - ./backend/seed_data:/app/seed_data
-      # Persist database and uploads outside container
       - forecast-db:/app/data
       - forecast-uploads:/app/uploads
     command: >
@@ -46,7 +62,6 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  # ── Frontend (Vite dev server) ────────────────────
   frontend:
     build:
       context: ./frontend
@@ -71,4 +86,6 @@ volumes:
   forecast-db:
     driver: local
   forecast-uploads:
+    driver: local
+  forecast-pgdata:
     driver: local

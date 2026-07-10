@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          # Prophet system deps can be heavy; tests that need it may soft-skip
+      - name: Run pytest
+        env:
+          APP_ENV: test
+          JWT_SECRET_KEY: test-secret-key-for-ci-at-least-32-chars
+          DATABASE_URL: sqlite:///./test_ci.db
+          SEED_DEMO_USERS: "true"
+          ALLOW_OPEN_REGISTRATION: "true"
+        run: pytest -q --tb=short
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci || npm install
+      - run: npm run build

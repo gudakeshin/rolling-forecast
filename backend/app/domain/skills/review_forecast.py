@@ -378,10 +378,18 @@ class ReviewForecastSkill(BaseSkill):
     async def _approve(
         self, db: Session, params: dict[str, Any], context: SkillContext
     ) -> SkillResult:
-        """Approve a forecast (requires manager/admin role)."""
-        if context.user_role not in ("manager", "admin"):
+        """Approve a forecast (requires can_review permission)."""
+        from app.services.permissions import APPROVER_ROLES
+
+        role = context.user_role
+        allowed = (
+            context.context_manager.has_permission("review")
+            or role in APPROVER_ROLES
+            or role == "manager"
+        )
+        if not allowed:
             return SkillResult.fail(
-                "Only managers and admins can approve forecasts. Your role: " + context.user_role
+                "Only reviewers, publishers, and admins can approve forecasts. Your role: " + str(role)
             )
 
         version_id = params.get("version_id") or context.context_manager.get_active_version_id()
@@ -425,8 +433,16 @@ class ReviewForecastSkill(BaseSkill):
         self, db: Session, params: dict[str, Any], context: SkillContext
     ) -> SkillResult:
         """Reject a forecast and return to draft."""
-        if context.user_role not in ("manager", "admin"):
-            return SkillResult.fail("Only managers and admins can reject forecasts.")
+        from app.services.permissions import APPROVER_ROLES
+
+        role = context.user_role
+        allowed = (
+            context.context_manager.has_permission("review")
+            or role in APPROVER_ROLES
+            or role == "manager"
+        )
+        if not allowed:
+            return SkillResult.fail("Only reviewers, publishers, and admins can reject forecasts.")
 
         version_id = params.get("version_id") or context.context_manager.get_active_version_id()
         if not version_id:

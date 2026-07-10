@@ -306,6 +306,9 @@ class PlanForecastSkill(BaseSkill):
             )
         )
 
+        context.context_manager.set_memory("plan_forecast_complete", True)
+        context.context_manager.set_memory("last_plan_best_model", best_overall)
+
         return SkillResult.ok(
             message=(
                 f"Data analysis complete. Tested 4 algorithms on {len(comparison_results)} sample items. "

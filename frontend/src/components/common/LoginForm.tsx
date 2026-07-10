@@ -103,6 +103,13 @@ export function LoginForm() {
             {loading ? 'Signing in...' : 'Sign In'}
           </button>
 
+          <a
+            href="/api/auth/oidc/login"
+            className="block w-full text-center py-2.5 px-4 mt-3 border border-surface-600 text-surface-300 hover:text-white hover:border-deloitte-green/40 rounded-xl text-sm transition-all"
+          >
+            Sign in with SSO
+          </a>
+
           <p className="text-center text-sm text-surface-500 mt-6">
             Demo credentials:{' '}
             <code className="text-deloitte-green/80 bg-deloitte-green/10 px-1.5 py-0.5 rounded">analyst</code>

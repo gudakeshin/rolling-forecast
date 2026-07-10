@@ -1,4 +1,5 @@
-import { LogOut, User, TrendingUp, Settings2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { LogOut, User, Settings2, LayoutDashboard, Shield } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { usePanelStore } from '../../store/panelStore';
 
@@ -10,7 +11,6 @@ export function Header() {
   return (
     <header className="h-14 flex items-center justify-between px-6 border-b border-surface-700/50 bg-black/60 backdrop-blur-md">
       <div className="flex items-center gap-3">
-        {/* Deloitte-style logo mark */}
         <div className="flex items-center gap-2.5">
           <div className="w-1 h-7 bg-deloitte-green rounded-full" />
           <div className="flex flex-col">
@@ -24,15 +24,35 @@ export function Header() {
         </div>
       </div>
 
-      <div className="flex items-center gap-4">
-        <button
-          onClick={() => openPanel('skill_editor', {})}
+      <div className="flex items-center gap-3">
+        <Link
+          to="/executive"
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-surface-800/60 hover:bg-deloitte-green/10 border border-surface-700/50 hover:border-deloitte-green/25 text-surface-400 hover:text-deloitte-green rounded-lg transition-all"
-          title="Skill Editor"
+          title="Executive View"
         >
-          <Settings2 className="w-3.5 h-3.5" />
-          <span>Skills</span>
-        </button>
+          <LayoutDashboard className="w-3.5 h-3.5" />
+          <span>Executive</span>
+        </Link>
+        {user?.role_name === 'admin' && (
+          <Link
+            to="/admin"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-surface-800/60 hover:bg-deloitte-green/10 border border-surface-700/50 hover:border-deloitte-green/25 text-surface-400 hover:text-deloitte-green rounded-lg transition-all"
+            title="Admin Console"
+          >
+            <Shield className="w-3.5 h-3.5" />
+            <span>Admin</span>
+          </Link>
+        )}
+        {user?.role_name === 'admin' && (
+          <button
+            onClick={() => openPanel('skill_editor', {})}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-surface-800/60 hover:bg-deloitte-green/10 border border-surface-700/50 hover:border-deloitte-green/25 text-surface-400 hover:text-deloitte-green rounded-lg transition-all"
+            title="Skill Editor"
+          >
+            <Settings2 className="w-3.5 h-3.5" />
+            <span>Skills</span>
+          </button>
+        )}
         {user && (
           <div className="flex items-center gap-2 text-sm text-surface-400">
             <User className="w-4 h-4" />

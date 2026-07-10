@@ -19,6 +19,8 @@ from app.models.line_item import LineItem, LineItemDependency
 from app.models.actuals import ActualsRecord
 from app.models.override import Override
 from app.schemas.forecast import PanelDataResponse
+from app.services.permissions import require_permission
+from app.config import settings
 
 # Import inline scoring utilities from generate_baseline
 from app.domain.skills.generate_baseline import (
@@ -1272,10 +1274,12 @@ class AcceptAIRequest(BaseModel):
 @router.post("/review-item")
 async def review_item(
     request: ReviewItemRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("review")),
     db: Session = Depends(get_db),
 ):
     """Approve, reject, or flag a single line item (applies to all its periods)."""
+    from app.services.audit import record_audit
+
     result = db.query(ForecastLineResult).filter(
         ForecastLineResult.id == request.item_id
     ).first()
@@ -1299,6 +1303,15 @@ async def review_item(
         r.reviewed_by = current_user.id
         r.reviewed_at = now
 
+    record_audit(
+        db,
+        action=f"review.{request.action}",
+        entity_type="forecast_line_result",
+        entity_id=request.item_id,
+        actor_id=current_user.id,
+        actor_username=current_user.username,
+        details={"version_id": result.version_id, "comment": request.comment},
+    )
     db.commit()
 
     return {
@@ -1311,7 +1324,7 @@ async def review_item(
 @router.post("/batch-review")
 async def batch_review(
     request: BatchReviewRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("review")),
     db: Session = Depends(get_db),
 ):
     """Batch approve/reject multiple line items at once."""
@@ -1355,7 +1368,7 @@ async def batch_review(
 @router.post("/accept-ai-recommendations")
 async def accept_ai_recommendations(
     request: AcceptAIRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("review")),
     db: Session = Depends(get_db),
 ):
     """Accept all AI-approved items in one click."""
@@ -1641,15 +1654,33 @@ async def get_driver_inputs(
         .all()
     )
 
-    available_items = [
-        {
+    available_items = []
+    for li in line_items:
+        # Model suggestion from forecast p50 (first period) + last actual
+        flr = (
+            db.query(ForecastLineResult)
+            .filter(
+                ForecastLineResult.version_id == version_id,
+                ForecastLineResult.line_item_id == li.id,
+            )
+            .order_by(ForecastLineResult.period)
+            .first()
+        )
+        last_actual = (
+            db.query(ActualsRecord)
+            .filter(ActualsRecord.line_item_id == li.id)
+            .order_by(ActualsRecord.period.desc())
+            .first()
+        )
+        available_items.append({
             "id": li.id,
             "name": li.name,
             "category": li.category,
             "account_code": li.account_code,
-        }
-        for li in line_items
-    ]
+            "model_suggested_value": flr.p50 if flr else None,
+            "confidence": flr.confidence_score if flr else None,
+            "last_actual": last_actual.value if last_actual else None,
+        })
 
     return PanelDataResponse(
         panel_type="driver_inputs",
@@ -1662,6 +1693,112 @@ async def get_driver_inputs(
             "total_count": len(items),
         },
     )
+
+
+class DriverSubmitRequest(BaseModel):
+    version_id: str
+    values: dict[str, Any]  # {line_item_id: {value, source}} or field_name keyed
+    notes: str | None = None
+    form_config_id: str | None = None
+    business_unit: str | None = None
+
+
+@router.post("/driver-inputs/submit")
+async def submit_driver_inputs(
+    request: DriverSubmitRequest,
+    current_user: User = Depends(require_permission("input")),
+    db: Session = Depends(get_db),
+):
+    """Submit BU driver assumptions for a forecast version."""
+    from app.models.driver_input import DriverInput, DriverFormConfig
+    from app.services.audit import record_audit
+
+    version = db.query(ForecastVersion).filter(ForecastVersion.id == request.version_id).first()
+    if not version:
+        raise HTTPException(status_code=404, detail="Forecast version not found")
+    if version.status not in ("draft", "in_review"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot submit drivers for a '{version.status}' forecast",
+        )
+
+    bu = request.business_unit or current_user.business_unit or "Default"
+    form = None
+    if request.form_config_id:
+        form = db.query(DriverFormConfig).filter(DriverFormConfig.id == request.form_config_id).first()
+    if not form:
+        form = (
+            db.query(DriverFormConfig)
+            .filter(DriverFormConfig.is_active == True, DriverFormConfig.business_unit == bu)
+            .first()
+        )
+    if not form:
+        # Auto-create a default form for this BU from submitted keys
+        fields = []
+        for key, payload in (request.values or {}).items():
+            if key.startswith("_"):
+                continue
+            fields.append({
+                "name": str(key),
+                "label": str(key),
+                "type": "number",
+                "line_item_id": int(key) if str(key).isdigit() else None,
+            })
+        form = DriverFormConfig(
+            business_unit=bu,
+            name=f"{bu} Driver Form",
+            description="Auto-generated driver form",
+            fields_schema=fields or [{"name": "value", "label": "Value", "type": "number"}],
+            is_active=True,
+        )
+        db.add(form)
+        db.flush()
+
+    normalized: dict[str, Any] = {}
+    for key, payload in (request.values or {}).items():
+        if key.startswith("_"):
+            continue
+        if isinstance(payload, dict):
+            normalized[str(key)] = {
+                "value": payload.get("value"),
+                "source": payload.get("source", "manual"),
+                "reason": payload.get("reason") or request.notes,
+            }
+        else:
+            normalized[str(key)] = {"value": payload, "source": "manual"}
+
+    if not normalized:
+        raise HTTPException(status_code=400, detail="No driver values provided")
+
+    di = DriverInput(
+        version_id=version.id,
+        form_config_id=form.id,
+        user_id=current_user.id,
+        business_unit=bu,
+        values=normalized,
+        status="submitted",
+        submitted_at=datetime.now(timezone.utc),
+        is_late=False,
+    )
+    db.add(di)
+    record_audit(
+        db,
+        action="driver.submit",
+        entity_type="driver_input",
+        entity_id=None,
+        actor_id=current_user.id,
+        actor_username=current_user.username,
+        details={"version_id": version.id, "business_unit": bu, "field_count": len(normalized)},
+    )
+    db.commit()
+    db.refresh(di)
+
+    return {
+        "success": True,
+        "id": di.id,
+        "status": di.status,
+        "message": f"Submitted {len(normalized)} driver value(s) for {bu}",
+    }
 
 
 # ──────────────────────────────────────────────────

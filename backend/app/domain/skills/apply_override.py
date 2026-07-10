@@ -111,9 +111,21 @@ class ApplyOverrideSkill(BaseSkill):
             return SkillResult.fail(f"Forecast version '{version_id}' not found.")
 
         if version.status not in ("draft", "in_review"):
-            return SkillResult.fail(
-                f"Cannot override a '{version.status}' forecast. Only draft or in_review versions can be modified."
-            )
+            # SOX immutability: clone a new editable draft instead of mutating published snapshots
+            from app.services.versioning import ensure_editable_version
+
+            try:
+                version, cloned = ensure_editable_version(
+                    db, version, user_id=context.user_id, clone_if_locked=True
+                )
+                version_id = version.id
+                if cloned:
+                    context.context_manager.set_memory("active_version_id", version_id)
+            except ValueError as e:
+                return SkillResult.fail(str(e))
+
+        # Acquire edit locks for concurrent safety
+        from app.services.locks import acquire_lock, release_lock, LockConflictError
 
         # Find the line item
         line_item_name = params.get("line_item_name", "")
@@ -195,54 +207,90 @@ class ApplyOverrideSkill(BaseSkill):
             if concurrent:
                 concurrent_notices.append(concurrent)
 
-        # Apply overrides
+        # Apply locks
+        locked_periods = []
+        try:
+            for line_result in results:
+                acquire_lock(
+                    version_id,
+                    line_item.id,
+                    line_result.period,
+                    context.user_id,
+                    username=getattr(getattr(context, "user", None), "username", None),
+                )
+                locked_periods.append(line_result.period)
+        except LockConflictError as e:
+            for p in locked_periods:
+                release_lock(version_id, line_item.id, p, context.user_id)
+            return SkillResult.fail(str(e))
+
+        # Apply overrides on the (possibly cloned) draft version
         dag = DependencyGraphManager(db)
         overrides_created = []
         total_recalc = 0
 
-        for line_result in results:
-            original_value = line_result.p50
+        try:
+            for line_result in results:
+                original_value = (
+                    line_result.override_value
+                    if line_result.is_overridden
+                    else line_result.p50
+                )
 
-            # Create override record
-            override = Override(
-                version_id=version_id,
-                line_item_id=line_item.id,
-                period=line_result.period,
-                original_model_value=original_value,
-                override_value=new_value,
-                reason=reason,
-                carry_forward=carry_forward,
-                user_id=context.user_id,
-                status="active",
+                override = Override(
+                    version_id=version_id,
+                    line_item_id=line_item.id,
+                    period=line_result.period,
+                    original_model_value=original_value,
+                    override_value=new_value,
+                    reason=reason,
+                    carry_forward=carry_forward,
+                    user_id=context.user_id,
+                    status="active",
+                )
+                db.add(override)
+
+                line_result.is_overridden = True
+                line_result.override_value = new_value
+
+                recalc_count = dag.recalculate_dependents(
+                    version_id, line_item.id, [line_result.period]
+                )
+                override.downstream_recalc_count = recalc_count
+                total_recalc += recalc_count
+
+                overrides_created.append({
+                    "period": line_result.period,
+                    "original": original_value,
+                    "new": new_value,
+                    "recalculated": recalc_count,
+                })
+
+            version.override_count = (
+                db.query(Override)
+                .filter(Override.version_id == version_id, Override.status == "active")
+                .count()
             )
-            db.add(override)
 
-            # Update the forecast result
-            line_result.is_overridden = True
-            line_result.override_value = new_value
+            from app.services.audit import record_audit
 
-            # Recalculate downstream dependents
-            recalc_count = dag.recalculate_dependents(
-                version_id, line_item.id, [line_result.period]
+            record_audit(
+                db,
+                action="forecast.override",
+                entity_type="forecast_version",
+                entity_id=version_id,
+                actor_id=context.user_id,
+                details={
+                    "line_item": line_item.name,
+                    "periods": [o["period"] for o in overrides_created],
+                    "new_value": new_value,
+                    "reason": reason,
+                },
             )
-            override.downstream_recalc_count = recalc_count
-            total_recalc += recalc_count
-
-            overrides_created.append({
-                "period": line_result.period,
-                "original": original_value,
-                "new": new_value,
-                "recalculated": recalc_count,
-            })
-
-        # Update version override count
-        version.override_count = (
-            db.query(Override)
-            .filter(Override.version_id == version_id, Override.status == "active")
-            .count()
-        )
-
-        db.commit()
+            db.commit()
+        finally:
+            for p in locked_periods:
+                release_lock(version_id, line_item.id, p, context.user_id)
 
         # Build response
         rows = []
@@ -284,13 +332,11 @@ class ApplyOverrideSkill(BaseSkill):
             self._text_block(f"Reason: _{reason}_")
         )
 
-        # EC6: Show override validation warnings
         for w in override_warnings:
             content_blocks.append(
                 self._text_block(f"**{w['level'].title()}:** {w['message']}")
             )
 
-        # EC10: Show concurrent override notices
         for notice in concurrent_notices:
             content_blocks.append(
                 self._text_block(f"**Concurrent Edit:** {notice['message']}")

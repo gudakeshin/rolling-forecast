@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   X, Loader2, Table, GitCompare, Edit, ClipboardList, Settings2,
   LayoutDashboard, Shield, Target, FileInput, AlertTriangle, FolderOpen,
@@ -33,6 +33,7 @@ const panelIcons: Record<string, any> = {
 export function PanelContainer() {
   const { panelType, panelParams, panelData, isLoading, closePanel, setPanelData, setLoading } =
     usePanelStore();
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!panelType || !panelParams) return;
@@ -45,6 +46,7 @@ export function PanelContainer() {
 
     const fetchData = async () => {
       setLoading(true);
+      setLoadError(null);
       try {
         let url = '';
         switch (panelType) {
@@ -84,8 +86,11 @@ export function PanelContainer() {
         }
         const data = await apiGet(url);
         setPanelData(data as any);
-      } catch (error) {
+      } catch (error: any) {
         console.error('Failed to load panel data:', error);
+        setPanelData(null);
+        setLoadError(error?.message || 'Failed to load panel data. Upstream data may be missing.');
+      } finally {
         setLoading(false);
       }
     };
@@ -143,6 +148,14 @@ export function PanelContainer() {
           <div className="flex flex-col items-center justify-center h-32 gap-2">
             <Loader2 className="w-6 h-6 animate-spin text-deloitte-green" />
             <span className="text-xs text-surface-500">Loading data...</span>
+          </div>
+        ) : loadError ? (
+          <div className="flex flex-col items-center justify-center h-32 gap-2 text-center px-4">
+            <AlertTriangle className="w-6 h-6 text-amber-400" />
+            <p className="text-sm text-amber-300">{loadError}</p>
+            <p className="text-xs text-surface-500">
+              Ensure the forecast version exists and required upstream steps have completed.
+            </p>
           </div>
         ) : panelData ? (
           <PanelContent type={panelType} data={panelData} />

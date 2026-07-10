@@ -8,6 +8,9 @@ from app.models.override import Override
 from app.models.driver_input import DriverInput, DriverFormConfig
 from app.models.conversation import Conversation, Message
 from app.models.document import Document, DocumentChunk
+from app.models.audit import AuditEvent
+from app.models.budget import BudgetVersion, BudgetLineItem
+from app.models.approval import ApprovalWorkflow, ApprovalStep
 
 __all__ = [
     "User",
@@ -26,4 +29,9 @@ __all__ = [
     "Message",
     "Document",
     "DocumentChunk",
+    "AuditEvent",
+    "BudgetVersion",
+    "BudgetLineItem",
+    "ApprovalWorkflow",
+    "ApprovalStep",
 ]

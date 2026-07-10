@@ -130,6 +130,12 @@ class IngestActualsSkill(BaseSkill):
                 ))
 
         db.bulk_save_objects(records)
+        db.flush()
+
+        # Wire standard P&L CoA dependencies so override recalc works
+        from app.services.coa_dependencies import ensure_standard_dependencies
+
+        deps_created = ensure_standard_dependencies(db, list(line_item_map.values()))
         db.commit()
 
         # Update working memory
@@ -159,6 +165,7 @@ class IngestActualsSkill(BaseSkill):
                     {"metric": "Business units", "value": str(bus)},
                     {"metric": "Categories", "value": ", ".join(categories[:5])},
                     {"metric": "Completeness", "value": f"{result.completeness_pct}%"},
+                    {"metric": "P&L dependencies", "value": str(deps_created)},
                     {"metric": "Data hash", "value": result.file_hash[:12] + "..."},
                 ],
             ),
@@ -186,6 +193,7 @@ class IngestActualsSkill(BaseSkill):
                 "period_start": result.period_start,
                 "period_end": result.period_end,
                 "file_hash": result.file_hash,
+                "dependencies_created": deps_created,
             },
             content_blocks=content_blocks,
         )

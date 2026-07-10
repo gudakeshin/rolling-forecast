@@ -240,27 +240,78 @@ class GenerateCommentarySkill(BaseSkill):
         include_recommendations: bool,
         version: ForecastVersion,
     ) -> list[str]:
-        """Generate structured commentary from the data context.
-        
-        In production, this would call the LLM. For now, we use rule-based
-        generation with the same structure the LLM would produce.
-        """
-        sections = []
+        """Generate structured commentary — prefers LLM with citations, falls back to rules."""
+        llm_sections = self._llm_commentary(
+            ctx, scope, tone, include_risks, include_recommendations, version
+        )
+        if llm_sections:
+            return llm_sections
 
+        sections = []
         if scope == "executive":
             sections.extend(self._executive_commentary(ctx, tone, version))
         elif scope == "category":
             sections.extend(self._category_commentary(ctx, tone))
         elif scope == "line_item":
             sections.extend(self._line_item_commentary(ctx, tone))
-
         if include_risks:
             sections.extend(self._risk_commentary(ctx, tone))
-
         if include_recommendations:
             sections.extend(self._recommendation_commentary(ctx, tone))
-
         return sections
+
+    def _llm_commentary(
+        self,
+        ctx: dict[str, Any],
+        scope: str,
+        tone: str,
+        include_risks: bool,
+        include_recommendations: bool,
+        version: ForecastVersion,
+    ) -> list[str] | None:
+        """Call Anthropic for CFO-grade narrative with override/doc citations."""
+        from app.config import settings
+
+        if not settings.anthropic_api_key:
+            return None
+        try:
+            import json
+            from anthropic import Anthropic
+
+            client = Anthropic(api_key=settings.anthropic_api_key)
+            citations = []
+            for o in ctx.get("overrides", [])[:15]:
+                citations.append(
+                    f"- Override on {o.get('line_item')}: {o.get('reason')} "
+                    f"({o.get('change_pct', 0):+.1f}%)"
+                )
+            prompt = (
+                f"You are an FP&A CFO briefing writer. Tone: {tone}. Scope: {scope}.\n"
+                f"Forecast: {version.name} (status={version.status}).\n"
+                f"Data context (JSON):\n{json.dumps(ctx, default=str)[:8000]}\n\n"
+                f"Key override citations:\n" + ("\n".join(citations) or "(none)") + "\n\n"
+                "Write 3-6 short markdown sections suitable for a board pack. "
+                "Cite specific overrides/reasons inline. "
+                f"{'Include risks. ' if include_risks else ''}"
+                f"{'Include recommendations. ' if include_recommendations else ''}"
+                "Return plain markdown only."
+            )
+            resp = client.messages.create(
+                model=settings.anthropic_model,
+                max_tokens=1200,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text = "".join(
+                block.text for block in resp.content if getattr(block, "type", None) == "text"
+            ).strip()
+            if not text:
+                return None
+            # Split into sections on markdown headings or double newlines
+            parts = [p.strip() for p in text.split("\n\n") if p.strip()]
+            return parts or [text]
+        except Exception as e:
+            logger.warning("LLM commentary failed, using rules: %s", e)
+            return None
 
     def _executive_commentary(self, ctx: dict, tone: str, version: ForecastVersion) -> list[str]:
         """Generate executive-level commentary."""

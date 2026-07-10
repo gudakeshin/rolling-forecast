@@ -16,7 +16,6 @@ from passlib.context import CryptContext
 
 logger = logging.getLogger(__name__)
 
-# Configure logging
 logging.basicConfig(
     level=getattr(logging, settings.log_level),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -24,7 +23,7 @@ logging.basicConfig(
 
 
 def seed_roles_and_admin(db):
-    """Seed default roles and admin user if they don't exist."""
+    """Seed default roles and (in non-prod) demo users."""
     roles_data = [
         {"name": "admin", "description": "System administrator",
          "can_input": True, "can_generate": True, "can_override": True,
@@ -50,34 +49,62 @@ def seed_roles_and_admin(db):
 
     db.commit()
 
-    # Create default admin user
+    # Seed default approval workflow
+    from app.models.approval import ApprovalWorkflow
+
+    wf = db.query(ApprovalWorkflow).filter(ApprovalWorkflow.name == "Standard Forecast Approval").first()
+    if not wf:
+        db.add(ApprovalWorkflow(
+            name="Standard Forecast Approval",
+            description="Analyst submit → Reviewer → Publisher",
+            is_active=True,
+            require_sod=True,
+            levels=[
+                {"level": 1, "role": "reviewer", "label": "Finance Director"},
+                {"level": 2, "role": "publisher", "label": "FP&A Publisher / CFO delegate"},
+            ],
+        ))
+        db.commit()
+
+    seed_users = settings.seed_demo_users and not settings.is_production
+    if not seed_users:
+        logger.info("Skipping demo user seed (production or SEED_DEMO_USERS=false)")
+        return
+
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
     admin_role = db.query(Role).filter(Role.name == "admin").first()
     admin = db.query(User).filter(User.username == "admin").first()
     if not admin and admin_role:
-        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-        admin = User(
+        db.add(User(
             email="admin@forecast.local",
             username="admin",
             hashed_password=pwd_context.hash("admin"),
             full_name="System Admin",
             role_id=admin_role.id,
-        )
-        db.add(admin)
+        ))
 
-    # Create a demo analyst
     analyst_role = db.query(Role).filter(Role.name == "analyst").first()
     analyst = db.query(User).filter(User.username == "analyst").first()
     if not analyst and analyst_role:
-        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-        analyst = User(
+        db.add(User(
             email="analyst@forecast.local",
             username="analyst",
             hashed_password=pwd_context.hash("analyst"),
             full_name="Demo Analyst",
             business_unit="North America",
             role_id=analyst_role.id,
-        )
-        db.add(analyst)
+        ))
+
+    reviewer_role = db.query(Role).filter(Role.name == "reviewer").first()
+    reviewer = db.query(User).filter(User.username == "reviewer").first()
+    if not reviewer and reviewer_role:
+        db.add(User(
+            email="reviewer@forecast.local",
+            username="reviewer",
+            hashed_password=pwd_context.hash("reviewer"),
+            full_name="Demo Reviewer",
+            role_id=reviewer_role.id,
+        ))
 
     db.commit()
 
@@ -85,14 +112,14 @@ def seed_roles_and_admin(db):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown lifecycle."""
-    # Startup
     logger.info("Starting Rolling Forecast API...")
 
-    # Initialize database
+    if settings.is_production:
+        settings.validate_production_secrets()
+
     init_db()
     logger.info("Database initialized")
 
-    # Seed roles and admin
     db = SessionLocal()
     try:
         seed_roles_and_admin(db)
@@ -100,49 +127,51 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
-    # Register all skills
     registry = register_all_skills()
     logger.info(f"Skills registry initialized with {len(registry.list_names())} skills")
 
-    # Generate seed data if not exists
     seed_path = os.path.join(settings.seed_data_dir, "sample_actuals.csv")
-    if not os.path.exists(seed_path):
+    if not os.path.exists(seed_path) and not settings.is_production:
         from seed_data.generate_seed import generate_seed_data
         generate_seed_data(seed_path)
         logger.info("Seed data generated")
 
-    # Ensure upload directories exist
     os.makedirs(settings.upload_dir, exist_ok=True)
     os.makedirs(settings.context_upload_dir, exist_ok=True)
+    os.makedirs(settings.export_dir, exist_ok=True)
+
+    # Optional OpenTelemetry
+    if settings.otel_enabled:
+        try:
+            from app.services.observability import setup_observability
+            setup_observability(app)
+        except Exception:
+            logger.exception("Failed to initialize observability")
 
     yield
 
-    # Shutdown
     logger.info("Shutting down Rolling Forecast API...")
 
 
-# Create FastAPI app
 app = FastAPI(
     title=settings.app_name,
     description="AI-powered Rolling Forecast Generation & Refresh platform",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
-# Middleware
 from app.middleware import RequestLoggingMiddleware, register_exception_handlers
 
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=settings.cors_origin_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 register_exception_handlers(app)
 
-# Include routers
 from app.api.health import router as health_router
 from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
@@ -151,6 +180,11 @@ from app.api.panel import router as panel_router
 from app.api.dashboard import router as dashboard_router
 from app.api.skills import router as skills_router
 from app.api.context import router as context_router
+from app.api.admin import router as admin_router
+from app.api.executive import router as executive_router
+from app.api.approvals import router as approvals_router
+from app.api.integrations import router as integrations_router
+from app.api.locks import router as locks_router
 
 app.include_router(health_router)
 app.include_router(auth_router, prefix="/api")
@@ -160,3 +194,8 @@ app.include_router(panel_router, prefix="/api")
 app.include_router(dashboard_router, prefix="/api")
 app.include_router(skills_router)
 app.include_router(context_router, prefix="/api")
+app.include_router(admin_router, prefix="/api")
+app.include_router(executive_router, prefix="/api")
+app.include_router(approvals_router, prefix="/api")
+app.include_router(integrations_router, prefix="/api")
+app.include_router(locks_router, prefix="/api")
