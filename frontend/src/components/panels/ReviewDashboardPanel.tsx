@@ -13,6 +13,8 @@ import {
   DollarSign, BarChart3, PieChart, FileText,
 } from 'lucide-react';
 import { apiPost } from '../../api/client';
+import { usePanelStore } from '../../store/panelStore';
+import { dispatchRecommendedAction } from '../../utils/recommendedActions';
 
 const COLORS = {
   green: '#86BC25',
@@ -728,10 +730,34 @@ function ReviewItemRow({
                 {item.ai_actions.map((action, idx) => (
                   <div key={idx} className="flex items-start gap-2">
                     <span className="text-xs font-bold text-surface-500 mt-0.5">{idx + 1}.</span>
-                    <div>
+                    <div className="flex-1 min-w-0">
                       <span className="text-xs font-semibold text-surface-200">{action.label}</span>
-                      <p className="text-xs text-surface-400 leading-relaxed">{action.detail}</p>
+                      <p className="text-xs text-surface-300 leading-relaxed">{action.detail}</p>
                     </div>
+                    <button
+                      type="button"
+                      disabled={isLoading}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void dispatchRecommendedAction(
+                          {
+                            type: action.type,
+                            label: action.label,
+                            detail: action.detail,
+                            item_id: item.id,
+                          },
+                          {
+                            openPanel: (type, params) => usePanelStore.getState().openPanel(type, params),
+                            onApproveItem: (id) => onAction(id, 'approve'),
+                            onRejectItem: (id) => onAction(id, 'reject'),
+                            lineItemName: item.line_item_name,
+                          },
+                        );
+                      }}
+                      className="flex-shrink-0 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 transition-colors min-h-[36px]"
+                    >
+                      {action.type === 'confirm_zero' || action.type === 'approve' ? 'Apply' : 'Go'}
+                    </button>
                   </div>
                 ))}
               </div>
@@ -776,7 +802,7 @@ function ReviewItemRow({
                   <XAxis dataKey="period" tick={{ fill: '#97999B', fontSize: 12 }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fill: '#97999B', fontSize: 12 }} axisLine={false} tickLine={false} />
                   <Tooltip
-                    contentStyle={{ background: '#1a1d21', border: '1px solid #3a3d42', borderRadius: '8px', fontSize: '10px' }}
+                    contentStyle={{ background: '#1a1d21', border: '1px solid #3a3d42', borderRadius: '8px', fontSize: '12px' }}
                     labelStyle={{ color: '#97999B', fontSize: '9px' }}
                   />
                   {item.history[0]?.actual !== undefined && (

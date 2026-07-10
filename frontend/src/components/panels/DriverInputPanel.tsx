@@ -5,6 +5,7 @@ import {
   Sparkles, TrendingUp, Filter,
 } from 'lucide-react';
 import { apiPost } from '../../api/client';
+import { Tabs } from '../ui/Tabs';
 
 interface LineItemInput {
   id: number;
@@ -126,21 +127,14 @@ export function DriverInputPanel({ data }: Props) {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-surface-800/50 rounded-lg p-1">
-        {(['submit', 'history'] as const).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-              activeTab === tab
-                ? 'bg-deloitte-green/20 text-deloitte-green border border-deloitte-green/30'
-                : 'text-surface-400 hover:text-white hover:bg-surface-700/50'
-            }`}
-          >
-            {tab === 'submit' ? 'Submit Inputs' : 'Submission History'}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        tabs={[
+          { id: 'submit', label: 'Submit Inputs' },
+          { id: 'history', label: 'Submission History' },
+        ]}
+        value={activeTab}
+        onChange={setActiveTab}
+      />
 
       {message && (
         <div className={`px-3 py-2 rounded-lg text-xs flex items-center gap-2 ${

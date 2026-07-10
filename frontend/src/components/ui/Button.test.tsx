@@ -1,8 +1,9 @@
-import { fireEvent, render } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { axe } from 'vitest-axe';
 import { Button } from './Button';
 import { SlidePanel } from './SlidePanel';
+import { Tabs } from './Tabs';
 
 describe('Button a11y', () => {
   it('has no axe violations', async () => {
@@ -50,5 +51,40 @@ describe('SlidePanel a11y', () => {
     first.focus();
     fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
     expect(document.activeElement).toBe(last);
+  });
+});
+
+describe('Tabs a11y', () => {
+  it('exposes tablist semantics without axe violations', async () => {
+    const { container } = render(
+      <Tabs
+        tabs={[
+          { id: 'a', label: 'Overview' },
+          { id: 'b', label: 'Models' },
+        ]}
+        value="a"
+        onChange={() => undefined}
+      />,
+    );
+    expect(container.querySelector('[role="tablist"]')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Overview' }).getAttribute('aria-selected')).toBe('true');
+    const results = await axe(container);
+    expect(results).toHaveNoViolations();
+  });
+
+  it('moves selection with arrow keys', () => {
+    const onChange = vi.fn();
+    render(
+      <Tabs
+        tabs={[
+          { id: 'a', label: 'Overview' },
+          { id: 'b', label: 'Models' },
+        ]}
+        value="a"
+        onChange={onChange}
+      />,
+    );
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Overview' }), { key: 'ArrowRight' });
+    expect(onChange).toHaveBeenCalledWith('b');
   });
 });

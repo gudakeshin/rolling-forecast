@@ -117,7 +117,7 @@ export function InputBar({ onSend, isStreaming }: Props) {
           onChange={handleInput}
           onKeyDown={handleKeyDown}
           placeholder={t('chat.placeholder')}
-          aria-label={t('chat.placeholder')}
+          aria-label={t('chat.composer')}
           rows={1}
           className="flex-1 bg-transparent text-white placeholder-surface-500 resize-none focus:outline-none text-sm leading-6 max-h-[200px]"
           disabled={isStreaming}

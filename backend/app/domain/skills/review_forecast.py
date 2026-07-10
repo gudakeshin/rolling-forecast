@@ -270,6 +270,23 @@ class ReviewForecastSkill(BaseSkill):
                 label="Open Interactive Review Dashboard",
             )
         )
+        content_blocks.append(
+            self._action_block([
+                {
+                    "id": "open_review_dashboard",
+                    "label": "Open Review Dashboard",
+                    "variant": "primary",
+                    "panel": "review_dashboard",
+                    "version_id": version_id,
+                },
+                {
+                    "id": "open_forecast_table",
+                    "label": "View Forecast Table",
+                    "panel": "forecast_table",
+                    "version_id": version_id,
+                },
+            ])
+        )
 
         return SkillResult.ok(
             message=(
@@ -365,6 +382,17 @@ class ReviewForecastSkill(BaseSkill):
                 params={"version_id": version_id},
                 label="Open Review Dashboard",
             )
+        )
+        content_blocks.append(
+            self._action_block([
+                {
+                    "id": "open_review_dashboard",
+                    "label": "Open Review Dashboard",
+                    "variant": "primary",
+                    "panel": "review_dashboard",
+                    "version_id": version_id,
+                },
+            ])
         )
 
         return SkillResult.ok(

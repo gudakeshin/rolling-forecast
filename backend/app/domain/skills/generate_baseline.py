@@ -950,6 +950,31 @@ class GenerateBaselineSkill(BaseSkill):
                 )
             )
 
+        actions = [
+            {
+                "id": "open_forecast_table",
+                "label": "View Forecast Table",
+                "variant": "primary",
+                "panel": "forecast_table",
+                "version_id": version.id,
+            },
+        ]
+        if critical_items or warning_items:
+            actions.append({
+                "id": "open_review_dashboard",
+                "label": "Open Review Dashboard",
+                "panel": "review_dashboard",
+                "version_id": version.id,
+            })
+        else:
+            actions.append({
+                "id": "submit_for_review",
+                "label": "Submit for Review",
+                "variant": "secondary",
+                "version_id": version.id,
+            })
+        content_blocks.append(self._action_block(actions))
+
         return SkillResult.ok(
             message=(
                 f"Generated forecast {version.name}: {summary['success']} lines forecasted "

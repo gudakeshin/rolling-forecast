@@ -38,6 +38,21 @@ async def readyz(response: Response):
     else:
         checks["llm"] = "ok" if settings.anthropic_api_key else "not_configured"
 
+    # Redis: required when configured (locks / queue / rate-limit backing)
+    redis_url = (settings.redis_url or "").strip()
+    if redis_url:
+        try:
+            import redis
+
+            client = redis.Redis.from_url(redis_url, socket_connect_timeout=2)
+            client.ping()
+            checks["redis"] = "ok"
+        except Exception as e:
+            checks["redis"] = f"error: {e}"
+            ready = False
+    else:
+        checks["redis"] = "not_configured"
+
     # Migrations-at-head: best-effort Alembic check
     try:
         from alembic.script import ScriptDirectory

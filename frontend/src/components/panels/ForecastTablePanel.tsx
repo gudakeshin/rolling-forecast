@@ -858,27 +858,48 @@ function ExpandedRemediation({
   const { openPanel } = usePanelStore();
   const [copiedAction, setCopiedAction] = useState<string | null>(null);
 
-  const handleActionClick = useCallback((action: AIAction) => {
-    const chatCmd = chatCommandForAction(action, row);
-
-    if (action.type === 'confirm_zero') {
+  const handleActionClick = useCallback(async (action: AIAction) => {
+    if (action.type === 'confirm_zero' || action.type === 'approve') {
       onAction(row.id, 'approve');
       return;
     }
 
-    if (action.type === 'approve') {
-      onAction(row.id, 'approve');
+    if (action.type === 'upload_data') {
+      openPanel('document_library', {});
       return;
     }
-
-    // For other actions, copy a chat command and show feedback
-    if (chatCmd) {
-      navigator.clipboard.writeText(chatCmd).then(() => {
+    if (action.type === 'driver_input') {
+      openPanel('driver_inputs', {});
+      return;
+    }
+    if (action.type === 'override' || action.type === 'switch_model' || action.type === 'review_override') {
+      // Stay on forecast table — copy chat command so the user can act via agent
+      const chatCmd = chatCommandForAction(action, row);
+      if (chatCmd) {
+        await navigator.clipboard.writeText(chatCmd);
         setCopiedAction(action.type);
         setTimeout(() => setCopiedAction(null), 2000);
-      });
+      }
+      return;
     }
-  }, [row, onAction]);
+    if (action.type === 'investigate' || action.type === 'compare_peers') {
+      openPanel(action.type === 'compare_peers' ? 'accuracy_tracking' : 'anomaly_dashboard', {});
+      const chatCmd = chatCommandForAction(action, row);
+      if (chatCmd) {
+        await navigator.clipboard.writeText(chatCmd);
+        setCopiedAction(action.type);
+        setTimeout(() => setCopiedAction(null), 2000);
+      }
+      return;
+    }
+
+    const chatCmd = chatCommandForAction(action, row);
+    if (chatCmd) {
+      await navigator.clipboard.writeText(chatCmd);
+      setCopiedAction(action.type);
+      setTimeout(() => setCopiedAction(null), 2000);
+    }
+  }, [row, onAction, openPanel]);
 
   const aiActions = row.ai_actions || [];
   const recommendation = row.ai_recommendation;

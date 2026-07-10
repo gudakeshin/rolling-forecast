@@ -136,6 +136,59 @@ def test_accuracy_snapshot_horizon(db_session, seed_line_items):
     assert rec.within_p10_p90 is True
 
 
+@pytest.mark.asyncio
+async def test_bias_analysis_uses_vintage_records(db_session, seed_users, skill_context):
+    """Bias report must read ForecastAccuracyRecord, not live-join all history."""
+    from app.domain.skills.auto_accuracy_report import AutoAccuracyReportSkill
+
+    li = LineItem(
+        name="Revenue Vintage Bias",
+        account_code="RV-BIAS",
+        category="Revenue",
+        is_calculated=False,
+    )
+    db_session.add(li)
+    db_session.flush()
+
+    version = ForecastVersion(
+        name="FC-Vintage-Bias",
+        status="draft",
+        version_type="scheduled",
+        horizon_months=3,
+        base_period="2024-01",
+        created_by=seed_users["analyst"].id,
+    )
+    db_session.add(version)
+    db_session.flush()
+
+    db_session.add(
+        ForecastAccuracyRecord(
+            version_id=version.id,
+            line_item_id=li.id,
+            period="2024-02",
+            horizon_offset=1,
+            predicted_p10=90.0,
+            predicted_p50=120.0,
+            predicted_p90=140.0,
+            actual=100.0,
+            absolute_error=20.0,
+            pct_error=20.0,
+            within_p10_p90=True,
+            model_type="ets",
+        )
+    )
+    db_session.commit()
+
+    skill_context.context_manager.set_active_version_id(version.id)
+    result = await AutoAccuracyReportSkill().execute(
+        {"report_type": "bias_analysis"},
+        skill_context,
+    )
+    assert result.success
+    assert result.data.get("source") == "forecast_accuracy_records"
+    assert result.data.get("over_forecasting", 0) >= 1
+
+
 def test_fact_placeholders_and_validator():
     text = "Revenue is {fact:revenue_total} vs plan."
     rendered = render_fact_placeholders(text, {"revenue_total": 1_250_000.0})

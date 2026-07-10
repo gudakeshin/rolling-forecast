@@ -631,23 +631,30 @@ function ActionButton({
 }) {
   const openPanel = usePanelStore((s) => s.openPanel);
 
-  const handleClick = () => {
+  const handleClick = async () => {
     switch (action.type) {
       case 'dismiss':
         onDismiss(item.id);
-        break;
+        return;
       case 'override':
         onOverride(item);
-        break;
-      case 'driver_input':
-        openPanel('driver_inputs', { version_id: item.id });
-        break;
+        return;
+      case 'confirm_zero':
+        onDismiss(item.id);
+        return;
       case 'investigate':
         onCopy(`Investigate anomaly for ${item.line_item_name}: ${action.detail}`);
-        break;
+        openPanel('anomaly_dashboard', {});
+        return;
       default:
         break;
     }
+
+    const { dispatchRecommendedAction } = await import('../../utils/recommendedActions');
+    await dispatchRecommendedAction(
+      { type: action.type, label: action.label, detail: action.detail },
+      { openPanel, lineItemName: item.line_item_name },
+    );
   };
 
   const iconMap: Record<string, any> = {
@@ -655,6 +662,8 @@ function ActionButton({
     override: Edit3,
     driver_input: MessageSquare,
     dismiss: EyeOff,
+    upload_data: ArrowRight,
+    confirm_zero: Target,
   };
 
   const colorMap: Record<string, string> = {
@@ -662,6 +671,8 @@ function ActionButton({
     override: 'text-amber-400 border-amber-500/30 hover:bg-amber-500/10',
     driver_input: 'text-deloitte-green border-deloitte-green/30 hover:bg-deloitte-green/10',
     dismiss: 'text-surface-500 border-surface-700 hover:bg-surface-700/50',
+    upload_data: 'text-violet-400 border-violet-500/30 hover:bg-violet-500/10',
+    confirm_zero: 'text-deloitte-green border-deloitte-green/30 hover:bg-deloitte-green/10',
   };
 
   const Icon = iconMap[action.type] || ArrowRight;

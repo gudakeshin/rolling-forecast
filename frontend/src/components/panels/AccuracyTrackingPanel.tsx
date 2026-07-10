@@ -5,6 +5,7 @@ import {
   ResponsiveContainer, ReferenceLine, Cell,
 } from 'recharts';
 import { Target, TrendingDown, BarChart3, AlertCircle, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { Tabs } from '../ui/Tabs';
 
 const COLORS = {
   green: '#86BC25',
@@ -106,21 +107,15 @@ export function AccuracyTrackingPanel({ data }: Props) {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-surface-800/50 rounded-lg p-1">
-        {(['overview', 'models', 'deviations'] as const).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-              activeTab === tab
-                ? 'bg-deloitte-green/20 text-deloitte-green border border-deloitte-green/30'
-                : 'text-surface-400 hover:text-white hover:bg-surface-700/50'
-            }`}
-          >
-            {tab === 'overview' ? 'Trend & Categories' : tab === 'models' ? 'Model Compare' : 'Top Deviations'}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        tabs={[
+          { id: 'overview', label: 'Trend & Categories' },
+          { id: 'models', label: 'Model Compare' },
+          { id: 'deviations', label: 'Top Deviations' },
+        ]}
+        value={activeTab}
+        onChange={setActiveTab}
+      />
 
       {activeTab === 'overview' && (
         <div className="space-y-3">
