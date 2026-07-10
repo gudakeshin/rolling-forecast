@@ -12,6 +12,7 @@ from app.database import get_db
 from app.models.integration import IntegrationConnection
 from app.models.user import User
 from app.services.audit import record_audit
+from app.services.integration_safety import assert_safe_integration_url
 from app.services.permissions import require_permission
 from app.services.secret_box import encrypt_secret
 
@@ -65,6 +66,10 @@ async def create_connection(
 ):
     if db.query(IntegrationConnection).filter(IntegrationConnection.name == body.name).first():
         raise HTTPException(409, f"Connection '{body.name}' already exists")
+    try:
+        assert_safe_integration_url(body.url, body.kind)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
     conn = IntegrationConnection(
         name=body.name,
         kind=body.kind,
@@ -102,6 +107,10 @@ async def update_connection(
     if body.name is not None:
         conn.name = body.name
     if body.url is not None:
+        try:
+            assert_safe_integration_url(body.url, conn.kind)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
         conn.encrypted_url = encrypt_secret(body.url)
     if body.token is not None:
         conn.encrypted_token = encrypt_secret(body.token) if body.token else None

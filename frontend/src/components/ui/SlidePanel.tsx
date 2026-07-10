@@ -3,6 +3,9 @@ import { X, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { IconButton } from './Pressable';
 import { t } from '../../i18n';
 
+const FOCUSABLE_SELECTOR =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 interface SlidePanelProps {
   title: string;
   icon?: ReactNode;
@@ -15,7 +18,7 @@ interface SlidePanelProps {
 }
 
 /**
- * Shared slide-over panel shell with dialog semantics, Esc-close, and focus restore.
+ * Shared slide-over panel shell with dialog semantics, Esc-close, Tab focus trap, and focus restore.
  */
 export function SlidePanel({
   title,
@@ -32,15 +35,36 @@ export function SlidePanel({
   useEffect(() => {
     previouslyFocused.current = document.activeElement as HTMLElement | null;
     const node = panelRef.current;
-    const focusable = node?.querySelector<HTMLElement>(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-    );
+    const focusable = node?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
     focusable?.focus();
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
         onClose();
+        return;
+      }
+      if (e.key !== 'Tab' || !node) return;
+
+      const items = Array.from(node.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+        (el) => !el.hasAttribute('disabled') && el.getAttribute('aria-hidden') !== 'true',
+      );
+      if (items.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+
+      if (e.shiftKey) {
+        if (active === first || !node.contains(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (active === last || !node.contains(active)) {
+        e.preventDefault();
+        first.focus();
       }
     };
     document.addEventListener('keydown', onKey);

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import socket
 from urllib.parse import urljoin, urlparse
 
 import sqlparse
@@ -57,21 +58,58 @@ def validate_select_query(query: str) -> str:
     return str(stmt).strip().rstrip(";")
 
 
+def _ip_is_private(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return any(ip in net for net in _PRIVATE_NETWORKS)
+
+
 def is_private_host(hostname: str) -> bool:
-    """Return True if hostname resolves to / is a private or loopback address."""
+    """Return True if hostname is / resolves to a private or loopback address.
+
+    Fail-closed: unresolvable hostnames are treated as private.
+    """
     if not hostname:
         return True
     host = hostname.strip("[]").lower()
     if host in {"localhost", "metadata.google.internal"}:
         return True
     try:
-        ip = ipaddress.ip_address(host)
-        return any(ip in net for net in _PRIVATE_NETWORKS)
+        return _ip_is_private(ipaddress.ip_address(host))
     except ValueError:
-        # Hostname — block obvious internal names; DNS rebinding is Phase 4 concern
-        if host.endswith(".local") or host.endswith(".internal"):
-            return True
-        return False
+        pass
+
+    if host.endswith(".local") or host.endswith(".internal"):
+        return True
+
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return True  # fail closed — cannot verify public reachability
+
+    if not infos:
+        return True
+
+    for info in infos:
+        addr = info[4][0]
+        try:
+            if _ip_is_private(ipaddress.ip_address(addr)):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def assert_safe_integration_url(url: str, kind: str) -> None:
+    """Reject integration URLs that target private/loopback hosts (SSRF)."""
+    if not url or not url.strip():
+        raise ValueError("URL is required")
+    parsed = urlparse(url.strip())
+    host = parsed.hostname
+    if not host:
+        raise ValueError("URL must include a hostname")
+    if kind == "erp" and parsed.scheme not in ("http", "https"):
+        raise ValueError("ERP URLs must use http or https")
+    if is_private_host(host):
+        raise ValueError("URL host is not allowed (private/loopback)")
 
 
 def resolve_erp_url(base_url: str, relative_path: str) -> str:

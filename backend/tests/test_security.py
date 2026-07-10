@@ -11,7 +11,12 @@ from fastapi.testclient import TestClient
 
 from app.models.line_item import LineItem
 from app.models.user import Role, User
-from app.services.integration_safety import resolve_erp_url, validate_select_query
+from app.services.integration_safety import (
+    assert_safe_integration_url,
+    is_private_host,
+    resolve_erp_url,
+    validate_select_query,
+)
 from app.services.permissions import can_view_all_bus, line_item_scope_filter
 from passlib.context import CryptContext
 
@@ -61,9 +66,49 @@ def test_erp_rejects_private_host():
         resolve_erp_url("http://127.0.0.1:8080/", "v1/actuals")
 
 
-def test_erp_joins_relative_path():
+def test_erp_joins_relative_path(monkeypatch):
+    monkeypatch.setattr(
+        "socket.getaddrinfo",
+        lambda *a, **k: [(None, None, None, None, ("93.184.216.34", 0))],
+    )
     url = resolve_erp_url("https://erp.example.com/api/", "v1/actuals")
     assert url == "https://erp.example.com/api/v1/actuals"
+
+
+def test_is_private_host_resolves_dns(monkeypatch):
+    """Hostnames that resolve to RFC1918 addresses must be blocked (SSRF)."""
+
+    def fake_getaddrinfo(host, *args, **kwargs):
+        assert host == "evil.example.com"
+        return [(None, None, None, None, ("10.0.0.5", 0))]
+
+    monkeypatch.setattr("socket.getaddrinfo", fake_getaddrinfo)
+    assert is_private_host("evil.example.com") is True
+
+
+def test_is_private_host_allows_public_dns(monkeypatch):
+    def fake_getaddrinfo(host, *args, **kwargs):
+        return [(None, None, None, None, ("93.184.216.34", 0))]
+
+    monkeypatch.setattr("socket.getaddrinfo", fake_getaddrinfo)
+    assert is_private_host("example.com") is False
+
+
+def test_is_private_host_fail_closed_on_dns_error(monkeypatch):
+    import socket as sock
+
+    def boom(*args, **kwargs):
+        raise sock.gaierror(8, "nodename nor servname provided")
+
+    monkeypatch.setattr("socket.getaddrinfo", boom)
+    assert is_private_host("unresolvable.invalid") is True
+
+
+def test_assert_safe_integration_url_blocks_private():
+    with pytest.raises(ValueError, match="private"):
+        assert_safe_integration_url("https://127.0.0.1/api", "erp")
+    with pytest.raises(ValueError, match="private"):
+        assert_safe_integration_url("postgresql://u:p@10.0.0.1:5432/db", "warehouse")
 
 
 def test_warehouse_pull_rejects_raw_connection_url(client):

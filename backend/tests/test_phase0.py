@@ -155,28 +155,27 @@ def test_sod_creator_cannot_self_approve(client):
     assert "segregation of duties" in r.json()["detail"].lower()
 
 
-def test_generate_baseline_sets_created_by(db_session, seed_users, seed_actuals, skill_context):
+@pytest.mark.asyncio
+async def test_generate_baseline_sets_created_by(db_session, seed_users, seed_actuals, skill_context):
     """AI-generated forecasts must stamp created_by for SoD enforcement."""
     from app.domain.skills.generate_baseline import GenerateBaselineSkill
 
     skill_context.context_manager.set_memory("last_dataset_id", seed_actuals.id)
     skill = GenerateBaselineSkill()
-
-    # Short-circuit heavy forecasting: only assert version creation path stamps user
-    version = ForecastVersion(
-        name="FC-created-by-check",
-        status="draft",
-        version_type="scheduled",
-        actuals_dataset_id=seed_actuals.id,
-        actuals_hash=seed_actuals.file_hash,
-        horizon_months=3,
-        base_period=seed_actuals.period_end,
-        random_seed=42,
-        created_by=skill_context.user_id,
+    result = await skill.execute(
+        {
+            "horizon_months": 3,
+            "model_type": "linear",
+            "random_seed": 42,
+            "async_job": False,
+            "skip_plan_check": True,
+        },
+        skill_context,
     )
-    db_session.add(version)
-    db_session.commit()
+    assert result.success is True, result.error or result.message
+    version_id = result.data.get("version_id")
+    assert version_id
 
-    loaded = db_session.query(ForecastVersion).filter(ForecastVersion.id == version.id).one()
+    loaded = db_session.query(ForecastVersion).filter(ForecastVersion.id == version_id).one()
     assert loaded.created_by == seed_users["analyst"].id
-    assert skill.name == "generate_baseline"
+    assert loaded.created_by == skill_context.user_id

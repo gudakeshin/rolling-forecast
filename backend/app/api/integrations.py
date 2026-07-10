@@ -6,7 +6,7 @@ import csv
 import io
 import logging
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -16,6 +16,7 @@ from app.models.budget import BudgetLineItem, BudgetVersion
 from app.models.integration import IntegrationConnection
 from app.models.line_item import LineItem
 from app.models.user import User
+from app.rate_limit import limiter
 from app.services.accuracy_snapshot import AccuracySnapshotService
 from app.services.audit import record_audit
 from app.services.coa_dependencies import ensure_standard_dependencies
@@ -132,11 +133,14 @@ async def _persist_actuals_df(db: Session, result, source_type: str, source_name
 
 
 @router.post("/warehouse/pull")
+@limiter.limit("20/minute")
 async def pull_warehouse(
+    request: Request,
     body: WarehousePullRequest,
     current_user: User = Depends(require_permission("generate")),
     db: Session = Depends(get_db),
 ):
+    _ = request  # required by slowapi
     conn = _load_connection(db, body.connection_id, "warehouse")
     try:
         url = decrypt_secret(conn.encrypted_url)
@@ -169,11 +173,14 @@ async def pull_warehouse(
 
 
 @router.post("/erp/pull")
+@limiter.limit("20/minute")
 async def pull_erp(
+    request: Request,
     body: ERPPullRequest,
     current_user: User = Depends(require_permission("generate")),
     db: Session = Depends(get_db),
 ):
+    _ = request  # required by slowapi
     conn = _load_connection(db, body.connection_id, "erp")
     try:
         base_url = decrypt_secret(conn.encrypted_url)

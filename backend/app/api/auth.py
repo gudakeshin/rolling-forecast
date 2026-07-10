@@ -82,8 +82,10 @@ async def login(request: Request, body: LoginRequest, db: Session = Depends(get_
 
 
 @router.post("/register", response_model=UserResponse)
+@limiter.limit("10/minute")
 async def register(
-    request: UserCreate,
+    request: Request,
+    body: UserCreate,
     db: Session = Depends(get_db),
 ):
     """Register a new user.
@@ -100,13 +102,13 @@ async def register(
         )
 
     existing = db.query(User).filter(
-        (User.email == request.email) | (User.username == request.username)
+        (User.email == body.email) | (User.username == body.username)
     ).first()
     if existing:
         raise HTTPException(status_code=400, detail="User already exists")
 
     allowed_self_roles = {"analyst", "input_provider"}
-    role_name = request.role_name or "analyst"
+    role_name = body.role_name or "analyst"
     if role_name not in allowed_self_roles:
         raise HTTPException(
             status_code=403,
@@ -118,11 +120,11 @@ async def register(
         raise HTTPException(status_code=400, detail=f"Role '{role_name}' not found")
 
     user = User(
-        email=request.email,
-        username=request.username,
-        hashed_password=pwd_context.hash(request.password),
-        full_name=request.full_name,
-        business_unit=request.business_unit,
+        email=body.email,
+        username=body.username,
+        hashed_password=pwd_context.hash(body.password),
+        full_name=body.full_name,
+        business_unit=body.business_unit,
         role_id=role.id,
     )
     db.add(user)
@@ -215,8 +217,10 @@ async def get_me(current_user: User = Depends(get_current_user)):
 
 
 @router.get("/oidc/login")
-async def oidc_login():
+@limiter.limit("20/minute")
+async def oidc_login(request: Request):
     """Start OIDC authorization-code flow with state, nonce, and PKCE (S256)."""
+    _ = request  # required by slowapi
     if not settings.oidc_enabled:
         raise HTTPException(status_code=404, detail="OIDC SSO is not enabled")
     if not settings.oidc_issuer or not settings.oidc_client_id:
@@ -289,12 +293,15 @@ async def _verify_oidc_id_token(client, id_token: str, expected_nonce: str) -> d
 
 
 @router.get("/oidc/callback")
+@limiter.limit("20/minute")
 async def oidc_callback(
+    request: Request,
     code: str,
     state: str | None = None,
     db: Session = Depends(get_db),
 ):
     """Exchange OIDC code for tokens; redirect with a one-time app code (not JWT)."""
+    _ = request  # required by slowapi
     if not settings.oidc_enabled:
         raise HTTPException(status_code=404, detail="OIDC SSO is not enabled")
 
@@ -394,8 +401,14 @@ class SSOExchangeRequest(BaseModel):
 
 
 @router.post("/oidc/exchange", response_model=TokenResponse)
-async def oidc_exchange(body: SSOExchangeRequest, db: Session = Depends(get_db)):
+@limiter.limit("20/minute")
+async def oidc_exchange(
+    request: Request,
+    body: SSOExchangeRequest,
+    db: Session = Depends(get_db),
+):
     """Exchange a one-time SSO code (from callback redirect) for an app JWT."""
+    _ = request  # required by slowapi
     from app.services.oidc_store import redeem_one_time_code
 
     user_id = redeem_one_time_code(body.code)
