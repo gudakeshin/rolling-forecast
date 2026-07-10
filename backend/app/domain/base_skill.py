@@ -12,6 +12,7 @@ Python class for the actual execution.
 """
 
 from abc import ABC, abstractmethod
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import Any
 from sqlalchemy.orm import Session
@@ -28,6 +29,24 @@ class SkillContext:
     conversation_id: str
     working_memory: dict[str, Any] = field(default_factory=dict)
     user: Any = None  # optional User for BU scoping inside skills
+
+
+# Request-scoped context so compiled agent tools stay valid across turns
+_active_skill_context: ContextVar[SkillContext | None] = ContextVar(
+    "rf_skill_context", default=None
+)
+
+
+def push_skill_context(ctx: SkillContext) -> Token:
+    return _active_skill_context.set(ctx)
+
+
+def reset_skill_context(token: Token) -> None:
+    _active_skill_context.reset(token)
+
+
+def get_active_skill_context() -> SkillContext | None:
+    return _active_skill_context.get()
 
 
 @dataclass

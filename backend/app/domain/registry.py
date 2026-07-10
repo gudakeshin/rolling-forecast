@@ -95,6 +95,8 @@ class SkillsRegistry:
     def __init__(self):
         self._skills: dict[str, BaseSkill] = {}
         self._definitions: dict[str, SkillDefinition] = {}
+        # Bumped on .md reload/edit so MasterAgent can invalidate its graph cache
+        self.definitions_generation: int = 0
 
     def register(self, skill: BaseSkill) -> None:
         """Register a skill in the registry and load its .md definition."""
@@ -110,9 +112,18 @@ class SkillsRegistry:
         else:
             logger.info(f"Registered skill: {skill.name} (no .md definition found)")
 
+    def bump_definitions_generation(self) -> None:
+        self.definitions_generation += 1
+        try:
+            from app.orchestration.master_agent import invalidate_agent_cache
+            invalidate_agent_cache()
+        except Exception:
+            pass
+
     def load_definitions(self) -> None:
         """Load/reload all .md definitions from the skills directory."""
         self._definitions = load_all_skill_definitions()
+        self.bump_definitions_generation()
         logger.info(f"Loaded {len(self._definitions)} skill definitions from .md files")
 
     def get(self, name: str) -> BaseSkill | None:
@@ -181,24 +192,28 @@ class SkillsRegistry:
                 result.append(skill)
         return result
 
-    def as_langchain_tools(self, context: SkillContext) -> list[StructuredTool]:
+    def as_langchain_tools(self, context: SkillContext | None = None) -> list[StructuredTool]:
         """
         Convert role-filtered skills into LangChain tools.
-        
-        Each skill becomes a StructuredTool that the ReACT agent can invoke.
-        The tool description is enriched with the .md definition's full_description
-        (including "When to Use" and examples) for better LLM tool selection.
+
+        Tools resolve SkillContext at invoke time via ContextVar so the compiled
+        agent graph can be cached across turns. ``context`` is only used to pick
+        which skills to expose for the caller's role.
         """
-        role_name = getattr(getattr(context, "user", None), "role", None)
-        role_key = role_name.name if role_name else getattr(context, "user_role", "analyst")
+        from app.domain.base_skill import get_active_skill_context
+
+        role_key = "analyst"
+        if context is not None:
+            role_name = getattr(getattr(context, "user", None), "role", None)
+            role_key = role_name.name if role_name else getattr(context, "user_role", "analyst")
         skills = self.get_for_role(role_key)
         tools = []
         for skill in skills:
-            tool = self._skill_to_tool(skill, context)
+            tool = self._skill_to_tool(skill, get_active_skill_context)
             tools.append(tool)
         return tools
 
-    def _skill_to_tool(self, skill: BaseSkill, context: SkillContext) -> StructuredTool:
+    def _skill_to_tool(self, skill: BaseSkill, get_context) -> StructuredTool:
         """Convert a single skill to a LangChain StructuredTool.
         
         Uses the .md definition's enriched description if available.
@@ -222,6 +237,12 @@ class SkillsRegistry:
 
         async def _invoke_skill(**kwargs) -> str:
             """Wrapper that invokes the skill and returns formatted output."""
+            context = get_context()
+            if context is None:
+                return json.dumps({
+                    "success": False,
+                    "error": "No active skill context for this request",
+                })
             # Check permissions
             if not skill.validate_permissions(context):
                 return json.dumps({

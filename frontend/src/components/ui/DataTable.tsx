@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useRef } from 'react';
 import {
   flexRender,
   getCoreRowModel,
@@ -7,6 +7,7 @@ import {
   type ColumnDef,
   type SortingState,
 } from '@tanstack/react-table';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { Download, ArrowUpDown } from 'lucide-react';
 
 export interface DataTableColumn {
@@ -20,6 +21,7 @@ interface Props<T extends Record<string, unknown>> {
   rows: T[];
   maxHeight?: number;
   exportFilename?: string;
+  rowHeight?: number;
 }
 
 function toCsv(columns: DataTableColumn[], rows: Record<string, unknown>[]): string {
@@ -43,14 +45,18 @@ export function downloadCsv(filename: string, columns: DataTableColumn[], rows: 
   URL.revokeObjectURL(url);
 }
 
+const VIRTUALIZE_THRESHOLD = 40;
+
 export function DataTable<T extends Record<string, unknown>>({
   title,
   columns,
   rows,
   maxHeight = 360,
   exportFilename = 'export.csv',
+  rowHeight = 32,
 }: Props<T>) {
   const [sorting, setSorting] = useState<SortingState>([]);
+  const parentRef = useRef<HTMLDivElement>(null);
 
   const colDefs = useMemo<ColumnDef<T>[]>(
     () =>
@@ -80,6 +86,23 @@ export function DataTable<T extends Record<string, unknown>>({
     getSortedRowModel: getSortedRowModel(),
   });
 
+  const tableRows = table.getRowModel().rows;
+  const useVirtual = tableRows.length > VIRTUALIZE_THRESHOLD;
+
+  const virtualizer = useVirtualizer({
+    count: useVirtual ? tableRows.length : 0,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => rowHeight,
+    overscan: 8,
+  });
+
+  const virtualRows = useVirtual ? virtualizer.getVirtualItems() : [];
+  const paddingTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
+  const paddingBottom =
+    virtualRows.length > 0
+      ? virtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
+      : 0;
+
   return (
     <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl my-2 overflow-hidden">
       <div className="flex items-center justify-between px-3 py-2 border-b border-surface-700/50">
@@ -97,8 +120,8 @@ export function DataTable<T extends Record<string, unknown>>({
           CSV
         </button>
       </div>
-      <div className="overflow-auto" style={{ maxHeight }}>
-        <table className="w-full text-xs">
+      <div ref={parentRef} className="overflow-auto" style={{ maxHeight }}>
+        <table className="w-full text-xs" style={{ fontSize: 12 }}>
           <thead className="sticky top-0 bg-surface-800 z-10">
             {table.getHeaderGroups().map((hg) => (
               <tr key={hg.id} className="border-b border-surface-700">
@@ -111,15 +134,46 @@ export function DataTable<T extends Record<string, unknown>>({
             ))}
           </thead>
           <tbody>
-            {table.getRowModel().rows.map((row) => (
-              <tr key={row.id} className="border-b border-surface-800/80 hover:bg-surface-700/30">
-                {row.getVisibleCells().map((cell) => (
-                  <td key={cell.id} className="px-3 py-1.5 text-surface-200 whitespace-nowrap">
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </td>
-                ))}
-              </tr>
-            ))}
+            {useVirtual ? (
+              <>
+                {paddingTop > 0 && (
+                  <tr>
+                    <td colSpan={columns.length} style={{ height: paddingTop, padding: 0, border: 0 }} />
+                  </tr>
+                )}
+                {virtualRows.map((vRow) => {
+                  const row = tableRows[vRow.index];
+                  return (
+                    <tr
+                      key={row.id}
+                      className="border-b border-surface-800/80 hover:bg-surface-700/30"
+                      style={{ height: rowHeight }}
+                    >
+                      {row.getVisibleCells().map((cell) => (
+                        <td key={cell.id} className="px-3 py-1.5 text-surface-200 whitespace-nowrap">
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
+                {paddingBottom > 0 && (
+                  <tr>
+                    <td colSpan={columns.length} style={{ height: paddingBottom, padding: 0, border: 0 }} />
+                  </tr>
+                )}
+              </>
+            ) : (
+              tableRows.map((row) => (
+                <tr key={row.id} className="border-b border-surface-800/80 hover:bg-surface-700/30">
+                  {row.getVisibleCells().map((cell) => (
+                    <td key={cell.id} className="px-3 py-1.5 text-surface-200 whitespace-nowrap">
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </td>
+                  ))}
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>

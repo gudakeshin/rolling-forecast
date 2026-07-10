@@ -116,6 +116,7 @@ async def update_skill(
     new_defn = load_skill_definition(skill_name)
     if new_defn:
         registry._definitions[skill_name] = new_defn
+    registry.bump_definitions_generation()
 
     record_audit(
         db,

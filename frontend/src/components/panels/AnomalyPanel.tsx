@@ -501,10 +501,10 @@ function AnomalyRow({
                         <stop offset="95%" stopColor={COLORS.teal} stopOpacity={0} />
                       </linearGradient>
                     </defs>
-                    <XAxis dataKey="period" tick={{ fontSize: 8, fill: '#666' }} tickLine={false} axisLine={false} />
-                    <YAxis tick={{ fontSize: 8, fill: '#666' }} tickLine={false} axisLine={false} width={40} tickFormatter={(v) => formatCurrency(v)} />
+                    <XAxis dataKey="period" tick={{ fontSize: 12, fill: '#666' }} tickLine={false} axisLine={false} />
+                    <YAxis tick={{ fontSize: 12, fill: '#666' }} tickLine={false} axisLine={false} width={40} tickFormatter={(v) => formatCurrency(v)} />
                     <Tooltip
-                      contentStyle={{ background: '#1a1a2e', border: '1px solid #333', borderRadius: 8, fontSize: 10 }}
+                      contentStyle={{ background: '#1a1a2e', border: '1px solid #333', borderRadius: 8, fontSize: 12 }}
                       labelStyle={{ color: '#fff', marginBottom: 4 }}
                       formatter={(v: number, name: string) => [formatCurrency(v), name === 'actual' ? 'Actual' : 'Forecast']}
                     />

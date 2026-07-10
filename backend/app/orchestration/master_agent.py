@@ -5,16 +5,29 @@ import logging
 from typing import Any, AsyncIterator
 
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langgraph.prebuilt import create_react_agent
 
 from sqlalchemy.orm import Session
 from app.config import settings
 from app.orchestration.context_manager import ContextManager
 from app.domain.registry import get_registry
-from app.domain.base_skill import SkillContext
+from app.domain.base_skill import (
+    SkillContext,
+    push_skill_context,
+    reset_skill_context,
+)
 
 logger = logging.getLogger(__name__)
+
+# Module-level compiled-graph cache: (role, definitions_generation, model) → agent
+_agent_cache: dict[tuple[str, int, str], Any] = {}
+
+
+def invalidate_agent_cache() -> None:
+    """Drop cached LangGraph agents (call on skill hot-reload)."""
+    _agent_cache.clear()
+
 
 SYSTEM_PROMPT = """You are the Rolling Forecast Assistant, an AI-powered FP&A agent that helps finance teams generate, manage, and analyze rolling forecasts.
 
@@ -50,9 +63,6 @@ When the user asks to generate, run, or create a forecast, ALWAYS follow this tw
 
 **Exception:** If the user explicitly says "use Prophet" or "run ARIMA", skip planning and go straight to generate_baseline with that model_type.
 
-## Current User Context
-{user_context}
-
 ## Guidelines
 1. Always explain what you're doing before invoking a skill
 2. Present results conversationally with key highlights first, then offer detailed views
@@ -69,6 +79,8 @@ When the user asks to generate, run, or create a forecast, ALWAYS follow this tw
 13. When answering questions, check if relevant context from uploaded documents is available. Use the search_context tool to find information in the user's document library.
 14. Use web_search for current market data, news, or external context. Use financial_lookup for stock prices, economic indicators, and company financials.
 15. When a user shares a URL, use fetch_url to read and optionally index the content.
+
+Dynamic per-turn context (user session, active version, document excerpts) is provided in subsequent system messages.
 """
 
 
@@ -83,7 +95,6 @@ class MasterAgent:
     def __init__(self, context_manager: ContextManager, db: Session):
         self.context_manager = context_manager
         self.db = db
-        self._agent = None
         self._pending_query: str = ""
 
     def _build_skill_context(self) -> SkillContext:
@@ -98,12 +109,21 @@ class MasterAgent:
             user=self.context_manager.user,
         )
 
-    def _get_agent(self):
-        """Build or return the LangGraph react agent."""
-        if self._agent is not None:
-            return self._agent
+    def _role_key(self) -> str:
+        user = self.context_manager.user
+        role = getattr(user, "role", None) if user else None
+        if role is not None and getattr(role, "name", None):
+            return role.name
+        return self.context_manager.user_role or "analyst"
 
-        # Initialize Claude LLM (omit temperature — deprecated on Claude Sonnet 5+)
+    def _get_agent(self):
+        """Return a cached LangGraph react agent; rebuild on role/model/skill change."""
+        registry = get_registry()
+        cache_key = (self._role_key(), registry.definitions_generation, settings.anthropic_model)
+        cached = _agent_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         llm = ChatAnthropic(
             model=settings.anthropic_model,
             anthropic_api_key=settings.anthropic_api_key,
@@ -112,32 +132,16 @@ class MasterAgent:
             max_retries=2,
         )
 
-        # Get tools from skills registry
-        registry = get_registry()
         skill_context = self._build_skill_context()
         tools = registry.as_langchain_tools(skill_context)
 
-        # Build the system prompt with optional document context
-        system_message = SYSTEM_PROMPT.format(
-            user_context=self.context_manager.get_system_context()
-        )
-        doc_context = self.context_manager.get_relevant_context(
-            self._pending_query or "", top_k=3
-        )
-        if doc_context:
-            system_message += (
-                "\n\n## Relevant Context from Uploaded Documents\n"
-                + doc_context
-            )
-
-        # Create the react agent using LangGraph
-        self._agent = create_react_agent(
+        agent = create_react_agent(
             model=llm,
             tools=tools,
-            prompt=system_message,
+            prompt=SYSTEM_PROMPT,
         )
-
-        return self._agent
+        _agent_cache[cache_key] = agent
+        return agent
 
     async def astream(self, user_message: str) -> AsyncIterator[dict[str, Any]]:
         """
@@ -154,19 +158,33 @@ class MasterAgent:
         - error: {error}
         """
         self._pending_query = user_message
-        self._agent = None  # rebuild to inject fresh document context
+        ctx_token = push_skill_context(self._build_skill_context())
         agent = self._get_agent()
 
-        # Build chat history from context
+        # Per-turn dynamic context (not baked into the cached graph prompt)
+        messages: list[Any] = [
+            SystemMessage(
+                content="## Current User Context\n"
+                + self.context_manager.get_system_context()
+            )
+        ]
+        doc_context = self.context_manager.get_relevant_context(
+            self._pending_query or "", top_k=3
+        )
+        if doc_context:
+            messages.append(
+                SystemMessage(
+                    content="## Relevant Context from Uploaded Documents\n" + doc_context
+                )
+            )
+
         chat_history = self.context_manager.get_chat_history()
-        messages: list[Any] = []
         for msg in chat_history[:-1]:  # Exclude the current message
             if msg["role"] == "user":
                 messages.append(HumanMessage(content=msg["content"]))
             elif msg["role"] == "assistant":
                 messages.append(AIMessage(content=msg["content"]))
 
-        # Add current message
         messages.append(HumanMessage(content=user_message))
 
         try:
@@ -400,6 +418,8 @@ class MasterAgent:
                 "event": "error",
                 "data": {"error": str(e)},
             }
+        finally:
+            reset_skill_context(ctx_token)
 
     async def invoke(self, user_message: str) -> dict[str, Any]:
         """Non-streaming version -- runs the agent and returns the full response."""

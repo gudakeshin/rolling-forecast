@@ -773,8 +773,8 @@ function ReviewItemRow({
                       <stop offset="95%" stopColor="#0076A8" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <XAxis dataKey="period" tick={{ fill: '#97999B', fontSize: 8 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: '#97999B', fontSize: 8 }} axisLine={false} tickLine={false} />
+                  <XAxis dataKey="period" tick={{ fill: '#97999B', fontSize: 12 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: '#97999B', fontSize: 12 }} axisLine={false} tickLine={false} />
                   <Tooltip
                     contentStyle={{ background: '#1a1d21', border: '1px solid #3a3d42', borderRadius: '8px', fontSize: '10px' }}
                     labelStyle={{ color: '#97999B', fontSize: '9px' }}
@@ -1045,8 +1045,8 @@ export function ReviewDashboardPanel({ data, onRefresh }: Props) {
             <ResponsiveContainer width="100%" height={120}>
               <LineChart data={confidence_trend} margin={{ top: 5, right: 5, left: -15, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-                <XAxis dataKey="version" tick={{ fill: '#97999B', fontSize: 9 }} />
-                <YAxis tick={{ fill: '#97999B', fontSize: 9 }} domain={[0, 100]} />
+                <XAxis dataKey="version" tick={{ fill: '#97999B', fontSize: 12 }} />
+                <YAxis tick={{ fill: '#97999B', fontSize: 12 }} domain={[0, 100]} />
                 <Tooltip content={<ChartTooltip />} />
                 <Line type="monotone" dataKey="avg_confidence" name="Avg Confidence" stroke={COLORS.green} strokeWidth={2} dot={{ r: 3 }} />
               </LineChart>
@@ -1061,8 +1061,8 @@ export function ReviewDashboardPanel({ data, onRefresh }: Props) {
           {category_flag_chart.length > 0 ? (
             <ResponsiveContainer width="100%" height={120}>
               <BarChart data={category_flag_chart.slice(0, 6)} layout="vertical" margin={{ left: 60, right: 5, top: 5, bottom: 5 }}>
-                <XAxis type="number" tick={{ fill: '#97999B', fontSize: 9 }} />
-                <YAxis type="category" dataKey="category" tick={{ fill: '#97999B', fontSize: 9 }} width={55} />
+                <XAxis type="number" tick={{ fill: '#97999B', fontSize: 12 }} />
+                <YAxis type="category" dataKey="category" tick={{ fill: '#97999B', fontSize: 12 }} width={55} />
                 <Tooltip content={<ChartTooltip />} />
                 <Bar dataKey="count" name="Issues" fill={COLORS.red} radius={[0, 3, 3, 0]} />
               </BarChart>

@@ -261,3 +261,75 @@ async def test_mint_reconcile_tags_bounds(db_session, seed_line_items):
     )
     assert parent.bounds_method in (BOUNDS_METHOD_MINT, "linear_aggregation")
     assert parent.p50 is not None
+
+
+def test_period_to_date_accepts_fiscal_labels():
+    """Baseline date construction must not assume YYYY-MM + '-01'."""
+    from datetime import date
+
+    from app.services.period_calendar import (
+        CalendarType,
+        FiscalCalendarConfig,
+        period_to_date,
+        push_calendar,
+        reset_calendar,
+    )
+
+    cfg = FiscalCalendarConfig(calendar_type=CalendarType.FISCAL_445)
+    token = push_calendar(cfg)
+    try:
+        d = period_to_date("FY2026-P01", cfg)
+        assert isinstance(d, date)
+        assert period_to_date("2025-03").month == 3
+    finally:
+        reset_calendar(token)
+
+
+def test_agent_cache_reuses_compiled_graph(monkeypatch):
+    """Compiled agent graph is cached across MasterAgent instances until skill reload."""
+    from app.orchestration import master_agent as ma
+
+    ma.invalidate_agent_cache()
+    calls = {"n": 0}
+    sentinel = object()
+
+    def fake_create_react_agent(**kwargs):
+        calls["n"] += 1
+        return sentinel
+
+    monkeypatch.setattr(ma, "create_react_agent", fake_create_react_agent)
+    monkeypatch.setattr(ma, "ChatAnthropic", lambda **kwargs: object())
+
+    class FakeCM:
+        user_id = "u1"
+        user_role = "analyst"
+        conversation_id = "c1"
+        user = None
+        _working_memory: dict = {}
+
+        def get_system_context(self):
+            return "ctx"
+
+        def get_relevant_context(self, *a, **k):
+            return ""
+
+        def get_chat_history(self, **k):
+            return []
+
+    class FakeRegistry:
+        definitions_generation = 0
+
+        def as_langchain_tools(self, ctx=None):
+            return []
+
+    monkeypatch.setattr(ma, "get_registry", lambda: FakeRegistry())
+
+    a1 = ma.MasterAgent(context_manager=FakeCM(), db=None)  # type: ignore[arg-type]
+    a2 = ma.MasterAgent(context_manager=FakeCM(), db=None)  # type: ignore[arg-type]
+    assert a1._get_agent() is sentinel
+    assert a2._get_agent() is sentinel
+    assert calls["n"] == 1
+
+    ma.invalidate_agent_cache()
+    assert a1._get_agent() is sentinel
+    assert calls["n"] == 2

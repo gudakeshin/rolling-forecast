@@ -128,7 +128,7 @@ export function ChartRenderer({ data }: Props) {
 
   const commonLegend = show_legend ? (
     <Legend
-      wrapperStyle={{ fontSize: 11, color: '#97999B', cursor: 'pointer' }}
+      wrapperStyle={{ fontSize: 12, color: '#97999B', cursor: 'pointer' }}
       onClick={onLegendClick}
     />
   ) : null;
@@ -165,22 +165,22 @@ export function ChartRenderer({ data }: Props) {
         {chart_type === 'bar' ? (
           <BarChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
             <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} />
+            <YAxis tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
             {commonLegend}
             {visibleKeys.map((key, i) => (
               <Bar key={key} dataKey={key} name={labelFor(key)} fill={SERIES_COLORS[i % SERIES_COLORS.length]} radius={[3, 3, 0, 0]} />
             ))}
-            {reference_line && <ReferenceLine y={reference_line.y} stroke={COLORS.amber} strokeDasharray="5 5" label={{ value: reference_line.label, fill: COLORS.amber, fontSize: 10 }} />}
+            {reference_line && <ReferenceLine y={reference_line.y} stroke={COLORS.amber} strokeDasharray="5 5" label={{ value: reference_line.label, fill: COLORS.amber, fontSize: 12 }} />}
             {brush}
           </BarChart>
 
         ) : chart_type === 'stacked_bar' ? (
           <BarChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
             <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} />
+            <YAxis tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
             {commonLegend}
             {visibleKeys.map((key, i) => (
@@ -192,8 +192,8 @@ export function ChartRenderer({ data }: Props) {
         ) : chart_type === 'line' ? (
           <LineChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
             <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} />
+            <YAxis tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
             {commonLegend}
             {visibleKeys.map((key, i) => (
@@ -214,8 +214,8 @@ export function ChartRenderer({ data }: Props) {
               ))}
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} />
+            <YAxis tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
             {commonLegend}
             {visibleKeys.map((key, i) => (
@@ -233,8 +233,8 @@ export function ChartRenderer({ data }: Props) {
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} />
+            <YAxis tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
             {commonLegend}
             <Area type="monotone" dataKey="p90" name="P90 (Upside)" stroke={COLORS.teal} fill="url(#gradCI)" strokeWidth={1} strokeDasharray="4 4" />
@@ -249,8 +249,8 @@ export function ChartRenderer({ data }: Props) {
         ) : chart_type === 'bridge' ? (
           <BarChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
             <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} />
+            <YAxis tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
             <Bar dataKey="invisible" stackId="bridge" fill="transparent" />
             <Bar dataKey="value" stackId="bridge" radius={[3, 3, 0, 0]}>
@@ -292,8 +292,8 @@ export function ChartRenderer({ data }: Props) {
         ) : chart_type === 'combo' ? (
           <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
             <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} />
+            <YAxis tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
             {commonLegend}
             {visibleKeys.slice(0, 1).map((key) => (
@@ -308,8 +308,8 @@ export function ChartRenderer({ data }: Props) {
         ) : chart_type === 'variance' ? (
           <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
             <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} />
+            <YAxis tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
             {commonLegend}
             <ReferenceLine y={0} stroke={COLORS.coolGray} strokeDasharray="3 3" />
@@ -322,7 +322,7 @@ export function ChartRenderer({ data }: Props) {
             ))}
             {reference_line && (
               <ReferenceLine y={reference_line.y} stroke={COLORS.amber} strokeDasharray="5 5"
-                label={{ value: reference_line.label, fill: COLORS.amber, fontSize: 10 }} />
+                label={{ value: reference_line.label, fill: COLORS.amber, fontSize: 12 }} />
             )}
             {brush}
           </ComposedChart>
@@ -330,22 +330,22 @@ export function ChartRenderer({ data }: Props) {
         ) : chart_type === 'grouped_bar' ? (
           <BarChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
             <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} />
+            <YAxis tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
             {commonLegend}
             {visibleKeys.map((key, i) => (
               <Bar key={key} dataKey={key} name={labelFor(key)} fill={SERIES_COLORS[i % SERIES_COLORS.length]} radius={[3, 3, 0, 0]} barSize={20} />
             ))}
-            {reference_line && <ReferenceLine y={reference_line.y} stroke={COLORS.amber} strokeDasharray="5 5" label={{ value: reference_line.label, fill: COLORS.amber, fontSize: 10 }} />}
+            {reference_line && <ReferenceLine y={reference_line.y} stroke={COLORS.amber} strokeDasharray="5 5" label={{ value: reference_line.label, fill: COLORS.amber, fontSize: 12 }} />}
             {brush}
           </BarChart>
 
         ) : chart_type === 'scatter' ? (
           <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={y_keys[0] || x_key} tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} name={labelFor(y_keys[0] || x_key)} />
-            <YAxis dataKey={y_keys[1]} tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} name={labelFor(y_keys[1])} />
+            <XAxis dataKey={y_keys[0] || x_key} tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} name={labelFor(y_keys[0] || x_key)} />
+            <YAxis dataKey={y_keys[1]} tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} name={labelFor(y_keys[1])} />
             <Tooltip content={<CustomTooltip format={format} />} />
             {commonLegend}
             <Scatter name={labelFor(y_keys[1] || 'values')} fill={COLORS.teal} />
@@ -354,8 +354,8 @@ export function ChartRenderer({ data }: Props) {
         ) : (
           <BarChart data={chartData} onClick={onPointClick}>
             <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 11 }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 11 }} />
+            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 12 }} />
+            <YAxis tick={{ fill: '#97999B', fontSize: 12 }} />
             <Tooltip />
             {visibleKeys.map((key, i) => (
               <Bar key={key} dataKey={key} fill={SERIES_COLORS[i % SERIES_COLORS.length]} />

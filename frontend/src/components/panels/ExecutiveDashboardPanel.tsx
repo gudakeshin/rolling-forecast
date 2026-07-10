@@ -548,8 +548,8 @@ export function ExecutiveDashboardPanel({ data }: { data: any }) {
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-              <XAxis dataKey="period" tick={{ fill: '#97999B', fontSize: 9 }} />
-              <YAxis tick={{ fill: '#97999B', fontSize: 9 }} tickFormatter={(v) => formatCurrency(v)} width={45} />
+              <XAxis dataKey="period" tick={{ fill: '#97999B', fontSize: 12 }} />
+              <YAxis tick={{ fill: '#97999B', fontSize: 12 }} tickFormatter={(v) => formatCurrency(v)} width={45} />
               <Tooltip content={<ChartTooltip />} />
               <Area type="monotone" dataKey="p90" name="P90 (Upside)" stroke={COLORS.teal} fill="url(#cfoGradCI)" strokeWidth={1} strokeDasharray="4 3" />
               <Area type="monotone" dataKey="p10" name="P10 (Downside)" stroke={COLORS.teal} fill="url(#cfoGradCI)" strokeWidth={1} strokeDasharray="4 3" />
@@ -561,8 +561,8 @@ export function ExecutiveDashboardPanel({ data }: { data: any }) {
             <ResponsiveContainer width="100%" height={180}>
               <BarChart data={d.bridge_data} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-                <XAxis dataKey="name" tick={{ fill: '#97999B', fontSize: 9 }} angle={-15} textAnchor="end" height={40} />
-                <YAxis tick={{ fill: '#97999B', fontSize: 9 }} tickFormatter={(v) => formatCurrency(v)} width={45} />
+                <XAxis dataKey="name" tick={{ fill: '#97999B', fontSize: 12 }} angle={-15} textAnchor="end" height={40} />
+                <YAxis tick={{ fill: '#97999B', fontSize: 12 }} tickFormatter={(v) => formatCurrency(v)} width={45} />
                 <Tooltip content={<ChartTooltip />} />
                 <Bar dataKey="invisible" stackId="bridge" fill="transparent" />
                 <Bar dataKey="value" stackId="bridge" radius={[2, 2, 0, 0]}>

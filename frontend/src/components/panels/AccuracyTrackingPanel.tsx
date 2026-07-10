@@ -131,10 +131,10 @@ export function AccuracyTrackingPanel({ data }: Props) {
               <ResponsiveContainer width="100%" height={180}>
                 <LineChart data={mape_trend} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-                  <XAxis dataKey="version" tick={{ fill: '#97999B', fontSize: 10 }} />
-                  <YAxis tick={{ fill: '#97999B', fontSize: 10 }} unit="%" />
+                  <XAxis dataKey="version" tick={{ fill: '#97999B', fontSize: 12 }} />
+                  <YAxis tick={{ fill: '#97999B', fontSize: 12 }} unit="%" />
                   <Tooltip content={<ChartTooltip />} />
-                  <ReferenceLine y={5} stroke={COLORS.green} strokeDasharray="5 5" label={{ value: 'Target 5%', fill: COLORS.green, fontSize: 9 }} />
+                  <ReferenceLine y={5} stroke={COLORS.green} strokeDasharray="5 5" label={{ value: 'Target 5%', fill: COLORS.green, fontSize: 12 }} />
                   <Line type="monotone" dataKey="avg_mape" name="Avg MAPE" stroke={COLORS.teal} strokeWidth={2.5} dot={{ r: 4, fill: COLORS.teal }} />
                 </LineChart>
               </ResponsiveContainer>
@@ -153,8 +153,8 @@ export function AccuracyTrackingPanel({ data }: Props) {
               <ResponsiveContainer width="100%" height={150}>
                 <ComposedChart data={bias_trend} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-                  <XAxis dataKey="version" tick={{ fill: '#97999B', fontSize: 10 }} />
-                  <YAxis tick={{ fill: '#97999B', fontSize: 10 }} unit="%" />
+                  <XAxis dataKey="version" tick={{ fill: '#97999B', fontSize: 12 }} />
+                  <YAxis tick={{ fill: '#97999B', fontSize: 12 }} unit="%" />
                   <Tooltip content={<ChartTooltip />} />
                   <ReferenceLine y={0} stroke={COLORS.coolGray} strokeDasharray="3 3" />
                   <Bar dataKey="avg_bias" name="Avg Bias" radius={[3, 3, 0, 0]}>
@@ -174,10 +174,10 @@ export function AccuracyTrackingPanel({ data }: Props) {
               <ResponsiveContainer width="100%" height={180}>
                 <BarChart data={category_accuracy} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-                  <XAxis dataKey="category" tick={{ fill: '#97999B', fontSize: 10 }} />
-                  <YAxis tick={{ fill: '#97999B', fontSize: 10 }} unit="%" />
+                  <XAxis dataKey="category" tick={{ fill: '#97999B', fontSize: 12 }} />
+                  <YAxis tick={{ fill: '#97999B', fontSize: 12 }} unit="%" />
                   <Tooltip content={<ChartTooltip />} />
-                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
                   <Bar dataKey="avg_mape" name="MAPE" radius={[3, 3, 0, 0]}>
                     {category_accuracy.map((entry: any, i: number) => (
                       <Cell key={i} fill={entry.avg_mape > 15 ? COLORS.red : entry.avg_mape > 8 ? COLORS.amber : COLORS.green} />
@@ -201,10 +201,10 @@ export function AccuracyTrackingPanel({ data }: Props) {
               <ResponsiveContainer width="100%" height={200}>
                 <BarChart data={model_performance} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-                  <XAxis dataKey="model" tick={{ fill: '#97999B', fontSize: 10 }} />
-                  <YAxis tick={{ fill: '#97999B', fontSize: 10 }} unit="%" />
+                  <XAxis dataKey="model" tick={{ fill: '#97999B', fontSize: 12 }} />
+                  <YAxis tick={{ fill: '#97999B', fontSize: 12 }} unit="%" />
                   <Tooltip content={<ChartTooltip />} />
-                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
                   <Bar dataKey="avg_mape" name="Avg MAPE" fill={COLORS.green} radius={[3, 3, 0, 0]} />
                   <Bar dataKey="best_mape" name="Best MAPE" fill={COLORS.teal} radius={[3, 3, 0, 0]} />
                   <Bar dataKey="worst_mape" name="Worst MAPE" fill={COLORS.red} radius={[3, 3, 0, 0]} />

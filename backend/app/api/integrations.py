@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -15,11 +16,14 @@ from app.models.budget import BudgetLineItem, BudgetVersion
 from app.models.integration import IntegrationConnection
 from app.models.line_item import LineItem
 from app.models.user import User
+from app.services.accuracy_snapshot import AccuracySnapshotService
 from app.services.audit import record_audit
 from app.services.coa_dependencies import ensure_standard_dependencies
 from app.services.ingestion.erp_adapter import get_actuals_provider
 from app.services.permissions import require_permission
 from app.services.secret_box import decrypt_secret
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
@@ -110,11 +114,20 @@ async def _persist_actuals_df(db: Session, result, source_type: str, source_name
         details={"source_type": source_type, "rows": result.row_count, "deps": deps},
     )
     db.commit()
+    accuracy_rows = 0
+    try:
+        accuracy_rows = AccuracySnapshotService(db).on_actuals_ingested(dataset.id)
+        if accuracy_rows:
+            db.commit()
+    except Exception:
+        logger.exception("Accuracy snapshot failed after %s pull", source_type)
+        db.rollback()
     return {
         "success": True,
         "dataset_id": dataset.id,
         "row_count": result.row_count,
         "dependencies_created": deps,
+        "accuracy_records": accuracy_rows,
     }
 
 

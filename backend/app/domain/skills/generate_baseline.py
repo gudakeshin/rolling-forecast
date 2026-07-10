@@ -351,10 +351,16 @@ class GenerateBaselineSkill(BaseSkill):
         fx_hashes: list[str] = []
 
         from app.domain.engines.base_model import make_period_labels
-        from app.services.period_calendar import get_calendar_config, push_calendar, reset_calendar
+        from app.services.period_calendar import (
+            get_calendar_config,
+            period_to_date,
+            push_calendar,
+            reset_calendar,
+        )
         from app.services.reconciliation import BOUNDS_METHOD_MODEL, reconcile_version
 
-        cal_token = push_calendar(get_calendar_config(db))
+        cal_cfg = get_calendar_config(db)
+        cal_token = push_calendar(cal_cfg)
 
         # Generate forecast for each line item
         model_registry = get_model_registry()
@@ -416,7 +422,9 @@ class GenerateBaselineSkill(BaseSkill):
                 except MissingFxRateError as e:
                     return SkillResult.fail(str(e))
                 values = pd.Series(converted)
-                dates = pd.DatetimeIndex([pd.Timestamp(p + "-01") for p in periods])
+                dates = pd.DatetimeIndex([
+                    pd.Timestamp(period_to_date(p, cal_cfg)) for p in periods
+                ])
 
                 # Run history analysis (EC1, EC2, EC4, EC12)
                 analysis = HistoryAnalysis(values, dates, li.name)
