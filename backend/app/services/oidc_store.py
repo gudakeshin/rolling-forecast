@@ -1,11 +1,17 @@
-"""In-memory OIDC state / PKCE / one-time login code store (Redis in Phase 4)."""
+"""OIDC state / PKCE / one-time login code store — Redis when available."""
 
 from __future__ import annotations
 
+import json
+import logging
 import secrets
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from threading import Lock
+
+from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -26,6 +32,23 @@ _lock = Lock()
 _oidc: dict[str, OIDCPending] = {}
 _codes: dict[str, OneTimeCode] = {}
 _TTL_SECONDS = 600
+_REDIS_OIDC = "rf:oidc:"
+_REDIS_CODE = "rf:sso_code:"
+
+
+def _redis():
+    url = (settings.redis_url or "").strip()
+    if not url:
+        return None
+    try:
+        import redis
+
+        client = redis.Redis.from_url(url, decode_responses=True)
+        client.ping()
+        return client
+    except Exception as e:
+        logger.warning("Redis unavailable for OIDC store (%s); using memory", e)
+        return None
 
 
 def _purge(store: dict, now: float) -> None:
@@ -41,6 +64,10 @@ def create_oidc_pending() -> OIDCPending:
         code_verifier=secrets.token_urlsafe(64),
         created_at=time.time(),
     )
+    r = _redis()
+    if r is not None:
+        r.setex(_REDIS_OIDC + pending.state, _TTL_SECONDS, json.dumps(asdict(pending)))
+        return pending
     with _lock:
         _purge(_oidc, time.time())
         _oidc[pending.state] = pending
@@ -50,6 +77,19 @@ def create_oidc_pending() -> OIDCPending:
 def pop_oidc_pending(state: str | None) -> OIDCPending | None:
     if not state:
         return None
+    r = _redis()
+    if r is not None:
+        raw = r.getdel(_REDIS_OIDC + state) if hasattr(r, "getdel") else None
+        if raw is None:
+            # redis-py <4.2 fallback
+            pipe = r.pipeline()
+            pipe.get(_REDIS_OIDC + state)
+            pipe.delete(_REDIS_OIDC + state)
+            raw, _ = pipe.execute()
+        if not raw:
+            return None
+        data = json.loads(raw)
+        return OIDCPending(**data)
     with _lock:
         _purge(_oidc, time.time())
         return _oidc.pop(state, None)
@@ -65,13 +105,27 @@ def pkce_challenge(verifier: str) -> str:
 
 def issue_one_time_code(user_id: str) -> str:
     code = secrets.token_urlsafe(32)
+    entry = OneTimeCode(user_id=user_id, created_at=time.time())
+    r = _redis()
+    if r is not None:
+        r.setex(_REDIS_CODE + code, _TTL_SECONDS, json.dumps(asdict(entry)))
+        return code
     with _lock:
         _purge(_codes, time.time())
-        _codes[code] = OneTimeCode(user_id=user_id, created_at=time.time())
+        _codes[code] = entry
     return code
 
 
 def redeem_one_time_code(code: str) -> str | None:
+    r = _redis()
+    if r is not None:
+        pipe = r.pipeline()
+        pipe.get(_REDIS_CODE + code)
+        pipe.delete(_REDIS_CODE + code)
+        raw, _ = pipe.execute()
+        if not raw:
+            return None
+        return json.loads(raw).get("user_id")
     with _lock:
         _purge(_codes, time.time())
         entry = _codes.pop(code, None)

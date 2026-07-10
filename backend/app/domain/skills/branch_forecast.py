@@ -164,7 +164,7 @@ class BranchForecastSkill(BaseSkill):
 
         # Recompute calculated lines (EBITDA, GM, etc.) for P&L coherence
         from app.services.dependency_graph import DependencyGraphManager
-        recalc = DependencyGraphManager(db).recalculate_all(branch.id)
+        DependencyGraphManager(db).recalculate_all(branch.id)
         db.commit()
 
         # Build response

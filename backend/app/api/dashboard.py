@@ -1408,66 +1408,102 @@ async def get_accuracy_tracking(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Accuracy tracking: MAPE trends, bias visualization, model performance."""
+    """Accuracy tracking from vintage forecast_accuracy_records (fallback: live join)."""
+    from app.models.fx import ForecastAccuracyRecord
+
     version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
     if not version:
         raise HTTPException(status_code=404, detail="Forecast version not found")
 
-    # Get forecast results with actuals comparison
-    results = (
-        db.query(ForecastLineResult)
-        .join(LineItem)
-        .filter(ForecastLineResult.version_id == version_id)
+    vintage_rows = (
+        db.query(ForecastAccuracyRecord, LineItem)
+        .join(LineItem, LineItem.id == ForecastAccuracyRecord.line_item_id)
+        .filter(ForecastAccuracyRecord.version_id == version_id)
         .all()
     )
 
-    # Build accuracy metrics per line item
     accuracy_items = []
     model_mapes: dict[str, list[float]] = {}
     category_mapes: dict[str, list[float]] = {}
+    horizon_buckets: dict[str, list[float]] = {"1m": [], "2-3m": [], "4-6m": [], "7m+": []}
 
-    for r in results:
-        # Find matching actual
-        actual = (
-            db.query(ActualsRecord)
-            .filter(
-                ActualsRecord.line_item_id == r.line_item_id,
-                ActualsRecord.period == r.period,
-            )
-            .first()
-        )
-
-        if actual and actual.value != 0:
-            mape = abs(r.p50 - actual.value) / abs(actual.value) * 100
-            bias = (r.p50 - actual.value) / abs(actual.value) * 100
-            hit_range = (
-                r.p10 is not None and r.p90 is not None
-                and r.p10 <= actual.value <= r.p90
-            )
-
+    if vintage_rows:
+        for rec, li in vintage_rows:
+            mape = float(rec.pct_error) if rec.pct_error is not None else None
+            bias = None
+            if rec.actual != 0:
+                bias = (rec.predicted_p50 - rec.actual) / abs(rec.actual) * 100
             item = {
-                "line_item_name": r.line_item.name,
-                "category": r.line_item.category,
-                "period": r.period,
-                "forecast": round(r.p50, 2),
-                "actual": round(actual.value, 2),
-                "mape": round(mape, 2),
-                "bias": round(bias, 2),
-                "hit_range": hit_range,
-                "model_type": r.model_type,
-                "confidence_score": r.confidence_score,
+                "line_item_name": li.name,
+                "category": li.category,
+                "period": rec.period,
+                "horizon_offset": rec.horizon_offset,
+                "forecast": round(rec.predicted_p50, 2),
+                "actual": round(rec.actual, 2),
+                "mape": round(mape, 2) if mape is not None else None,
+                "bias": round(bias, 2) if bias is not None else None,
+                "hit_range": rec.within_p10_p90,
+                "model_type": rec.model_type,
+                "confidence_score": None,
+                "source": "vintage",
             }
             accuracy_items.append(item)
+            if mape is not None:
+                model = rec.model_type or "unknown"
+                model_mapes.setdefault(model, []).append(mape)
+                category_mapes.setdefault(li.category, []).append(mape)
+                h = rec.horizon_offset
+                if h <= 1:
+                    horizon_buckets["1m"].append(mape)
+                elif h <= 3:
+                    horizon_buckets["2-3m"].append(mape)
+                elif h <= 6:
+                    horizon_buckets["4-6m"].append(mape)
+                else:
+                    horizon_buckets["7m+"].append(mape)
+    else:
+        # Fallback: live join when no vintage snapshots yet
+        results = (
+            db.query(ForecastLineResult)
+            .join(LineItem)
+            .filter(ForecastLineResult.version_id == version_id)
+            .all()
+        )
+        for r in results:
+            actual = (
+                db.query(ActualsRecord)
+                .filter(
+                    ActualsRecord.line_item_id == r.line_item_id,
+                    ActualsRecord.period == r.period,
+                )
+                .first()
+            )
+            if actual and actual.value != 0:
+                mape = abs(r.p50 - actual.value) / abs(actual.value) * 100
+                bias = (r.p50 - actual.value) / abs(actual.value) * 100
+                hit_range = (
+                    r.p10 is not None and r.p90 is not None
+                    and r.p10 <= actual.value <= r.p90
+                )
+                item = {
+                    "line_item_name": r.line_item.name,
+                    "category": r.line_item.category,
+                    "period": r.period,
+                    "horizon_offset": None,
+                    "forecast": round(r.p50, 2),
+                    "actual": round(actual.value, 2),
+                    "mape": round(mape, 2),
+                    "bias": round(bias, 2),
+                    "hit_range": hit_range,
+                    "model_type": r.model_type,
+                    "confidence_score": r.confidence_score,
+                    "source": "live",
+                }
+                accuracy_items.append(item)
+                model = r.model_type or "unknown"
+                model_mapes.setdefault(model, []).append(mape)
+                category_mapes.setdefault(r.line_item.category, []).append(mape)
 
-            # Aggregate by model
-            model = r.model_type or "unknown"
-            model_mapes.setdefault(model, []).append(mape)
-
-            # Aggregate by category
-            cat = r.line_item.category
-            category_mapes.setdefault(cat, []).append(mape)
-
-    # Model performance summary
     model_performance = []
     for model, mapes in sorted(model_mapes.items()):
         avg_mape = sum(mapes) / len(mapes) if mapes else 0
@@ -1479,90 +1515,6 @@ async def get_accuracy_tracking(
             "worst_mape": round(max(mapes), 2) if mapes else 0,
         })
 
-    # Category accuracy
-    category_accuracy = []
-    for cat, mapes in sorted(category_mapes.items()):
-        avg_mape = sum(mapes) / len(mapes) if mapes else 0
-        biases = [i["bias"] for i in accuracy_items if i["category"] == cat]
-        avg_bias = sum(biases) / len(biases) if biases else 0
-        category_accuracy.append({
-            "category": cat,
-            "avg_mape": round(avg_mape, 2),
-            "avg_bias": round(avg_bias, 2),
-            "count": len(mapes),
-        })
-
-    # MAPE and Bias trend over versions
-    recent_versions = (
-        db.query(ForecastVersion)
-        .order_by(ForecastVersion.created_at.desc())
-        .limit(6)
-        .all()
-    )
-
-    mape_trend = []
-    bias_trend = []
-    for v in reversed(recent_versions):
-        v_results = (
-            db.query(ForecastLineResult)
-            .filter(ForecastLineResult.version_id == v.id)
-            .all()
-        )
-        mapes_for_version = []
-        v_sum_forecast = 0.0
-        v_sum_actual = 0.0
-        for vr in v_results:
-            act = (
-                db.query(ActualsRecord)
-                .filter(
-                    ActualsRecord.line_item_id == vr.line_item_id,
-                    ActualsRecord.period == vr.period,
-                )
-                .first()
-            )
-            if act and act.value != 0:
-                mapes_for_version.append(abs(vr.p50 - act.value) / abs(act.value) * 100)
-                v_sum_forecast += float(vr.p50)
-                v_sum_actual += float(act.value)
-
-        avg_mape = sum(mapes_for_version) / len(mapes_for_version) if mapes_for_version else 0
-        mape_trend.append({
-            "version": v.name[:15],
-            "avg_mape": round(avg_mape, 2),
-            "data_points": len(mapes_for_version),
-        })
-        # Aggregate bias: (total forecast - total actual) / |total actual|
-        v_agg_bias = ((v_sum_forecast - v_sum_actual) / abs(v_sum_actual) * 100) if abs(v_sum_actual) > 1e-10 else 0
-        bias_trend.append({
-            "version": v.name[:15],
-            "avg_bias": round(v_agg_bias, 2),
-            "data_points": len(mapes_for_version),
-        })
-
-    # Overall summary — MAPE uses per-item average, Bias uses aggregate formula
-    all_mapes = [i["mape"] for i in accuracy_items]
-    hit_count = sum(1 for i in accuracy_items if i.get("hit_range"))
-
-    # Aggregate bias: net directional pull at portfolio level
-    total_forecast_sum = sum(i["forecast"] for i in accuracy_items)
-    total_actual_sum = sum(i["actual"] for i in accuracy_items)
-    aggregate_bias_pct = (
-        (total_forecast_sum - total_actual_sum) / abs(total_actual_sum) * 100
-        if abs(total_actual_sum) > 1e-10 else 0
-    )
-    aggregate_bias_dollar = total_forecast_sum - total_actual_sum
-
-    overall = {
-        "avg_mape": round(sum(all_mapes) / len(all_mapes), 2) if all_mapes else 0,
-        "median_mape": round(sorted(all_mapes)[len(all_mapes) // 2], 2) if all_mapes else 0,
-        "avg_bias": round(aggregate_bias_pct, 2),
-        "bias_dollar": round(aggregate_bias_dollar, 2),
-        "bias_direction": "over" if aggregate_bias_pct > 1 else "under" if aggregate_bias_pct < -1 else "neutral",
-        "hit_rate": round(hit_count / len(accuracy_items) * 100, 1) if accuracy_items else 0,
-        "total_comparisons": len(accuracy_items),
-    }
-
-    # Re-compute category bias using aggregate formula per category
     category_accuracy_fixed = []
     for cat, mapes in sorted(category_mapes.items()):
         avg_mape = sum(mapes) / len(mapes) if mapes else 0
@@ -1580,6 +1532,89 @@ async def get_accuracy_tracking(
             "count": len(mapes),
         })
 
+    by_horizon = []
+    for label, mapes in horizon_buckets.items():
+        if not mapes:
+            continue
+        by_horizon.append({
+            "horizon": label,
+            "avg_mape": round(sum(mapes) / len(mapes), 2),
+            "count": len(mapes),
+        })
+
+    # MAPE trend across versions using vintage records when present
+    recent_versions = (
+        db.query(ForecastVersion)
+        .order_by(ForecastVersion.created_at.desc())
+        .limit(6)
+        .all()
+    )
+    mape_trend = []
+    bias_trend = []
+    for v in reversed(recent_versions):
+        v_recs = (
+            db.query(ForecastAccuracyRecord)
+            .filter(ForecastAccuracyRecord.version_id == v.id)
+            .all()
+        )
+        if v_recs:
+            mapes_for_version = [r.pct_error for r in v_recs if r.pct_error is not None]
+            v_sum_forecast = sum(r.predicted_p50 for r in v_recs)
+            v_sum_actual = sum(r.actual for r in v_recs)
+        else:
+            mapes_for_version = []
+            v_sum_forecast = 0.0
+            v_sum_actual = 0.0
+            for vr in db.query(ForecastLineResult).filter(ForecastLineResult.version_id == v.id).all():
+                act = (
+                    db.query(ActualsRecord)
+                    .filter(
+                        ActualsRecord.line_item_id == vr.line_item_id,
+                        ActualsRecord.period == vr.period,
+                    )
+                    .first()
+                )
+                if act and act.value != 0:
+                    mapes_for_version.append(abs(vr.p50 - act.value) / abs(act.value) * 100)
+                    v_sum_forecast += float(vr.p50)
+                    v_sum_actual += float(act.value)
+
+        avg_mape = sum(mapes_for_version) / len(mapes_for_version) if mapes_for_version else 0
+        mape_trend.append({
+            "version": v.name[:15],
+            "avg_mape": round(avg_mape, 2),
+            "data_points": len(mapes_for_version),
+        })
+        v_agg_bias = (
+            (v_sum_forecast - v_sum_actual) / abs(v_sum_actual) * 100
+            if abs(v_sum_actual) > 1e-10 else 0
+        )
+        bias_trend.append({
+            "version": v.name[:15],
+            "avg_bias": round(v_agg_bias, 2),
+            "data_points": len(mapes_for_version),
+        })
+
+    all_mapes = [i["mape"] for i in accuracy_items if i.get("mape") is not None]
+    hit_count = sum(1 for i in accuracy_items if i.get("hit_range"))
+    total_forecast_sum = sum(i["forecast"] for i in accuracy_items)
+    total_actual_sum = sum(i["actual"] for i in accuracy_items)
+    aggregate_bias_pct = (
+        (total_forecast_sum - total_actual_sum) / abs(total_actual_sum) * 100
+        if abs(total_actual_sum) > 1e-10 else 0
+    )
+
+    overall = {
+        "avg_mape": round(sum(all_mapes) / len(all_mapes), 2) if all_mapes else 0,
+        "median_mape": round(sorted(all_mapes)[len(all_mapes) // 2], 2) if all_mapes else 0,
+        "avg_bias": round(aggregate_bias_pct, 2),
+        "bias_dollar": round(total_forecast_sum - total_actual_sum, 2),
+        "bias_direction": "over" if aggregate_bias_pct > 1 else "under" if aggregate_bias_pct < -1 else "neutral",
+        "hit_rate": round(hit_count / len(accuracy_items) * 100, 1) if accuracy_items else 0,
+        "total_comparisons": len(accuracy_items),
+        "source": "vintage" if vintage_rows else "live",
+    }
+
     return PanelDataResponse(
         panel_type="accuracy_tracking",
         title=f"Accuracy Tracking: {version.name}",
@@ -1587,9 +1622,13 @@ async def get_accuracy_tracking(
             "overall": overall,
             "model_performance": model_performance,
             "category_accuracy": category_accuracy_fixed,
+            "by_horizon": by_horizon,
             "mape_trend": mape_trend,
             "bias_trend": bias_trend,
-            "top_deviations": sorted(accuracy_items, key=lambda x: -x["mape"])[:15],
+            "top_deviations": sorted(
+                [i for i in accuracy_items if i.get("mape") is not None],
+                key=lambda x: -x["mape"],
+            )[:15],
             "items": accuracy_items[:100],
         },
     )

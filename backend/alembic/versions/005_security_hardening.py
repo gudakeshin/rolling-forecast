@@ -33,7 +33,7 @@ def upgrade() -> None:
         sa.Column("kind", sa.String(50), nullable=False),
         sa.Column("encrypted_url", sa.Text(), nullable=False),
         sa.Column("encrypted_token", sa.Text(), nullable=True),
-        sa.Column("enabled", sa.Boolean(), server_default=sa.text("1")),
+        sa.Column("enabled", sa.Boolean(), server_default=sa.true()),
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("created_by", sa.String(36), sa.ForeignKey("users.id"), nullable=True),
         sa.Column("created_at", sa.DateTime()),
@@ -47,7 +47,7 @@ def upgrade() -> None:
         if "can_view_all_bus" not in cols:
             op.add_column(
                 "roles",
-                sa.Column("can_view_all_bus", sa.Boolean(), server_default=sa.text("0")),
+                sa.Column("can_view_all_bus", sa.Boolean(), server_default=sa.false()),
             )
             # Admins see all BUs by default
             op.execute(

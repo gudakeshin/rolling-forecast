@@ -183,7 +183,7 @@ app.add_middleware(
 )
 register_exception_handlers(app)
 
-# Rate limiting (in-memory; Redis in Phase 4)
+# Rate limiting (Redis-backed when REDIS_URL is set)
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from app.rate_limit import limiter

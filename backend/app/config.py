@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     langfuse_secret_key: str = ""
     langfuse_host: str = "https://cloud.langfuse.com"
 
-    # Redis (locks / rate-limit / queue — optional until Phase 4 full cutover)
+    # Redis (locks / rate-limit / OIDC store / arq job queue)
     redis_url: str = ""
 
     # Warehouse / ERP (legacy env fallbacks — prefer connection registry)

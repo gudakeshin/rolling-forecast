@@ -1,10 +1,19 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Users, Shield, ListTree, ScrollText } from 'lucide-react';
-import { apiGet, apiPost } from '../../api/client';
+import { ArrowLeft, Users, Shield, ListTree, ScrollText, DollarSign } from 'lucide-react';
+import { apiGet, apiPost, apiPut, uploadFile } from '../../api/client';
 import type { User } from '../../types/auth';
 
-type Tab = 'users' | 'roles' | 'coa' | 'audit';
+type Tab = 'users' | 'roles' | 'coa' | 'audit' | 'fx';
+
+interface FxRate {
+  id: string;
+  from_currency: string;
+  to_currency: string;
+  period: string;
+  rate: number;
+  rate_type: string;
+}
 
 export function AdminPage() {
   const [tab, setTab] = useState<Tab>('users');
@@ -12,6 +21,15 @@ export function AdminPage() {
   const [roles, setRoles] = useState<any[]>([]);
   const [coa, setCoa] = useState<any>(null);
   const [audit, setAudit] = useState<any>(null);
+  const [fxRates, setFxRates] = useState<FxRate[]>([]);
+  const [reportingCurrency, setReportingCurrency] = useState('USD');
+  const [fxForm, setFxForm] = useState({
+    from_currency: 'EUR',
+    to_currency: 'USD',
+    period: new Date().toISOString().slice(0, 7),
+    rate: '1.0',
+    rate_type: 'average',
+  });
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
@@ -22,6 +40,14 @@ export function AdminPage() {
       if (t === 'roles') setRoles(await apiGet('/admin/roles'));
       if (t === 'coa') setCoa(await apiGet('/admin/coa'));
       if (t === 'audit') setAudit(await apiGet('/admin/audit?limit=50'));
+      if (t === 'fx') {
+        const [rates, currency] = await Promise.all([
+          apiGet<FxRate[]>('/admin/fx/rates'),
+          apiGet<{ reporting_currency: string }>('/admin/fx/settings/reporting_currency'),
+        ]);
+        setFxRates(rates);
+        setReportingCurrency(currency.reporting_currency);
+      }
     } catch (e: any) {
       setError(e.message || 'Failed to load');
     }
@@ -41,10 +67,49 @@ export function AdminPage() {
     }
   };
 
+  const saveReportingCurrency = async () => {
+    try {
+      const res = await apiPut<{ reporting_currency: string }>(
+        '/admin/fx/settings/reporting_currency',
+        { currency: reportingCurrency },
+      );
+      setReportingCurrency(res.reporting_currency);
+      setMessage(`Reporting currency set to ${res.reporting_currency}`);
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+
+  const createFxRate = async () => {
+    try {
+      await apiPost('/admin/fx/rates', {
+        ...fxForm,
+        from_currency: fxForm.from_currency.toUpperCase(),
+        to_currency: fxForm.to_currency.toUpperCase(),
+        rate: Number(fxForm.rate),
+      });
+      setMessage('FX rate created');
+      load('fx');
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+
+  const uploadFxCsv = async (file: File) => {
+    try {
+      const res = await uploadFile('/admin/fx/rates/upload', file);
+      setMessage(`Uploaded FX rates: ${res.created} created, ${res.updated} updated`);
+      load('fx');
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+
   const tabs: { id: Tab; label: string; icon: typeof Users }[] = [
     { id: 'users', label: 'Users', icon: Users },
     { id: 'roles', label: 'Roles', icon: Shield },
     { id: 'coa', label: 'Chart of Accounts', icon: ListTree },
+    { id: 'fx', label: 'FX Rates', icon: DollarSign },
     { id: 'audit', label: 'Audit Log', icon: ScrollText },
   ];
 
@@ -153,6 +218,99 @@ export function AdminPage() {
                       <td className="px-3 py-1.5">{li.is_calculated ? 'Yes' : ''}</td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {tab === 'fx' && (
+          <div className="space-y-6">
+            <div className="bg-surface-900 border border-surface-700/50 rounded-xl p-4 space-y-3">
+              <h3 className="text-sm font-semibold">Reporting currency</h3>
+              <div className="flex gap-2 items-center">
+                <input
+                  value={reportingCurrency}
+                  onChange={(e) => setReportingCurrency(e.target.value.toUpperCase())}
+                  maxLength={3}
+                  className="w-24 bg-surface-800 border border-surface-600 rounded-lg px-3 py-1.5 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={saveReportingCurrency}
+                  className="px-3 py-1.5 text-xs bg-deloitte-green text-black font-semibold rounded-lg"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-surface-900 border border-surface-700/50 rounded-xl p-4 space-y-3">
+              <h3 className="text-sm font-semibold">Add rate</h3>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                {(['from_currency', 'to_currency', 'period', 'rate', 'rate_type'] as const).map((k) => (
+                  <input
+                    key={k}
+                    value={fxForm[k]}
+                    onChange={(e) => setFxForm({ ...fxForm, [k]: e.target.value })}
+                    placeholder={k}
+                    className="bg-surface-800 border border-surface-600 rounded-lg px-2 py-1.5 text-xs"
+                  />
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={createFxRate}
+                className="px-3 py-1.5 text-xs bg-deloitte-green text-black font-semibold rounded-lg"
+              >
+                Create rate
+              </button>
+            </div>
+
+            <div className="bg-surface-900 border border-surface-700/50 rounded-xl p-4 space-y-2">
+              <h3 className="text-sm font-semibold">Upload CSV</h3>
+              <p className="text-[11px] text-surface-500">
+                Columns: from_currency,to_currency,period,rate[,rate_type]
+              </p>
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) uploadFxCsv(f);
+                }}
+                className="text-xs text-surface-400"
+              />
+            </div>
+
+            <div className="max-h-96 overflow-auto border border-surface-700/40 rounded-xl">
+              <table className="w-full text-xs">
+                <thead className="bg-surface-900 text-surface-500 sticky top-0">
+                  <tr>
+                    <th className="px-3 py-2 text-left">From</th>
+                    <th className="px-3 py-2 text-left">To</th>
+                    <th className="px-3 py-2 text-left">Period</th>
+                    <th className="px-3 py-2 text-left">Rate</th>
+                    <th className="px-3 py-2 text-left">Type</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fxRates.map((r) => (
+                    <tr key={r.id} className="border-t border-surface-800">
+                      <td className="px-3 py-1.5">{r.from_currency}</td>
+                      <td className="px-3 py-1.5">{r.to_currency}</td>
+                      <td className="px-3 py-1.5">{r.period}</td>
+                      <td className="px-3 py-1.5">{r.rate}</td>
+                      <td className="px-3 py-1.5 text-surface-400">{r.rate_type}</td>
+                    </tr>
+                  ))}
+                  {!fxRates.length && (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-4 text-surface-500 text-center">
+                        No FX rates yet
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>

@@ -4,6 +4,8 @@
 #
 # Usage:
 #   Development:  docker compose up --build
+#   With Redis:   docker compose --profile redis up --build
+#   Postgres:     docker compose --profile postgres up --build
 #   Production:   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 #   Logs:         docker compose logs -f backend
 #   Stop:         docker compose down
@@ -29,6 +31,18 @@ services:
       retries: 5
     profiles: ["postgres"]
 
+  redis:
+    image: redis:7-alpine
+    container_name: forecast-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    profiles: ["redis"]
+
   backend:
     build:
       context: ./backend
@@ -42,6 +56,7 @@ services:
       - APP_ENV=development
       - DATABASE_URL=sqlite:///./rolling_forecast.db
       - CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+      - REDIS_URL=${REDIS_URL:-}
     volumes:
       - ./backend/app:/app/app
       - ./backend/skills:/app/skills
@@ -60,6 +75,28 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: forecast-worker
+    env_file:
+      - ./backend/.env
+    environment:
+      - APP_ENV=development
+      - DATABASE_URL=sqlite:///./rolling_forecast.db
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    volumes:
+      - ./backend/app:/app/app
+      - forecast-db:/app/data
+      - forecast-uploads:/app/uploads
+    command: arq app.workers.arq_worker.WorkerSettings
+    depends_on:
+      redis:
+        condition: service_healthy
+    profiles: ["redis"]
     restart: unless-stopped
 
   frontend:

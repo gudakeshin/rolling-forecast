@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from jose import jwt, JWTError
+from jose import jwt, JWTError, jwk as jose_jwk
 from passlib.context import CryptContext
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
@@ -239,6 +239,55 @@ async def oidc_login():
     return RedirectResponse(f"{authorize_url}?{urlencode(params)}")
 
 
+async def _verify_oidc_id_token(client, id_token: str, expected_nonce: str) -> dict:
+    """Verify id_token signature against the IdP JWKS and return claims."""
+    issuer = settings.oidc_issuer.rstrip("/")
+    # Discover JWKS URI (OIDC + Keycloak-style fallbacks)
+    jwks_uri = None
+    for path in ("/.well-known/openid-configuration", "/.well-known/openid-configuration/"):
+        try:
+            conf = await client.get(f"{issuer}{path}")
+            if conf.status_code < 400:
+                jwks_uri = conf.json().get("jwks_uri")
+                if jwks_uri:
+                    break
+        except Exception:
+            continue
+    if not jwks_uri:
+        jwks_uri = f"{issuer}/protocol/openid-connect/certs"
+
+    jwks_resp = await client.get(jwks_uri)
+    if jwks_resp.status_code >= 400:
+        raise ValueError("Unable to fetch IdP JWKS")
+    jwks = jwks_resp.json()
+
+    header = jwt.get_unverified_header(id_token)
+    kid = header.get("kid")
+    key = None
+    for jwk in jwks.get("keys", []):
+        if kid is None or jwk.get("kid") == kid:
+            key = jwk
+            break
+    if key is None:
+        raise ValueError("No matching JWK for id_token")
+
+    key_obj = jose_jwk.construct(key)
+    claims = jwt.decode(
+        id_token,
+        key_obj,
+        algorithms=[header.get("alg", "RS256")],
+        audience=settings.oidc_client_id,
+        options={"verify_at_hash": False},
+    )
+    if claims.get("iss") and not str(claims["iss"]).rstrip("/").startswith(issuer):
+        # Allow issuer with/without trailing slash
+        if str(claims["iss"]).rstrip("/") != issuer:
+            raise ValueError("id_token issuer mismatch")
+    if expected_nonce and claims.get("nonce") and claims["nonce"] != expected_nonce:
+        raise ValueError("nonce mismatch")
+    return claims
+
+
 @router.get("/oidc/callback")
 async def oidc_callback(
     code: str,
@@ -286,19 +335,17 @@ async def oidc_callback(
             raise HTTPException(status_code=401, detail="OIDC token exchange failed")
         tokens = token_resp.json()
 
-        # Validate nonce in id_token when present
+        # Validate id_token signature via IdP JWKS + nonce
         id_token = tokens.get("id_token")
         if id_token:
             try:
-                # Signature verification against IdP JWKS is preferred; decode claims
-                # without verify for nonce check when JWKS not wired (Phase 4).
-                claims = jwt.get_unverified_claims(id_token)
+                claims = await _verify_oidc_id_token(client, id_token, pending.nonce)
                 if claims.get("nonce") and claims.get("nonce") != pending.nonce:
                     raise HTTPException(status_code=401, detail="OIDC nonce mismatch")
             except HTTPException:
                 raise
-            except Exception:
-                pass
+            except Exception as e:
+                raise HTTPException(status_code=401, detail=f"OIDC id_token invalid: {e}") from e
 
         access = tokens.get("access_token")
         userinfo = await client.get(

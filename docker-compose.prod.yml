@@ -2,13 +2,17 @@
 # Rolling Forecast — Production Overrides
 # ──────────────────────────────────────────────────────────
 #
-# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile postgres --profile redis up -d
 #
 # ──────────────────────────────────────────────────────────
 
 services:
   db:
     profiles: []  # enable postgres in prod
+    restart: unless-stopped
+
+  redis:
+    profiles: []  # enable redis in prod
     restart: unless-stopped
 
   backend:
@@ -30,9 +34,27 @@ services:
       - DATABASE_URL=${DATABASE_URL:?Set DATABASE_URL}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?Set JWT_SECRET_KEY}
       - CORS_ORIGINS=${CORS_ORIGINS:?Set CORS_ORIGINS}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    profiles: []
+    environment:
+      - APP_ENV=production
+      - LOG_LEVEL=WARNING
+      - DATABASE_URL=${DATABASE_URL:?Set DATABASE_URL}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?Set JWT_SECRET_KEY}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
   frontend:
     build:

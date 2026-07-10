@@ -59,9 +59,9 @@ def upgrade() -> None:
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("name", sa.String(100), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
-        sa.Column("is_active", sa.Boolean(), server_default=sa.text("1")),
+        sa.Column("is_active", sa.Boolean(), server_default=sa.true()),
         sa.Column("levels", sa.JSON(), nullable=False),
-        sa.Column("require_sod", sa.Boolean(), server_default=sa.text("1")),
+        sa.Column("require_sod", sa.Boolean(), server_default=sa.true()),
         sa.Column("created_at", sa.DateTime()),
     )
 

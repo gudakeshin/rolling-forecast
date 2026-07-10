@@ -82,7 +82,8 @@ jobs:
           # Must be a single head after merge revision
           test "$(alembic heads | wc -l)" -eq 1
           alembic upgrade head
-          alembic current
+          alembic current | tee /tmp/current.txt
+          grep -q "006_fx_accuracy" /tmp/current.txt
 
   frontend:
     runs-on: ubuntu-latest
@@ -98,7 +99,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci || npm install
       - name: Install eslint toolchain
-        run: npm install --save-dev eslint @typescript-eslint/parser @typescript-eslint/eslint-plugin eslint-plugin-react-hooks
+        run: npm install --save-dev eslint@8.57.1 @typescript-eslint/parser@7.18.0 @typescript-eslint/eslint-plugin@7.18.0 eslint-plugin-react-hooks@4.6.2
       - name: Typecheck
         run: npx tsc --noEmit
       - name: ESLint
