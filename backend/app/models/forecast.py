@@ -69,6 +69,8 @@ class ForecastVersion(Base):
         Float, nullable=True
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reporting_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    fx_rate_set_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # Relationships
     actuals_dataset: Mapped["ActualsDataset"] = relationship(

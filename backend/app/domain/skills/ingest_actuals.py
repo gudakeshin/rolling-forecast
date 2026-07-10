@@ -138,6 +138,14 @@ class IngestActualsSkill(BaseSkill):
         deps_created = ensure_standard_dependencies(db, list(line_item_map.values()))
         db.commit()
 
+        # Vintage accuracy: match new actuals against prior forecast versions
+        try:
+            from app.services.accuracy_snapshot import AccuracySnapshotService
+            AccuracySnapshotService(db).on_actuals_ingested(dataset.id)
+            db.commit()
+        except Exception as e:
+            logger.warning("Accuracy snapshot failed: %s", e)
+
         # Update working memory
         context.context_manager.set_memory("last_dataset_id", dataset.id)
 

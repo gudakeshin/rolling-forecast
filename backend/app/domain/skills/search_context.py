@@ -86,6 +86,17 @@ class SearchContextSkill(BaseSkill):
             )
 
         content_blocks.append(self._text_block("\n".join(summary_lines)))
+        citations = [
+            {
+                "id": r.get("chunk_id") or str(i),
+                "label": r.get("original_name") or "Document",
+                "document_id": r.get("document_id"),
+                "snippet": (r.get("content") or "")[:240],
+                "score": r.get("score"),
+            }
+            for i, r in enumerate(results, 1)
+        ]
+        content_blocks.append(self._citations_block(citations))
         content_blocks.append(
             self._panel_trigger(
                 "document_library",
@@ -96,6 +107,6 @@ class SearchContextSkill(BaseSkill):
 
         return SkillResult.ok(
             message=f"Found {len(results)} relevant passages across your documents.",
-            data={"results": results, "query": query},
+            data={"results": results, "query": query, "citations": citations},
             content_blocks=content_blocks,
         )

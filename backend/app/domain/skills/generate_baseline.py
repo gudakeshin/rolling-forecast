@@ -245,6 +245,11 @@ class GenerateBaselineSkill(BaseSkill):
                     "description": "Random seed for reproducibility (default: 42)",
                     "default": 42,
                 },
+                "async_job": {
+                    "type": "boolean",
+                    "description": "If true and REDIS_URL is set, enqueue generation on the arq worker and return a job_id",
+                    "default": False,
+                },
             },
         }
 
@@ -256,6 +261,34 @@ class GenerateBaselineSkill(BaseSkill):
         """Generate baseline forecast for all line items with full edge case handling."""
         db: Session = context.db
         start_time = time.time()
+
+        # Optional async enqueue when Redis/arq is available
+        if params.get("async_job"):
+            from app.services.job_queue import enqueue_generate_baseline, redis_configured
+
+            if redis_configured():
+                job = await enqueue_generate_baseline(
+                    version_name="pending",
+                    params={k: v for k, v in params.items() if k != "async_job"},
+                    user_id=context.user_id,
+                    conversation_id=context.conversation_id,
+                )
+                return SkillResult.ok(
+                    message=f"Baseline generation queued (job {job['job_id']})",
+                    data=job,
+                    content_blocks=[
+                        self._status_block(
+                            label="Queued forecast generation",
+                            progress=0.05,
+                            step=f"job_id={job['job_id']}",
+                        ),
+                        self._text_block(
+                            f"Job `{job['job_id']}` queued. Poll `GET /api/jobs/{job['job_id']}` for status."
+                        ),
+                    ],
+                )
+            # No Redis — fall through to synchronous execution
+            params = {**params, "async_job": False}
 
         horizon = params.get("horizon_months", settings.default_horizon_months)
         model_type = params.get("model_type", "auto")
@@ -304,8 +337,13 @@ class GenerateBaselineSkill(BaseSkill):
             random_seed=random_seed,
             created_by=context.user_id,  # SoD: creator cannot self-approve
         )
+        # FX: resolve reporting currency up front
+        from app.services.fx import get_reporting_currency, MissingFxRateError, convert_series_values
+        reporting_ccy = get_reporting_currency(db)
+        version.reporting_currency = reporting_ccy
         db.add(version)
         db.flush()
+        fx_hashes: list[str] = []
 
         # Generate forecast for each line item
         model_registry = get_model_registry()
@@ -355,9 +393,18 @@ class GenerateBaselineSkill(BaseSkill):
                     summary["skipped"] += 1
                     continue
 
-                # Build time series
-                values = pd.Series([r.value for r in records])
+                # Build time series — convert to reporting currency at construction time
+                raw_values = [float(r.value) for r in records]
                 periods = [r.period for r in records]
+                currencies = [getattr(r, "currency", None) or reporting_ccy for r in records]
+                try:
+                    converted, fx_hash = convert_series_values(
+                        db, raw_values, currencies, periods, reporting_ccy
+                    )
+                    fx_hashes.append(fx_hash)
+                except MissingFxRateError as e:
+                    return SkillResult.fail(str(e))
+                values = pd.Series(converted)
                 dates = pd.DatetimeIndex([pd.Timestamp(p + "-01") for p in periods])
 
                 # Run history analysis (EC1, EC2, EC4, EC12)
@@ -600,6 +647,11 @@ class GenerateBaselineSkill(BaseSkill):
         elapsed = time.time() - start_time
         version.total_line_items = summary["success"]
         version.generation_time_seconds = elapsed
+        if fx_hashes:
+            import hashlib
+            version.fx_rate_set_hash = hashlib.sha256(
+                "|".join(sorted(set(fx_hashes))).encode()
+            ).hexdigest()
         version.model_versions = {
             "models": model_registry.list_models(),
             "selection_method": "rolling_origin_cv" if model_type == "auto" else "manual",

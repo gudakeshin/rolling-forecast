@@ -157,6 +157,10 @@ class BaseSkill(ABC):
             "data": {"panel": panel, "params": params, "label": label},
         }
 
+    def _citations_block(self, citations: list[dict]) -> dict:
+        """Helper to create an inline citations content block."""
+        return {"type": "citations", "data": {"citations": citations}}
+
     def _action_block(self, actions: list[dict]) -> dict:
         """Helper to create an action button content block."""
         return {"type": "action", "data": {"actions": actions}}

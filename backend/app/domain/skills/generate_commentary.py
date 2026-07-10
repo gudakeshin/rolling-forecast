@@ -96,17 +96,63 @@ class GenerateCommentarySkill(BaseSkill):
             data_context, scope, tone, include_risks, include_recommendations, version
         )
 
+        from app.services.numeric_grounding import (
+            facts_from_context,
+            render_fact_placeholders,
+            validate_numeric_claims,
+        )
+
+        facts = facts_from_context(data_context)
+        # Also expose common totals as facts
+        total_forecast = sum(c.get("total", 0) for c in data_context.get("categories", []))
+        facts.setdefault("revenue_total", total_forecast)
+        facts.setdefault("total_forecast", total_forecast)
+        allowed = {str(v) for v in facts.values()}
+        for v in list(facts.values()):
+            if isinstance(v, float):
+                allowed.add(f"{v:,.0f}")
+                allowed.add(f"{v:,.1f}")
+            elif isinstance(v, int):
+                allowed.add(f"{v:,}")
+
         content_blocks = []
+        verified_total = 0
+        claims_total = 0
         for section in commentary:
-            content_blocks.append(self._text_block(section))
+            rendered = render_fact_placeholders(section, facts)
+            cleaned, verified, total = validate_numeric_claims(rendered, allowed)
+            verified_total += verified
+            claims_total += total
+            content_blocks.append(self._text_block(cleaned))
+
+        figures_meta = {
+            "figures_verified": verified_total,
+            "figures_total": claims_total,
+            "figures_verified_ratio": (
+                f"{verified_total}/{claims_total}" if claims_total else "0/0"
+            ),
+        }
+        content_blocks.insert(
+            0,
+            self._status_block(
+                label=f"Figures verified {figures_meta['figures_verified_ratio']}",
+                progress=1.0 if claims_total == 0 or verified_total == claims_total else verified_total / max(claims_total, 1),
+                step="numeric_grounding",
+                is_complete=True,
+            ),
+        )
 
         return SkillResult.ok(
-            message=f"Generated {scope} commentary for {version.name} ({tone} tone)",
+            message=(
+                f"Generated {scope} commentary for {version.name} ({tone} tone) "
+                f"— figures verified {figures_meta['figures_verified_ratio']}"
+            ),
             data={
                 "version_id": version_id,
                 "scope": scope,
                 "tone": tone,
                 "sections": len(commentary),
+                **figures_meta,
             },
             content_blocks=content_blocks,
         )
@@ -290,6 +336,9 @@ class GenerateCommentarySkill(BaseSkill):
                 f"Data context (JSON):\n{json.dumps(ctx, default=str)[:8000]}\n\n"
                 f"Key override citations:\n" + ("\n".join(citations) or "(none)") + "\n\n"
                 "Write 3-6 short markdown sections suitable for a board pack. "
+                "IMPORTANT: Do NOT invent numbers. Reference figures only as placeholders "
+                "like {fact:total_forecast} or {fact:revenue_total} — they will be "
+                "substituted programmatically from the data context. "
                 "Cite specific overrides/reasons inline. "
                 f"{'Include risks. ' if include_risks else ''}"
                 f"{'Include recommendations. ' if include_recommendations else ''}"

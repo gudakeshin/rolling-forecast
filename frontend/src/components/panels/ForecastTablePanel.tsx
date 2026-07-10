@@ -4,10 +4,11 @@ import {
   Edit3, ShieldCheck, Eye, Filter, BarChart3, TrendingDown, TrendingUp,
   Bot, Sparkles, Info, MessageSquare, Upload, RefreshCw, ArrowRightLeft,
   UserCheck, Search, Zap, CircleDot, Save, X, GitBranch, Activity,
-  Loader2,
+  Loader2, Download,
 } from 'lucide-react';
 import { apiPost } from '../../api/client';
 import { usePanelStore } from '../../store/panelStore';
+import { downloadCsv } from '../ui/DataTable';
 
 // ── Deloitte Colors ──────────────────────────
 const COLORS = {
@@ -204,6 +205,31 @@ export function ForecastTablePanel({ data }: Props) {
     }
   }, [version, openPanel]);
 
+  const handleExportCsv = useCallback(() => {
+    const cols = isSummaryView
+      ? [
+          { key: 'name', label: 'Line Item' },
+          { key: 'category', label: 'Category' },
+          { key: 'total_p50', label: 'Total P50' },
+          { key: 'confidence_level', label: 'Confidence' },
+          { key: 'period_count', label: 'Periods' },
+        ]
+      : [
+          { key: 'name', label: 'Line Item' },
+          { key: 'category', label: 'Category' },
+          { key: 'period', label: 'Period' },
+          { key: 'p50', label: 'P50' },
+          { key: 'p10', label: 'P10' },
+          { key: 'p90', label: 'P90' },
+          { key: 'confidence_level', label: 'Confidence' },
+        ];
+    downloadCsv(
+      `forecast_${version?.name || 'export'}.csv`,
+      cols,
+      sortedRows as unknown as Record<string, unknown>[],
+    );
+  }, [isSummaryView, sortedRows, version]);
+
   if (rows.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 gap-3">
@@ -269,6 +295,15 @@ export function ForecastTablePanel({ data }: Props) {
         <span className="text-[10px] text-surface-500 ml-auto">
           {sortedRows.length} of {rows.length} items
         </span>
+        <button
+          type="button"
+          onClick={handleExportCsv}
+          className="inline-flex items-center gap-1 text-xs text-surface-300 hover:text-white px-2 py-1 rounded-md border border-surface-600 hover:border-deloitte-green/40"
+          aria-label="Export forecast table as CSV"
+        >
+          <Download className="w-3.5 h-3.5" />
+          CSV
+        </button>
       </div>
 
       {/* ── Data Table ── */}

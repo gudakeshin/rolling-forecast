@@ -201,10 +201,12 @@ from app.api.skills import router as skills_router
 from app.api.context import router as context_router
 from app.api.admin import router as admin_router
 from app.api.admin_integrations import router as admin_integrations_router
+from app.api.admin_fx import router as admin_fx_router
 from app.api.executive import router as executive_router
 from app.api.approvals import router as approvals_router
 from app.api.integrations import router as integrations_router
 from app.api.locks import router as locks_router
+from app.api.jobs import router as jobs_router
 
 app.include_router(health_router)
 app.include_router(auth_router, prefix="/api")
@@ -216,7 +218,20 @@ app.include_router(skills_router)
 app.include_router(context_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
 app.include_router(admin_integrations_router, prefix="/api")
+app.include_router(admin_fx_router, prefix="/api")
 app.include_router(executive_router, prefix="/api")
 app.include_router(approvals_router, prefix="/api")
 app.include_router(integrations_router, prefix="/api")
 app.include_router(locks_router, prefix="/api")
+app.include_router(jobs_router, prefix="/api")
+
+# Prometheus metrics (optional dependency)
+try:
+    from prometheus_fastapi_instrumentator import Instrumentator
+
+    Instrumentator(
+        should_group_status_codes=True,
+        excluded_handlers=["/metrics", "/livez", "/readyz", "/health"],
+    ).instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+except ImportError:
+    pass

@@ -5,6 +5,7 @@ import { ChartRenderer } from './renderers/ChartRenderer';
 import { StatusCard } from './renderers/StatusCard';
 import { ActionCard } from './renderers/ActionCard';
 import { PanelTrigger } from './renderers/PanelTrigger';
+import { CitationsRenderer } from './renderers/CitationsRenderer';
 import { User, Wrench } from 'lucide-react';
 
 interface Props {
@@ -90,6 +91,8 @@ function ContentBlockRenderer({ block }: { block: { type: string; data: any } })
         return <ActionCard data={block.data} />;
       case 'panel_trigger':
         return <PanelTrigger data={block.data} />;
+      case 'citations':
+        return <CitationsRenderer data={block.data} />;
       default:
         return <TextRenderer text={JSON.stringify(block.data)} />;
     }
