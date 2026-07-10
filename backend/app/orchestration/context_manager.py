@@ -62,26 +62,38 @@ class ContextManager:
 
     # ---------- Conversation History ----------
 
-    def get_chat_history(self, max_messages: int = 50) -> list[dict[str, str]]:
+    def get_chat_history(self, max_messages: int = 50, max_tokens: int = 8000) -> list[dict[str, str]]:
         """
-        Get conversation history formatted for the LLM context window.
-        Returns list of {role, content} dicts.
+        Get conversation history for the LLM context window.
+
+        Uses a token budget (approx 4 chars/token) keeping system-relevant recent
+        turns; older middle messages are dropped (summarization deferred).
         """
         messages = (
             self.db.query(Message)
             .filter(Message.conversation_id == self.conversation_id)
             .order_by(Message.created_at.desc())
-            .limit(max_messages)
+            .limit(max(max_messages * 2, 100))
             .all()
         )
-        # Reverse to chronological order
         messages.reverse()
 
-        history = []
+        history: list[dict[str, str]] = []
         for msg in messages:
             if msg.role in ("user", "assistant"):
-                history.append({"role": msg.role, "content": msg.content})
-        return history
+                history.append({"role": msg.role, "content": msg.content or ""})
+
+        # Keep newest messages within token budget
+        budget = max_tokens
+        kept: list[dict[str, str]] = []
+        for msg in reversed(history):
+            cost = max(1, len(msg["content"]) // 4)
+            if budget - cost < 0 and kept:
+                break
+            kept.append(msg)
+            budget -= cost
+        kept.reverse()
+        return kept[-max_messages:]
 
     def get_system_context(self) -> str:
         """Build the system prompt with user context and working memory."""

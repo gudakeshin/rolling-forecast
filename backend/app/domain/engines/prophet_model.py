@@ -68,7 +68,7 @@ class ProphetModel(IForecastModel):
                 "n_changepoints": len(changepoints),
                 "has_changepoints": has_changepoints,
                 "residual_std": float(np.std(residuals)),
-                "mape": mape,
+                "in_sample_mape": mape,
                 "r_squared": float(r_squared),
                 "n_points": len(series),
                 "_df": df.to_dict(orient="records"),
@@ -141,7 +141,7 @@ class ProphetModel(IForecastModel):
             model_type="prophet",
             parameters={k: v for k, v in params.items() if not k.startswith("_")},
             fit_metrics={
-                "mape": params.get("mape", 0),
+                "in_sample_mape": params.get("in_sample_mape", params.get("mape", 0)),
                 "r_squared": params.get("r_squared", 0),
             },
             diagnostics={

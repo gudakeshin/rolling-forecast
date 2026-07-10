@@ -185,6 +185,73 @@ class DependencyGraphManager:
         self.db.flush()
         return recalc_count
 
+    def recalculate_all(self, version_id: str) -> int:
+        """Full topo-sort recompute of all calculated line items for a version.
+
+        Preloads all ForecastLineResult rows into a dict to avoid per-cell queries.
+        Calculated-line bounds are tagged bounds_method=linear_aggregation.
+        """
+        G = self._load_graph()
+        try:
+            order = list(nx.topological_sort(G))
+        except nx.NetworkXUnfeasible:
+            logger.error("Cycle in dependency graph; aborting recalculate_all")
+            return 0
+
+        rows = (
+            self.db.query(ForecastLineResult)
+            .filter(ForecastLineResult.version_id == version_id)
+            .all()
+        )
+        # (line_item_id, period) -> result
+        by_key: dict[tuple[int, str], ForecastLineResult] = {
+            (r.line_item_id, r.period): r for r in rows
+        }
+        periods = sorted({r.period for r in rows})
+        recalc_count = 0
+
+        for node_id in order:
+            node_data = G.nodes.get(node_id, {})
+            if not node_data.get("is_calculated"):
+                continue
+            predecessors = list(G.predecessors(node_id))
+            for period in periods:
+                source_values = {}
+                for pred_id in predecessors:
+                    pred = by_key.get((pred_id, period))
+                    if not pred:
+                        continue
+                    val = pred.override_value if pred.is_overridden else pred.p50
+                    edge_data = G.edges[pred_id, node_id]
+                    source_values[pred_id] = {
+                        "value": val,
+                        "relationship": edge_data.get("relationship_type", "sum"),
+                        "weight": edge_data.get("weight", 1.0),
+                    }
+                if not source_values:
+                    continue
+                new_value = self._calculate_value(source_values, node_data.get("formula"))
+                result = by_key.get((node_id, period))
+                if result:
+                    result.p50 = new_value
+                    result.is_calculated = True
+                    # Linear aggregation of bounds when sources have them
+                    lowers, uppers = [], []
+                    for pred_id in predecessors:
+                        pred = by_key.get((pred_id, period))
+                        if pred and pred.p10 is not None:
+                            lowers.append(pred.p10)
+                        if pred and pred.p90 is not None:
+                            uppers.append(pred.p90)
+                    if lowers:
+                        result.p10 = sum(lowers)
+                    if uppers:
+                        result.p90 = sum(uppers)
+                    recalc_count += 1
+
+        self.db.flush()
+        return recalc_count
+
     def _calculate_value(
         self, source_values: dict[int, dict], formula: str | None
     ) -> float:

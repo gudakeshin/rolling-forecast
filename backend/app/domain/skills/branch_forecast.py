@@ -142,12 +142,12 @@ class BranchForecastSkill(BaseSkill):
                 override_value=r.override_value,
             )
 
-            # Apply bulk adjustments by category
+            # Apply bulk adjustments by category — leaf (non-calculated) items only
             if adjustments:
                 li = db.query(LineItem).filter(LineItem.id == r.line_item_id).first()
-                if li:
+                if li and not li.is_calculated:
                     for cat_pattern, pct_change in adjustments.items():
-                        if cat_pattern.lower() in li.category.lower():
+                        if cat_pattern.lower() in (li.category or "").lower():
                             factor = 1 + (pct_change / 100.0)
                             new_r.p50 = r.p50 * factor
                             if new_r.p10 is not None:
@@ -160,6 +160,11 @@ class BranchForecastSkill(BaseSkill):
 
             db.add(new_r)
 
+        db.flush()
+
+        # Recompute calculated lines (EBITDA, GM, etc.) for P&L coherence
+        from app.services.dependency_graph import DependencyGraphManager
+        recalc = DependencyGraphManager(db).recalculate_all(branch.id)
         db.commit()
 
         # Build response

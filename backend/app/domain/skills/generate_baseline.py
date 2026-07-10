@@ -49,8 +49,8 @@ _MODEL_BASE_SCORES = {"prophet": 65, "arima": 60, "ets": 55, "linear": 40, "aver
 def _compute_confidence_score(result: ForecastLineResult) -> float:
     """Compute composite confidence score (0-100) for a single forecast line.
 
-    Blends:
-    - Model fit MAPE (40%): lower MAPE = higher confidence
+    # Blends CV MAPE (not in-sample fit residual) when available:
+    # - Model CV MAPE (40%): lower MAPE = higher confidence
     - Prediction interval width (25%): narrower = more confident
     - R-squared goodness of fit (20%): higher = better
     - Model type base score (15%): sophisticated models get higher base
@@ -445,11 +445,17 @@ class GenerateBaselineSkill(BaseSkill):
                         summary["model_comparisons"][li.name] = comparison.to_dict()
                     else:
                         selected_model = effective_model_type
+                        selection_mape = None
 
                     forecast_output = model_registry.fit_and_predict(
                         selected_model, effective_values, effective_dates, horizon,
                         random_seed=random_seed,
                     )
+
+                    # Prefer CV MAPE for confidence; fall back to in-sample only if no CV
+                    cv_mape = selection_mape if selection_mape is not None else None
+                    in_sample = forecast_output.fit_metrics.get("in_sample_mape") or forecast_output.fit_metrics.get("mape")
+                    honest_mape = cv_mape if cv_mape is not None and cv_mape != float("inf") else in_sample
 
                     # EC9: Clamp negative values
                     point_forecast = forecast_output.point_forecast.copy()
@@ -484,7 +490,7 @@ class GenerateBaselineSkill(BaseSkill):
                             confidence_score=0,
                             confidence_level="pending",
                             model_type=selected_model,
-                            model_mape=forecast_output.fit_metrics.get("mape"),
+                            model_mape=honest_mape,
                             model_r_squared=forecast_output.fit_metrics.get("r_squared"),
                         )
                         db.add(line_result)
@@ -499,7 +505,7 @@ class GenerateBaselineSkill(BaseSkill):
                                 training_window_start=periods[0],
                                 training_window_end=periods[-1],
                                 training_points=len(records),
-                                mape=forecast_output.fit_metrics.get("mape"),
+                                mape=honest_mape,
                                 r_squared=forecast_output.fit_metrics.get("r_squared"),
                                 aic=forecast_output.fit_metrics.get("aic"),
                                 seasonality_detected=forecast_output.diagnostics.get("seasonality_detected", False),
@@ -596,7 +602,7 @@ class GenerateBaselineSkill(BaseSkill):
         version.generation_time_seconds = elapsed
         version.model_versions = {
             "models": model_registry.list_models(),
-            "selection_method": "walk_forward_cv" if model_type == "auto" else "manual",
+            "selection_method": "rolling_origin_cv" if model_type == "auto" else "manual",
         }
 
         db.commit()

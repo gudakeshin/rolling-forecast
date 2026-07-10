@@ -1,4 +1,4 @@
-"""Observability setup — OpenTelemetry + structured logging hooks."""
+"""Observability setup — OpenTelemetry (OTLP) + Langfuse hooks."""
 
 from __future__ import annotations
 
@@ -22,7 +22,22 @@ def setup_observability(app: FastAPI) -> None:
 
         resource = Resource.create({"service.name": settings.otel_service_name})
         provider = TracerProvider(resource=resource)
-        provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+
+        otlp_endpoint = getattr(settings, "otel_exporter_otlp_endpoint", "") or ""
+        if otlp_endpoint:
+            try:
+                from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+                provider.add_span_processor(
+                    BatchSpanProcessor(OTLPSpanExporter(endpoint=otlp_endpoint))
+                )
+                logger.info("OTLP exporter configured → %s", otlp_endpoint)
+            except ImportError:
+                logger.warning("OTLP packages missing; falling back to console exporter")
+                provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+        else:
+            provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+
         trace.set_tracer_provider(provider)
         FastAPIInstrumentor.instrument_app(app)
         logger.info("OpenTelemetry instrumentation enabled for %s", settings.otel_service_name)
@@ -32,4 +47,24 @@ def setup_observability(app: FastAPI) -> None:
         )
 
     if settings.langfuse_public_key and settings.langfuse_secret_key:
-        logger.info("Langfuse keys configured (host=%s)", settings.langfuse_host)
+        logger.info(
+            "Langfuse keys configured (host=%s) — attach via get_langfuse_callback()",
+            settings.langfuse_host,
+        )
+
+
+def get_langfuse_callback():
+    """Return a Langfuse LangChain callback handler when keys are configured, else None."""
+    if not (settings.langfuse_public_key and settings.langfuse_secret_key):
+        return None
+    try:
+        from langfuse.callback import CallbackHandler
+
+        return CallbackHandler(
+            public_key=settings.langfuse_public_key,
+            secret_key=settings.langfuse_secret_key,
+            host=settings.langfuse_host,
+        )
+    except ImportError:
+        logger.warning("langfuse package not installed; skipping LLM tracing callback")
+        return None

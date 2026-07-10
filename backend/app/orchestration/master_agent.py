@@ -107,6 +107,8 @@ class MasterAgent:
             model=settings.anthropic_model,
             anthropic_api_key=settings.anthropic_api_key,
             max_tokens=4096,
+            timeout=120.0,
+            max_retries=2,
         )
 
         # Get tools from skills registry
@@ -181,11 +183,42 @@ class MasterAgent:
             # Track which tool_start events we've already emitted
             emitted_tool_starts: set[str] = set()
 
-            # Stream the agent execution
-            async for event in agent.astream(
-                {"messages": messages},
-                stream_mode="updates",
-            ):
+            # Stream the agent execution with recursion + wall-clock budget
+            import asyncio
+
+            stream_budget_s = float(getattr(settings, "max_forecast_generation_minutes", 30)) * 60
+            stream_budget_s = min(stream_budget_s, 180.0)  # chat turn cap
+
+            async def _consume():
+                async for event in agent.astream(
+                    {"messages": messages},
+                    config={"recursion_limit": 25},
+                    stream_mode="updates",
+                ):
+                    yield event
+
+            agen = _consume()
+            deadline = asyncio.get_event_loop().time() + stream_budget_s
+
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:
+                    yield {
+                        "event": "error",
+                        "data": {"error": "Agent streaming budget exceeded"},
+                    }
+                    break
+                try:
+                    event = await asyncio.wait_for(agen.__anext__(), timeout=remaining)
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError:
+                    yield {
+                        "event": "error",
+                        "data": {"error": "Agent streaming budget exceeded"},
+                    }
+                    break
+
                 for node_name, node_output in event.items():
                     if node_name == "tools":
                         # Tool execution result events

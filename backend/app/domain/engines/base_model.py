@@ -79,30 +79,63 @@ class IForecastModel(ABC):
     def evaluate(
         self, series: pd.Series, dates: pd.DatetimeIndex, test_size: int = 6
     ) -> float:
-        """
-        Evaluate model using walk-forward cross-validation.
-        
-        Returns MAPE on the holdout set.
-        """
-        if len(series) < self.min_data_points + test_size:
-            return float("inf")
+        """Single-holdout MAPE (legacy). Prefer evaluate_cv for model selection."""
+        result = self.evaluate_cv(series, dates, n_folds=1, fold_horizon=test_size)
+        return result["mean_mape"]
 
-        train = series[:-test_size]
-        test = series[-test_size:]
-        train_dates = dates[:-test_size]
+    def evaluate_cv(
+        self,
+        series: pd.Series,
+        dates: pd.DatetimeIndex,
+        n_folds: int = 3,
+        fold_horizon: int = 3,
+    ) -> dict[str, Any]:
+        """True rolling-origin cross-validation.
 
-        try:
-            params = self.fit(train, train_dates)
-            forecast = self.predict(
-                params, test_size, train_dates[-1]
-            )
-            # Calculate MAPE
-            actuals = test.values
-            predicted = forecast.point_forecast[:len(actuals)]
-            mask = actuals != 0
-            if mask.sum() == 0:
-                return float("inf")
-            mape = np.mean(np.abs((actuals[mask] - predicted[mask]) / actuals[mask])) * 100
-            return float(mape)
-        except Exception:
-            return float("inf")
+        For each fold i in 1..n_folds, train on series[:-fold_horizon*i] (minimum
+        min_data_points), predict the next fold_horizon periods, record MAPE.
+        Returns mean_mape, fold_mapes, n_folds_used. Recency-weighted mean gives
+        more weight to later folds.
+        """
+        fold_mapes: list[float] = []
+        n = len(series)
+        for fold in range(1, n_folds + 1):
+            holdout = fold_horizon * fold
+            train_end = n - holdout
+            if train_end < self.min_data_points:
+                break
+            test_start = train_end
+            test_end = min(train_end + fold_horizon, n)
+            if test_end <= test_start:
+                break
+            train = series.iloc[:train_end]
+            test = series.iloc[test_start:test_end]
+            train_dates = dates[:train_end]
+            try:
+                params = self.fit(train, train_dates)
+                forecast = self.predict(params, len(test), train_dates[-1])
+                actuals = test.values
+                predicted = forecast.point_forecast[: len(actuals)]
+                mask = actuals != 0
+                if mask.sum() == 0:
+                    fold_mapes.append(float("inf"))
+                else:
+                    mape = float(
+                        np.mean(np.abs((actuals[mask] - predicted[mask]) / actuals[mask])) * 100
+                    )
+                    fold_mapes.append(mape)
+            except Exception:
+                fold_mapes.append(float("inf"))
+
+        finite = [m for m in fold_mapes if m != float("inf")]
+        if not finite:
+            return {"mean_mape": float("inf"), "fold_mapes": fold_mapes, "n_folds_used": 0}
+
+        # Recency-weighted: later folds weigh more
+        weights = list(range(1, len(finite) + 1))
+        mean_mape = float(sum(m * w for m, w in zip(finite, weights)) / sum(weights))
+        return {
+            "mean_mape": mean_mape,
+            "fold_mapes": fold_mapes,
+            "n_folds_used": len(finite),
+        }

@@ -38,9 +38,13 @@ class Settings(BaseSettings):
     # Observability
     otel_enabled: bool = False
     otel_service_name: str = "rolling-forecast"
+    otel_exporter_otlp_endpoint: str = ""
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
     langfuse_host: str = "https://cloud.langfuse.com"
+
+    # Redis (locks / rate-limit / queue — optional until Phase 4 full cutover)
+    redis_url: str = ""
 
     # Warehouse / ERP (legacy env fallbacks — prefer connection registry)
     warehouse_connection_url: str = ""

@@ -105,7 +105,7 @@ class ARIMAModel(IForecastModel):
         best_params.update({
             "has_seasonality": has_seasonality and best_seasonal[0] > 0,
             "residual_std": float(np.std(residuals)),
-            "mape": mape,
+            "in_sample_mape": mape,
             "r_squared": float(r_squared),
             "n_points": len(values),
             "_values": values.tolist(),
@@ -165,7 +165,7 @@ class ARIMAModel(IForecastModel):
             model_type="arima",
             parameters={k: v for k, v in params.items() if not k.startswith("_")},
             fit_metrics={
-                "mape": params.get("mape", 0),
+                "in_sample_mape": params.get("in_sample_mape", params.get("mape", 0)),
                 "r_squared": params.get("r_squared", 0),
                 "aic": params.get("aic"),
                 "bic": params.get("bic"),

@@ -124,21 +124,28 @@ export function PanelContainer() {
   }
 
   return (
-    <div className="h-full flex flex-col">
+    <div
+      className="h-full flex flex-col"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="panel-title"
+    >
       {/* Panel header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-surface-700/50 bg-surface-800">
         <div className="flex items-center gap-2">
           <div className="w-0.5 h-4 bg-deloitte-green rounded-full" />
-          <Icon className="w-4 h-4 text-deloitte-green" />
-          <h3 className="text-sm font-semibold text-white">
+          <Icon className="w-4 h-4 text-deloitte-green" aria-hidden="true" />
+          <h3 id="panel-title" className="text-sm font-semibold text-white">
             {panelData?.title || panelType?.replace(/_/g, ' ') || 'Details'}
           </h3>
         </div>
         <button
+          type="button"
           onClick={closePanel}
-          className="p-1.5 hover:bg-surface-700 rounded-lg transition-colors text-surface-400 hover:text-white"
+          aria-label="Close panel"
+          className="p-1.5 hover:bg-surface-700 rounded-lg transition-colors text-surface-400 hover:text-white min-h-[44px] min-w-[44px] flex items-center justify-center"
         >
-          <X className="w-4 h-4" />
+          <X className="w-4 h-4" aria-hidden="true" />
         </button>
       </div>
 

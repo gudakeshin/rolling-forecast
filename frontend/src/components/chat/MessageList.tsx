@@ -9,7 +9,7 @@ interface Props {
 
 export function MessageList({ messages, streamingMessage }: Props) {
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" role="log" aria-live="polite" aria-relevant="additions" aria-label="Conversation messages">
       {messages.map((message) => (
         <MessageBubble key={message.id} message={message} />
       ))}

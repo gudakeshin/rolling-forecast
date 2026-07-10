@@ -88,9 +88,11 @@ export function InputBar({ onSend, isStreaming }: Props) {
       )}
       <div className="flex items-end gap-2 bg-surface-800 border border-surface-700 rounded-2xl px-4 py-3 focus-within:border-deloitte-green/40 focus-within:glow-green transition-all">
         <button
+          type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={isUploading}
-          className="flex-shrink-0 p-1.5 hover:bg-surface-700 rounded-lg transition-colors text-surface-400 hover:text-deloitte-green disabled:opacity-50"
+          aria-label="Upload file"
+          className="flex-shrink-0 p-1.5 hover:bg-surface-700 rounded-lg transition-colors text-surface-400 hover:text-deloitte-green disabled:opacity-50 min-h-[44px] min-w-[44px] flex items-center justify-center"
           title="Upload file (CSV/Excel for actuals, PDF/DOCX/PPTX/TXT for context)"
         >
           {isUploading ? (
@@ -113,15 +115,18 @@ export function InputBar({ onSend, isStreaming }: Props) {
           onChange={handleInput}
           onKeyDown={handleKeyDown}
           placeholder="Ask about your forecast..."
+          aria-label="Message composer"
           rows={1}
           className="flex-1 bg-transparent text-white placeholder-surface-500 resize-none focus:outline-none text-sm leading-6 max-h-[200px]"
           disabled={isStreaming}
         />
 
         <button
+          type="button"
           onClick={handleSend}
           disabled={!input.trim() || isStreaming}
-          className="flex-shrink-0 p-1.5 bg-deloitte-green hover:bg-deloitte-green/90 disabled:bg-surface-700 disabled:text-surface-600 text-black rounded-lg transition-colors"
+          aria-label="Send message"
+          className="flex-shrink-0 p-1.5 bg-deloitte-green hover:bg-deloitte-green/90 disabled:bg-surface-700 disabled:text-surface-600 text-black rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
         >
           {isStreaming ? (
             <Loader2 className="w-5 h-5 animate-spin text-deloitte-green" />

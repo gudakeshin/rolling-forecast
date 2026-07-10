@@ -29,6 +29,8 @@ class ModelComparisonResult:
     evaluation_time_ms: float
     eligible: bool  # Had enough data points
     error: str | None = None  # If evaluation failed
+    fold_mapes: list[float] = field(default_factory=list)
+    n_folds: int = 0
 
 
 @dataclass
@@ -38,7 +40,7 @@ class ModelSelectionResult:
     best_mape: float
     comparisons: list[ModelComparisonResult] = field(default_factory=list)
     data_points: int = 0
-    selection_method: str = "walk_forward_cv"
+    selection_method: str = "rolling_origin_cv"
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for storage and display."""
@@ -50,10 +52,13 @@ class ModelSelectionResult:
             "comparisons": [
                 {
                     "model": c.model_name,
+                    "model_name": c.model_name,
                     "mape": round(c.mape, 2) if c.mape != float("inf") else None,
                     "eligible": c.eligible,
                     "evaluation_time_ms": round(c.evaluation_time_ms, 1),
                     "error": c.error,
+                    "fold_mapes": [round(m, 2) if m != float("inf") else None for m in c.fold_mapes],
+                    "n_folds": c.n_folds,
                     "selected": c.model_name == self.best_model,
                 }
                 for c in self.comparisons
@@ -146,7 +151,13 @@ class ModelRegistry:
 
             t0 = time.time()
             try:
-                mape = model.evaluate(series, dates, test_size)
+                # Cap Prophet folds on short series
+                n_folds = 3
+                fold_horizon = max(3, test_size // 2) if test_size else 3
+                if model_name == "prophet" and len(series) < 36:
+                    n_folds = 2
+                cv = model.evaluate_cv(series, dates, n_folds=n_folds, fold_horizon=fold_horizon)
+                mape = cv["mean_mape"]
                 elapsed_ms = (time.time() - t0) * 1000
 
                 comparisons.append(ModelComparisonResult(
@@ -155,6 +166,8 @@ class ModelRegistry:
                     evaluation_time_ms=elapsed_ms,
                     eligible=True,
                     error=None if mape != float("inf") else "Evaluation returned inf (internal error)",
+                    fold_mapes=cv.get("fold_mapes") or [],
+                    n_folds=cv.get("n_folds_used") or 0,
                 ))
 
                 if mape < best_mape:
@@ -191,7 +204,7 @@ class ModelRegistry:
             best_mape=best_mape,
             comparisons=comparisons,
             data_points=len(series),
-            selection_method="walk_forward_cv",
+            selection_method="rolling_origin_cv",
         )
 
     def auto_select(
