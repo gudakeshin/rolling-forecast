@@ -25,10 +25,9 @@ module.exports = {
     "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
     "no-console": "off",
     "jsx-a11y/no-autofocus": "warn",
-    // Existing panels still use clickable divs — warn until SlidePanel sweep completes
-    "jsx-a11y/click-events-have-key-events": "warn",
-    "jsx-a11y/no-static-element-interactions": "warn",
+    "jsx-a11y/click-events-have-key-events": "error",
+    "jsx-a11y/no-static-element-interactions": "error",
     "jsx-a11y/label-has-associated-control": "warn",
   },
-  ignorePatterns: ["dist/", "node_modules/", "*.config.js", "*.config.ts"],
+  ignorePatterns: ["dist/", "node_modules/", "*.config.js", "*.config.ts", "e2e/"],
 };

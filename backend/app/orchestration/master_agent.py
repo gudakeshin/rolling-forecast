@@ -159,7 +159,7 @@ class MasterAgent:
 
         # Build chat history from context
         chat_history = self.context_manager.get_chat_history()
-        messages = []
+        messages: list[Any] = []
         for msg in chat_history[:-1]:  # Exclude the current message
             if msg["role"] == "user":
                 messages.append(HumanMessage(content=msg["content"]))

@@ -189,19 +189,19 @@ function ReviewProgress({ progress }: { progress: ExecData['review_progress'] })
       <div className="grid grid-cols-4 gap-2 text-center">
         <div>
           <div className="text-xs font-bold text-deloitte-green">{progress.approved}</div>
-          <div className="text-[8px] text-surface-500">Approved</div>
+          <div className="text-xs text-surface-500">Approved</div>
         </div>
         <div>
           <div className="text-xs font-bold text-amber-400">{progress.pending}</div>
-          <div className="text-[8px] text-surface-500">Pending</div>
+          <div className="text-xs text-surface-500">Pending</div>
         </div>
         <div>
           <div className="text-xs font-bold text-red-400">{progress.flagged}</div>
-          <div className="text-[8px] text-surface-500">Flagged</div>
+          <div className="text-xs text-surface-500">Flagged</div>
         </div>
         <div>
           <div className="text-xs font-bold text-cyan-400">{progress.overridden}</div>
-          <div className="text-[8px] text-surface-500">Overridden</div>
+          <div className="text-xs text-surface-500">Overridden</div>
         </div>
       </div>
 
@@ -394,7 +394,7 @@ function RiskOpportunityTable({ data }: { data: ExecData['risk_opportunity'] }) 
           </div>
         ))}
       </div>
-      <div className="flex items-center justify-center gap-4 mt-2 text-[8px] text-surface-500">
+      <div className="flex items-center justify-center gap-4 mt-2 text-xs text-surface-500">
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-red-400/40" /> Downside risk</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-green-400/40" /> Upside opportunity</span>
       </div>
@@ -424,7 +424,7 @@ function OverrideSummary({ overrides }: { overrides: OverrideItem[] }) {
               <div className={`text-xs font-mono ${o.delta > 0 ? 'text-green-400' : 'text-red-400'}`}>
                 {o.delta > 0 ? '+' : ''}{formatCurrency(o.delta)}
               </div>
-              <div className="text-[8px] text-surface-600">{o.period}</div>
+              <div className="text-xs text-surface-600">{o.period}</div>
             </div>
           </div>
         ))}
@@ -482,13 +482,13 @@ export function ExecutiveDashboardPanel({ data }: { data: any }) {
                 <div className={`text-sm font-bold font-mono ${d.accuracy.avg_mape > 15 ? 'text-red-400' : d.accuracy.avg_mape > 8 ? 'text-amber-400' : 'text-deloitte-green'}`}>
                   {d.accuracy.avg_mape.toFixed(1)}%
                 </div>
-                <div className="text-[8px] text-surface-500">MAPE</div>
+                <div className="text-xs text-surface-500">MAPE</div>
               </div>
               <div>
                 <div className={`text-sm font-bold font-mono ${d.accuracy.bias_direction === 'over' ? 'text-amber-400' : d.accuracy.bias_direction === 'under' ? 'text-blue-400' : 'text-deloitte-green'}`}>
                   {d.accuracy.avg_bias > 0 ? '+' : ''}{d.accuracy.avg_bias.toFixed(1)}%
                 </div>
-                <div className="text-[8px] text-surface-500">
+                <div className="text-xs text-surface-500">
                   Bias ({d.accuracy.bias_direction === 'over' ? 'Over' : d.accuracy.bias_direction === 'under' ? 'Under' : 'OK'})
                 </div>
               </div>
@@ -496,7 +496,7 @@ export function ExecutiveDashboardPanel({ data }: { data: any }) {
                 <div className={`text-sm font-bold font-mono ${d.accuracy.hit_rate >= 80 ? 'text-deloitte-green' : d.accuracy.hit_rate >= 60 ? 'text-amber-400' : 'text-red-400'}`}>
                   {d.accuracy.hit_rate.toFixed(0)}%
                 </div>
-                <div className="text-[8px] text-surface-500">Hit Rate</div>
+                <div className="text-xs text-surface-500">Hit Rate</div>
               </div>
             </div>
           ) : (
@@ -594,25 +594,25 @@ export function ExecutiveDashboardPanel({ data }: { data: any }) {
           <div className="grid grid-cols-4 gap-2 text-center text-xs">
             <div>
               <div className="text-xs font-bold text-white">{d.driver_summary.total_submissions}</div>
-              <div className="text-[8px] text-surface-500">Total</div>
+              <div className="text-xs text-surface-500">Total</div>
             </div>
             <div>
               <div className="text-xs font-bold text-deloitte-green">{d.driver_summary.approved}</div>
-              <div className="text-[8px] text-surface-500">Approved</div>
+              <div className="text-xs text-surface-500">Approved</div>
             </div>
             <div>
               <div className="text-xs font-bold text-amber-400">{d.driver_summary.pending}</div>
-              <div className="text-[8px] text-surface-500">Pending</div>
+              <div className="text-xs text-surface-500">Pending</div>
             </div>
             <div>
               <div className="text-xs font-bold text-red-400">{d.driver_summary.late}</div>
-              <div className="text-[8px] text-surface-500">Overdue</div>
+              <div className="text-xs text-surface-500">Overdue</div>
             </div>
           </div>
           {d.driver_summary.business_units.length > 0 && (
             <div className="mt-1.5 flex flex-wrap gap-1">
               {d.driver_summary.business_units.map((bu: string) => (
-                <span key={bu} className="text-[8px] px-1.5 py-0.5 bg-surface-700/50 rounded text-surface-400">{bu}</span>
+                <span key={bu} className="text-xs px-1.5 py-0.5 bg-surface-700/50 rounded text-surface-400">{bu}</span>
               ))}
             </div>
           )}

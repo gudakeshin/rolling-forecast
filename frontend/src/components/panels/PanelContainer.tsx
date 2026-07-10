@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import {
-  X, Loader2, Table, GitCompare, Edit, ClipboardList, Settings2,
+  Loader2, Table, GitCompare, Edit, ClipboardList, Settings2,
   LayoutDashboard, Shield, Target, FileInput, AlertTriangle, FolderOpen,
 } from 'lucide-react';
 import { usePanelStore } from '../../store/panelStore';
 import { apiGet } from '../../api/client';
+import { SlidePanel } from '../ui/SlidePanel';
 import { ForecastTablePanel } from './ForecastTablePanel';
 import { OverridesPanel } from './OverridesPanel';
 import { ComparisonPanel } from './ComparisonPanel';
@@ -38,7 +39,6 @@ export function PanelContainer() {
   useEffect(() => {
     if (!panelType || !panelParams) return;
 
-    // Skill editor doesn't need API data fetch — it handles its own data
     if (panelType === 'skill_editor') {
       setPanelData({ panel_type: 'skill_editor', title: 'Skill Editor', data: {} });
       return;
@@ -95,82 +95,49 @@ export function PanelContainer() {
       }
     };
     fetchData();
-  }, [panelType, panelParams]);
+  }, [panelType, panelParams, setLoading, setPanelData]);
 
   const Icon = panelIcons[panelType || ''] || Table;
 
-  // Skill editor gets a full-height, no-header treatment
   if (panelType === 'skill_editor') {
     return (
-      <div className="h-full flex flex-col">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-surface-700/50 bg-surface-800">
-          <div className="flex items-center gap-2">
-            <div className="w-0.5 h-4 bg-deloitte-green rounded-full" />
-            <Settings2 className="w-4 h-4 text-deloitte-green" />
-            <h3 className="text-sm font-semibold text-white">Skill Editor</h3>
-          </div>
-          <button
-            onClick={closePanel}
-            className="p-1.5 hover:bg-surface-700 rounded-lg transition-colors text-surface-400 hover:text-white"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-        <div className="flex-1 overflow-hidden">
+      <SlidePanel
+        title="Skill Editor"
+        icon={<Settings2 className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
+        onClose={closePanel}
+      >
+        <div className="-m-4 h-[calc(100%+2rem)] overflow-hidden">
           <SkillEditorPanel />
         </div>
-      </div>
+      </SlidePanel>
     );
   }
 
   return (
-    <div
-      className="h-full flex flex-col"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="panel-title"
+    <SlidePanel
+      title={panelData?.title || panelType?.replace(/_/g, ' ') || 'Details'}
+      icon={<Icon className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
+      onClose={closePanel}
     >
-      {/* Panel header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-surface-700/50 bg-surface-800">
-        <div className="flex items-center gap-2">
-          <div className="w-0.5 h-4 bg-deloitte-green rounded-full" />
-          <Icon className="w-4 h-4 text-deloitte-green" aria-hidden="true" />
-          <h3 id="panel-title" className="text-sm font-semibold text-white">
-            {panelData?.title || panelType?.replace(/_/g, ' ') || 'Details'}
-          </h3>
+      {isLoading ? (
+        <div className="flex flex-col items-center justify-center h-32 gap-2">
+          <Loader2 className="w-6 h-6 animate-spin text-deloitte-green" />
+          <span className="text-xs text-surface-500">Loading data...</span>
         </div>
-        <button
-          type="button"
-          onClick={closePanel}
-          aria-label="Close panel"
-          className="p-1.5 hover:bg-surface-700 rounded-lg transition-colors text-surface-400 hover:text-white min-h-[44px] min-w-[44px] flex items-center justify-center"
-        >
-          <X className="w-4 h-4" aria-hidden="true" />
-        </button>
-      </div>
-
-      {/* Panel content */}
-      <div className="flex-1 overflow-y-auto p-4">
-        {isLoading ? (
-          <div className="flex flex-col items-center justify-center h-32 gap-2">
-            <Loader2 className="w-6 h-6 animate-spin text-deloitte-green" />
-            <span className="text-xs text-surface-500">Loading data...</span>
-          </div>
-        ) : loadError ? (
-          <div className="flex flex-col items-center justify-center h-32 gap-2 text-center px-4">
-            <AlertTriangle className="w-6 h-6 text-amber-400" />
-            <p className="text-sm text-amber-300">{loadError}</p>
-            <p className="text-xs text-surface-500">
-              Ensure the forecast version exists and required upstream steps have completed.
-            </p>
-          </div>
-        ) : panelData ? (
-          <PanelContent type={panelType} data={panelData} />
-        ) : (
-          <p className="text-surface-500 text-sm text-center">No data available</p>
-        )}
-      </div>
-    </div>
+      ) : loadError ? (
+        <div className="flex flex-col items-center justify-center h-32 gap-2 text-center px-4">
+          <AlertTriangle className="w-6 h-6 text-amber-400" />
+          <p className="text-sm text-amber-300">{loadError}</p>
+          <p className="text-xs text-surface-500">
+            Ensure the forecast version exists and required upstream steps have completed.
+          </p>
+        </div>
+      ) : panelData ? (
+        <PanelContent type={panelType} data={panelData} />
+      ) : (
+        <p className="text-surface-500 text-sm text-center">No data available</p>
+      )}
+    </SlidePanel>
   );
 }
 

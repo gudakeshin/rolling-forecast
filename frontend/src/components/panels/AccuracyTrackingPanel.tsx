@@ -88,11 +88,11 @@ export function AccuracyTrackingPanel({ data }: Props) {
           <div className={`text-sm font-bold ${overall.bias_direction === 'over' ? 'text-amber-400' : overall.bias_direction === 'under' ? 'text-blue-400' : 'text-deloitte-green'}`}>
             {overall.avg_bias > 0 ? '+' : ''}{formatPct(overall.avg_bias)}
           </div>
-          <div className="text-[8px] text-surface-500 uppercase tracking-wider font-semibold">
+          <div className="text-xs text-surface-500 uppercase tracking-wider font-semibold">
             Bias ({overall.bias_direction === 'over' ? 'Over' : overall.bias_direction === 'under' ? 'Under' : 'Neutral'})
           </div>
           {overall.bias_dollar !== undefined && (
-            <div className="text-[8px] text-surface-600 mt-0.5">
+            <div className="text-xs text-surface-600 mt-0.5">
               {formatCurrency(overall.bias_dollar)} net
             </div>
           )}
@@ -290,7 +290,7 @@ function KPI({ label, value, color, icon: Icon, trend }: { label: string; value:
     <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl p-2.5 text-center relative">
       <Icon className={`w-3.5 h-3.5 mx-auto mb-1 ${color}`} />
       <div className={`text-sm font-bold ${color}`}>{value}</div>
-      <div className="text-[8px] text-surface-500 uppercase tracking-wider font-semibold">{label}</div>
+      <div className="text-xs text-surface-500 uppercase tracking-wider font-semibold">{label}</div>
       {trend && (
         <div className="absolute top-1.5 right-1.5">
           {trend === 'up' ? (

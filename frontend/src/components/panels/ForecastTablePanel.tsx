@@ -560,6 +560,15 @@ function ForecastRowItem({
             : 'hover:bg-deloitte-green/5'
         } ${row.is_subtotal ? 'bg-surface-800/50' : ''}`}
         onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+        tabIndex={0}
+        role="button"
+        aria-expanded={isExpanded}
       >
         {/* Line Item Name */}
         <td className="px-3 py-2 text-surface-300">
@@ -585,9 +594,9 @@ function ForecastRowItem({
         </td>
 
         {/* Forecast Value — EDITABLE */}
-        <td className="px-3 py-2 text-right font-mono" onClick={(e) => e.stopPropagation()}>
+        <td className="px-3 py-2 text-right font-mono" onMouseDown={(e) => e.stopPropagation()}>
           {isEditing ? (
-            <div className="space-y-1.5" onClick={(e) => e.stopPropagation()}>
+            <div className="space-y-1.5">
               <div className="flex items-center gap-1 justify-end">
                 <span className="text-xs text-surface-500">$</span>
                 <input
@@ -633,8 +642,10 @@ function ForecastRowItem({
               </div>
             </div>
           ) : (
-            <div
-              className={`group/edit inline-flex flex-col items-end ${!row.is_subtotal ? 'cursor-text' : ''}`}
+            <button
+              type="button"
+              disabled={row.is_subtotal}
+              className={`group/edit inline-flex flex-col items-end ${!row.is_subtotal ? 'cursor-text' : 'cursor-default'}`}
               onClick={!row.is_subtotal ? handleStartEdit : undefined}
               title={!row.is_subtotal ? 'Click to edit forecast value' : undefined}
             >
@@ -654,7 +665,7 @@ function ForecastRowItem({
                   avg: {formatCurrency(row.avg_p50)}/mo
                 </span>
               )}
-            </div>
+            </button>
           )}
         </td>
 
@@ -672,7 +683,7 @@ function ForecastRowItem({
         </td>
 
         {/* Actions */}
-        <td className="px-3 py-2 text-center" onClick={(e) => e.stopPropagation()}>
+        <td className="px-3 py-2 text-center" onMouseDown={(e) => e.stopPropagation()}>
           {isReviewed ? (
             <span className="text-xs text-surface-500">Done</span>
           ) : hasIssue ? (

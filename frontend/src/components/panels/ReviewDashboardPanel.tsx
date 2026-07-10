@@ -452,10 +452,19 @@ function ReviewItemRow({
       <div
         className="flex items-center gap-2 px-3 py-2 hover:bg-deloitte-green/5 transition-colors cursor-pointer"
         onClick={() => setExpanded(!expanded)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setExpanded(!expanded);
+          }
+        }}
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
       >
-        <button className="flex-shrink-0 text-surface-500">
+        <span className="flex-shrink-0 text-surface-500" aria-hidden="true">
           {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-        </button>
+        </span>
 
         {/* AI recommendation */}
         <div className="flex-shrink-0 w-16">
@@ -476,9 +485,10 @@ function ReviewItemRow({
         </div>
 
         {/* Forecast value (editable) */}
-        <div className="flex-shrink-0 w-20 text-right" onClick={(e) => e.stopPropagation()}>
+        {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- event barrier only */}
+        <div className="flex-shrink-0 w-20 text-right" onMouseDown={(e) => e.stopPropagation()}>
           {isEditing ? (
-            <div className="space-y-1" onClick={(e) => e.stopPropagation()}>
+            <div className="space-y-1">
               <input
                 ref={editRef}
                 type="number"
@@ -503,20 +513,22 @@ function ReviewItemRow({
               />
               <div className="flex gap-1 justify-end">
                 <button
+                  type="button"
                   onClick={handleSaveEdit}
                   disabled={isSaving || editReason.trim().length < 10}
                   className="p-0.5 bg-deloitte-green/20 text-deloitte-green rounded hover:bg-deloitte-green/30 disabled:opacity-30"
                 >
                   {isSaving ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Save className="w-2.5 h-2.5" />}
                 </button>
-                <button onClick={handleCancelEdit} className="p-0.5 bg-surface-700 text-surface-400 rounded hover:bg-surface-600">
+                <button type="button" onClick={handleCancelEdit} className="p-0.5 bg-surface-700 text-surface-400 rounded hover:bg-surface-600">
                   <X className="w-2.5 h-2.5" />
                 </button>
               </div>
             </div>
           ) : (
-            <div
-              className="group/val cursor-text"
+            <button
+              type="button"
+              className="group/val cursor-text w-full text-right"
               onClick={handleStartEdit}
               title="Click to edit"
             >
@@ -525,11 +537,11 @@ function ReviewItemRow({
                 <Edit3 className="w-2 h-2 inline-block ml-0.5 opacity-0 group-hover/val:opacity-50" />
               </span>
               {wasOverridden && (
-                <span className="block text-[8px] text-surface-500 line-through">
+                <span className="block text-xs text-surface-500 line-through">
                   was {formatCurrency(item.avg_p50)}
                 </span>
               )}
-            </div>
+            </button>
           )}
         </div>
 
@@ -544,7 +556,8 @@ function ReviewItemRow({
         </div>
 
         {/* Actions */}
-        <div className="flex-shrink-0 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+        {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- event barrier only */}
+        <div className="flex-shrink-0 flex items-center gap-1" onMouseDown={(e) => e.stopPropagation()}>
           {item.review_status ? (
             <span className={`text-xs font-semibold px-2 py-0.5 rounded ${
               item.review_status === 'approved'
@@ -787,7 +800,8 @@ function ReviewItemRow({
 
       {/* Rejection comment */}
       {commenting && (
-        <div className="px-3 pb-2 ml-5" onClick={(e) => e.stopPropagation()}>
+        // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- event barrier only
+        <div className="px-3 pb-2 ml-5" onMouseDown={(e) => e.stopPropagation()}>
           <div className="flex gap-2">
             <input
               type="text"
@@ -795,7 +809,6 @@ function ReviewItemRow({
               onChange={(e) => setComment(e.target.value)}
               placeholder="Rejection reason..."
               className="flex-1 px-2 py-1 bg-surface-800 border border-surface-600 rounded text-xs text-white placeholder-surface-500 focus:outline-none focus:border-amber-500/50"
-              autoFocus
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && comment.trim()) {
                   onAction(item.id, 'reject', comment);
@@ -805,6 +818,7 @@ function ReviewItemRow({
               }}
             />
             <button
+              type="button"
               onClick={() => { onAction(item.id, 'reject', comment); setCommenting(false); setComment(''); }}
               disabled={!comment.trim()}
               className="px-2 py-1 bg-red-500/20 text-red-400 rounded text-xs hover:bg-red-500/30 disabled:opacity-40 transition-colors"
@@ -812,6 +826,7 @@ function ReviewItemRow({
               Reject
             </button>
             <button
+              type="button"
               onClick={() => { setCommenting(false); setComment(''); }}
               className="px-2 py-1 bg-surface-700 text-surface-400 rounded text-xs hover:bg-surface-600 transition-colors"
             >
@@ -969,7 +984,7 @@ export function ReviewDashboardPanel({ data, onRefresh }: Props) {
           >
             <Icon className={`w-3.5 h-3.5 mx-auto mb-0.5 ${color}`} />
             <div className={`text-base font-bold ${color}`}>{localBuckets[key].total}</div>
-            <div className="text-[8px] text-surface-400 uppercase tracking-wider font-medium leading-tight">{label}</div>
+            <div className="text-xs text-surface-400 uppercase tracking-wider font-medium leading-tight">{label}</div>
           </button>
         ))}
       </div>

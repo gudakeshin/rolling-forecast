@@ -62,29 +62,33 @@ export function LoginForm() {
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
-            <label className="block text-sm font-medium text-surface-300 mb-1.5">
+            <label htmlFor="login-username" className="block text-sm font-medium text-surface-300 mb-1.5">
               Username
             </label>
             <input
+              id="login-username"
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               className="w-full px-4 py-3 bg-surface-800/80 border border-surface-700 rounded-xl text-white placeholder-surface-500 focus:outline-none focus:border-deloitte-green/60 focus:ring-1 focus:ring-deloitte-green/30 transition-all"
               placeholder="Enter username"
+              autoComplete="username"
               required
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-surface-300 mb-1.5">
+            <label htmlFor="login-password" className="block text-sm font-medium text-surface-300 mb-1.5">
               Password
             </label>
             <input
+              id="login-password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="w-full px-4 py-3 bg-surface-800/80 border border-surface-700 rounded-xl text-white placeholder-surface-500 focus:outline-none focus:border-deloitte-green/60 focus:ring-1 focus:ring-deloitte-green/30 transition-all"
               placeholder="Enter password"
+              autoComplete="current-password"
               required
             />
           </div>

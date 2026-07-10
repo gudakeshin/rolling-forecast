@@ -198,17 +198,17 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
         <div className="bg-surface-800/60 border border-surface-700/50 rounded-lg p-2.5 text-center">
           <Database className="w-3.5 h-3.5 mx-auto mb-1 text-deloitte-green" />
           <div className="text-sm font-bold text-white">{summary.total_documents || documents.length}</div>
-          <div className="text-[8px] text-surface-500 uppercase tracking-wider">Documents</div>
+          <div className="text-xs text-surface-500 uppercase tracking-wider">Documents</div>
         </div>
         <div className="bg-surface-800/60 border border-surface-700/50 rounded-lg p-2.5 text-center">
           <FolderOpen className="w-3.5 h-3.5 mx-auto mb-1 text-sky-400" />
           <div className="text-sm font-bold text-white">{summary.total_chunks || 0}</div>
-          <div className="text-[8px] text-surface-500 uppercase tracking-wider">Chunks</div>
+          <div className="text-xs text-surface-500 uppercase tracking-wider">Chunks</div>
         </div>
         <div className="bg-surface-800/60 border border-surface-700/50 rounded-lg p-2.5 text-center">
           <FileText className="w-3.5 h-3.5 mx-auto mb-1 text-amber-400" />
           <div className="text-sm font-bold text-white">{formatBytes(summary.total_size_bytes || 0)}</div>
-          <div className="text-[8px] text-surface-500 uppercase tracking-wider">Total Size</div>
+          <div className="text-xs text-surface-500 uppercase tracking-wider">Total Size</div>
         </div>
       </div>
 
@@ -237,9 +237,18 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
         <div className="space-y-3">
           {/* File Upload Zone */}
           <div
+            role="button"
+            tabIndex={0}
             onDrop={handleDrop}
             onDragOver={e => e.preventDefault()}
             onClick={() => fileInputRef.current?.click()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                fileInputRef.current?.click();
+              }
+            }}
+            aria-label="Upload documents"
             className="border-2 border-dashed border-surface-600 hover:border-deloitte-green/50 rounded-xl p-6 text-center cursor-pointer transition-colors"
           >
             <input
@@ -355,8 +364,17 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
                     className="bg-surface-800/40 border border-surface-700/50 rounded-lg overflow-hidden"
                   >
                     <div
-                      className="flex items-center gap-2 p-2.5 cursor-pointer hover:bg-surface-700/30 transition-colors"
+                      role="button"
+                      tabIndex={0}
+                      className="flex items-center gap-2 p-2.5 w-full text-left cursor-pointer hover:bg-surface-700/30 transition-colors"
                       onClick={() => setExpandedDoc(isExpanded ? null : doc.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setExpandedDoc(isExpanded ? null : doc.id);
+                        }
+                      }}
+                      aria-expanded={isExpanded}
                     >
                       <Icon className="w-4 h-4 text-surface-400 shrink-0" />
                       <div className="flex-1 min-w-0">
@@ -364,21 +382,23 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
                           {doc.original_name}
                         </div>
                         <div className="flex items-center gap-2 mt-0.5">
-                          <span className={`text-[8px] px-1.5 py-0.5 rounded border ${STATUS_STYLES[doc.status] || ''}`}>
+                          <span className={`text-xs px-1.5 py-0.5 rounded border ${STATUS_STYLES[doc.status] || ''}`}>
                             {doc.status}
                           </span>
-                          <span className="text-[8px] text-surface-600">
+                          <span className="text-xs text-surface-600">
                             {doc.chunk_count} chunks
                           </span>
-                          <span className="text-[8px] text-surface-600">
+                          <span className="text-xs text-surface-600">
                             {formatBytes(doc.file_size_bytes)}
                           </span>
                         </div>
                       </div>
                       <button
+                        type="button"
                         onClick={e => { e.stopPropagation(); handleDelete(doc.id); }}
                         className="p-1 text-surface-600 hover:text-red-400 transition-colors"
                         title="Delete"
+                        aria-label={`Delete ${doc.original_name}`}
                       >
                         <Trash2 className="w-3 h-3" />
                       </button>
@@ -419,7 +439,7 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
                             {doc.tags.map((tag, i) => (
                               <span
                                 key={i}
-                                className="text-[8px] px-1.5 py-0.5 bg-deloitte-green/10 text-deloitte-green rounded"
+                                className="text-xs px-1.5 py-0.5 bg-deloitte-green/10 text-deloitte-green rounded"
                               >
                                 {tag}
                               </span>

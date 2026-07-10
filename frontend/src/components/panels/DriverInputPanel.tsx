@@ -211,10 +211,10 @@ export function DriverInputPanel({ data }: Props) {
                           </div>
                           <div className="flex items-center gap-1 justify-end">
                             {li.model_type && (
-                              <span className="text-[8px] text-surface-500 bg-surface-700/40 px-1 py-0.5 rounded">{li.model_type}</span>
+                              <span className="text-xs text-surface-500 bg-surface-700/40 px-1 py-0.5 rounded">{li.model_type}</span>
                             )}
                             {li.confidence_score !== undefined && (
-                              <span className={`text-[8px] px-1 py-0.5 rounded font-medium ${
+                              <span className={`text-xs px-1 py-0.5 rounded font-medium ${
                                 li.confidence_score >= 70 ? 'bg-deloitte-green/15 text-deloitte-green'
                                 : li.confidence_score >= 50 ? 'bg-amber-500/15 text-amber-400'
                                 : 'bg-red-500/15 text-red-400'

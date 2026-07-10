@@ -112,6 +112,9 @@ jobs:
         run: npx eslint "src/**/*.{ts,tsx}" --max-warnings 200
       - name: Unit tests
         run: npx vitest run --passWithNoTests
+      - name: Playwright smoke
+        # Self-skips when E2E_BASE_URL is unset (no browser install needed)
+        run: npx playwright test
       - name: npm audit
         run: npm audit --audit-level=high || true
       - name: Build
