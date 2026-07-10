@@ -56,3 +56,6 @@ Thumbs.db
 
 # Cursor
 .cursor/
+
+frontend/test-results/
+frontend/playwright-report/
