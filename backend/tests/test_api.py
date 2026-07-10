@@ -47,6 +47,22 @@ class TestHealthEndpoint:
         data = response.json()
         assert "service" in data
 
+    def test_livez_returns_ok(self, client):
+        response = client.get("/livez")
+        assert response.status_code == 200
+        assert response.json()["status"] == "ok"
+
+    def test_readyz_reports_checks(self, client):
+        response = client.get("/readyz")
+        # Test env uses create_all without Alembic stamps; migrations lag
+        # must not gate readiness outside production.
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ready"
+        assert data["checks"]["database"] == "ok"
+        assert "migrations_head" in data["checks"]
+        assert not data["checks"]["migrations_head"].startswith("error:")
+
 
 class TestAuthEndpoints:
     """Test authentication endpoints."""

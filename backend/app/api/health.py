@@ -53,19 +53,36 @@ async def readyz(response: Response):
     else:
         checks["redis"] = "not_configured"
 
-    # Migrations-at-head: best-effort Alembic check
+    # Migrations-at-head: compare the DB's stamped revision to the script head.
+    # Gates readiness only in production (dev/test may use create_all without stamps).
     try:
-        from alembic.script import ScriptDirectory
-        from alembic.config import Config
-        import os
+        from pathlib import Path
 
-        backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        cfg = Config(os.path.join(backend_dir, "alembic.ini"))
+        from alembic.config import Config
+        from alembic.runtime.migration import MigrationContext
+        from alembic.script import ScriptDirectory
+
+        backend_dir = Path(__file__).resolve().parents[2]
+        cfg = Config(str(backend_dir / "alembic.ini"))
         script = ScriptDirectory.from_config(cfg)
         head = script.get_current_head()
-        checks["migrations_head"] = head or "unknown"
+
+        db = SessionLocal()
+        try:
+            current = MigrationContext.configure(db.connection()).get_current_revision()
+        finally:
+            db.close()
+
+        if current == head:
+            checks["migrations_head"] = head or "unknown"
+        else:
+            checks["migrations_head"] = f"behind: db={current or 'unstamped'} head={head}"
+            if settings.is_production:
+                ready = False
     except Exception as e:
         checks["migrations_head"] = f"error: {e}"
+        if settings.is_production:
+            ready = False
 
     if not ready:
         response.status_code = 503
