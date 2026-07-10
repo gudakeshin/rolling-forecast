@@ -3,6 +3,13 @@
 from alembic import op
 import sqlalchemy as sa
 
+import sys
+from pathlib import Path as _Path
+_alembic_dir = str(_Path(__file__).resolve().parents[1])
+if _alembic_dir not in sys.path:
+    sys.path.insert(0, _alembic_dir)
+from migration_helpers import create_table_if_missing, drop_table_if_exists
+
 revision = "003_enterprise_readiness"
 down_revision = "002_add_notes"
 branch_labels = None
@@ -10,7 +17,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
+    create_table_if_missing(
         "audit_events",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("timestamp", sa.DateTime(), nullable=False, index=True),
@@ -26,7 +33,7 @@ def upgrade() -> None:
         sa.Column("notes", sa.Text(), nullable=True),
     )
 
-    op.create_table(
+    create_table_if_missing(
         "budget_versions",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("name", sa.String(100), nullable=False),
@@ -38,7 +45,7 @@ def upgrade() -> None:
         sa.Column("notes", sa.Text(), nullable=True),
     )
 
-    op.create_table(
+    create_table_if_missing(
         "budget_line_items",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("budget_version_id", sa.String(36), sa.ForeignKey("budget_versions.id"), nullable=False, index=True),
@@ -47,7 +54,7 @@ def upgrade() -> None:
         sa.Column("value", sa.Float(), nullable=False),
     )
 
-    op.create_table(
+    create_table_if_missing(
         "approval_workflows",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("name", sa.String(100), nullable=False),
@@ -58,7 +65,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime()),
     )
 
-    op.create_table(
+    create_table_if_missing(
         "approval_steps",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("version_id", sa.String(36), sa.ForeignKey("forecast_versions.id"), nullable=False, index=True),
@@ -74,8 +81,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_table("approval_steps")
-    op.drop_table("approval_workflows")
-    op.drop_table("budget_line_items")
-    op.drop_table("budget_versions")
-    op.drop_table("audit_events")
+    drop_table_if_exists("approval_steps")
+    drop_table_if_exists("approval_workflows")
+    drop_table_if_exists("budget_line_items")
+    drop_table_if_exists("budget_versions")
+    drop_table_if_exists("audit_events")

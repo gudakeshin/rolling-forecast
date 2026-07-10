@@ -21,7 +21,6 @@ from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.domain.engines.model_registry import get_model_registry
 from app.models.actuals import ActualsDataset, ActualsRecord
 from app.models.line_item import LineItem
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 

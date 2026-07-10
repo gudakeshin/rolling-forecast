@@ -1,9 +1,7 @@
 """BranchForecast skill -- scenario branching, comparison, and merge."""
 
 import logging
-import uuid
 from typing import Any
-from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func

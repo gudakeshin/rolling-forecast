@@ -270,7 +270,6 @@ class GenerateCommentarySkill(BaseSkill):
         version: ForecastVersion,
     ) -> list[str] | None:
         """Call Anthropic for CFO-grade narrative with override/doc citations."""
-        from app.config import settings
 
         if not settings.anthropic_api_key:
             return None

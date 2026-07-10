@@ -7,7 +7,7 @@ from pathlib import Path
 class Settings(BaseSettings):
     # Anthropic
     anthropic_api_key: str = ""
-    anthropic_model: str = "claude-sonnet-4-20250514"
+    anthropic_model: str = "claude-sonnet-5"
 
     # Database
     database_url: str = "sqlite:///./rolling_forecast.db"
@@ -100,6 +100,56 @@ class Settings(BaseSettings):
             raise RuntimeError(
                 "JWT_SECRET_KEY must be set to a strong secret (>=32 chars) in production"
             )
+
+    def validate_llm_config(self, *, fail_hard: bool | None = None) -> None:
+        """Fail fast when Anthropic key/model are misconfigured.
+
+        Always checks that the API key is present (hard fail in production).
+        In production, also makes a cheap 1-token call to verify the model id.
+        Skipped entirely when APP_ENV=test.
+        """
+        import logging
+
+        log = logging.getLogger("app.config")
+        hard = self.is_production if fail_hard is None else fail_hard
+
+        if self.app_env.lower() == "test":
+            return
+
+        if not self.anthropic_api_key:
+            msg = (
+                "ANTHROPIC_API_KEY is not set — chat and agent skills will fail. "
+                f"Configured model: {self.anthropic_model!r}"
+            )
+            if hard:
+                raise RuntimeError(msg)
+            log.warning("═" * 60)
+            log.warning("LLM CONFIG WARNING: %s", msg)
+            log.warning("═" * 60)
+            return
+
+        log.info("LLM config: model=%s key=present", self.anthropic_model)
+
+        # Live model-id check only in production (or when fail_hard forced)
+        if not hard:
+            return
+
+        try:
+            import anthropic
+
+            client = anthropic.Anthropic(api_key=self.anthropic_api_key, timeout=15.0)
+            client.messages.create(
+                model=self.anthropic_model,
+                max_tokens=1,
+                messages=[{"role": "user", "content": "ping"}],
+            )
+            log.info("LLM model validation OK — model=%s", self.anthropic_model)
+        except Exception as exc:
+            msg = (
+                f"Anthropic model validation failed for model={self.anthropic_model!r}: {exc}. "
+                "Fix ANTHROPIC_API_KEY / ANTHROPIC_MODEL before serving traffic."
+            )
+            raise RuntimeError(msg) from exc
 
 
 settings = Settings()

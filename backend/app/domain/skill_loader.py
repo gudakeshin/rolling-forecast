@@ -36,7 +36,6 @@ and parameter definitions without touching Python code.
 """
 
 import logging
-import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path

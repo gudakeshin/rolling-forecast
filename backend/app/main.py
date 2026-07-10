@@ -3,7 +3,6 @@
 import logging
 import os
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -116,6 +115,9 @@ async def lifespan(app: FastAPI):
 
     if settings.is_production:
         settings.validate_production_secrets()
+
+    # Fail fast on bad Anthropic key/model (hard in prod; warn in dev)
+    settings.validate_llm_config()
 
     init_db()
     logger.info("Database initialized")

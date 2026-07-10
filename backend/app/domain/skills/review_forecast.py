@@ -13,14 +13,12 @@ from typing import Any
 from datetime import datetime, timezone
 
 import numpy as np
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.models.forecast import ForecastVersion, ForecastLineResult
 from app.models.line_item import LineItem
 from app.models.actuals import ActualsRecord
-from app.models.override import Override
 
 logger = logging.getLogger(__name__)
 

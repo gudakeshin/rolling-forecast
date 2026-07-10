@@ -5,8 +5,7 @@ import logging
 from typing import Any, AsyncIterator
 
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain_core.tools import StructuredTool
+from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.prebuilt import create_react_agent
 
 from sqlalchemy.orm import Session
@@ -103,11 +102,10 @@ class MasterAgent:
         if self._agent is not None:
             return self._agent
 
-        # Initialize Claude LLM
+        # Initialize Claude LLM (omit temperature — deprecated on Claude Sonnet 5+)
         llm = ChatAnthropic(
             model=settings.anthropic_model,
             anthropic_api_key=settings.anthropic_api_key,
-            temperature=0.1,
             max_tokens=4096,
         )
 

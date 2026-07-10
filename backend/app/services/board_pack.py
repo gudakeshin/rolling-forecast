@@ -33,7 +33,6 @@ def _aggregate_by_category(db: Session, version_id: str) -> list[dict[str, Any]]
 def build_board_pack_pptx(db: Session, version: ForecastVersion) -> bytes:
     """Generate a simple board-ready PowerPoint deck."""
     from pptx import Presentation
-    from pptx.util import Inches, Pt
 
     prs = Presentation()
     # Title slide

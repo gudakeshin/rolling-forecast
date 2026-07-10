@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.models.driver_input import DriverFormConfig, DriverInput
-from app.models.forecast import ForecastVersion, ForecastLineResult
+from app.models.forecast import ForecastLineResult
 from app.models.line_item import LineItem
 from app.services.dependency_graph import DependencyGraphManager
 from app.services.error_handlers import check_driver_deadline

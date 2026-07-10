@@ -1,7 +1,6 @@
 """Chat endpoints -- send messages and stream responses via SSE."""
 
 import json
-import asyncio
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse

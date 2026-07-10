@@ -5,7 +5,6 @@ import logging
 from typing import Any
 
 import pandas as pd
-import numpy as np
 
 from app.services.ingestion.base import IActualsProvider, IngestionResult
 
@@ -54,8 +53,16 @@ class CSVActualsProvider(IActualsProvider):
             # Compute file hash for lineage
             file_hash = self._compute_hash(df)
 
-            # Validate
+            # Validate — missing required columns are hard failures
             warnings = await self.validate(df)
+            hard_errors = [w for w in warnings if w.startswith("Missing required columns:")]
+            if hard_errors:
+                return IngestionResult(
+                    success=False,
+                    error=hard_errors[0],
+                    warnings=warnings,
+                    metadata={"columns": list(df.columns)},
+                )
 
             # Ensure period format is YYYY-MM
             df["period"] = df["period"].apply(self._normalize_period)
@@ -100,10 +107,14 @@ class CSVActualsProvider(IActualsProvider):
             return IngestionResult(success=False, error=str(e))
 
     async def validate(self, df: pd.DataFrame) -> list[str]:
-        """Validate the DataFrame for data quality issues."""
+        """Validate the DataFrame for data quality issues.
+
+        Missing required columns are reported with a 'Missing required columns:'
+        prefix so pull_actuals can promote them to hard rejection.
+        """
         warnings = []
 
-        # Check required columns
+        # Check required columns (hard rejection upstream)
         required = ["account_code", "account_name", "period", "value"]
         missing_cols = [c for c in required if c not in df.columns]
         if missing_cols:

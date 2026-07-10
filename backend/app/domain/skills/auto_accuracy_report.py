@@ -9,7 +9,7 @@ from sqlalchemy import func
 
 from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.models.forecast import ForecastVersion, ForecastLineResult
-from app.models.actuals import ActualsDataset, ActualsRecord
+from app.models.actuals import ActualsRecord
 from app.models.line_item import LineItem
 
 logger = logging.getLogger(__name__)

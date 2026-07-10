@@ -9,7 +9,7 @@ from app.models.user import User
 from app.models.forecast import ForecastVersion, ForecastLineResult
 from app.models.line_item import LineItem
 from app.models.override import Override
-from app.schemas.forecast import PanelDataResponse, ForecastLineResultResponse
+from app.schemas.forecast import PanelDataResponse
 
 router = APIRouter(prefix="/panel", tags=["panel"])
 

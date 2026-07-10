@@ -6,7 +6,25 @@ on:
   pull_request:
 
 jobs:
-  backend:
+  backend-lint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install lint tools
+        run: pip install ruff mypy
+      - name: Ruff
+        run: ruff check app tests alembic
+      - name: Mypy
+        run: mypy app --ignore-missing-imports --no-error-summary
+        continue-on-error: true
+
+  backend-test:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -17,9 +35,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          # Prophet system deps can be heavy; tests that need it may soft-skip
+        run: pip install -r requirements.txt
       - name: Run pytest
         env:
           APP_ENV: test
@@ -28,6 +44,45 @@ jobs:
           SEED_DEMO_USERS: "true"
           ALLOW_OPEN_REGISTRATION: "true"
         run: pytest -q --tb=short
+
+  migrations:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: forecast
+          POSTGRES_PASSWORD: forecast
+          POSTGRES_DB: rolling_forecast
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U forecast -d rolling_forecast"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      - name: Alembic upgrade head (clean Postgres)
+        env:
+          APP_ENV: test
+          DATABASE_URL: postgresql://forecast:forecast@localhost:5432/rolling_forecast
+          JWT_SECRET_KEY: test-secret-key-for-ci-at-least-32-chars
+        run: |
+          alembic heads | tee /tmp/heads.txt
+          # Must be a single head after merge revision
+          test "$(alembic heads | wc -l)" -eq 1
+          alembic upgrade head
+          alembic current
 
   frontend:
     runs-on: ubuntu-latest
@@ -42,4 +97,11 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci || npm install
-      - run: npm run build
+      - name: Install eslint toolchain
+        run: npm install --save-dev eslint @typescript-eslint/parser @typescript-eslint/eslint-plugin eslint-plugin-react-hooks
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: ESLint
+        run: npx eslint "src/**/*.{ts,tsx}" --max-warnings 200
+      - name: Build
+        run: npm run build

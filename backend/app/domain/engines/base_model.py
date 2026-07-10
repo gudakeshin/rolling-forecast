@@ -90,7 +90,6 @@ class IForecastModel(ABC):
         train = series[:-test_size]
         test = series[-test_size:]
         train_dates = dates[:-test_size]
-        test_dates = dates[-test_size:]
 
         try:
             params = self.fit(train, train_dates)

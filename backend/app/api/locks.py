@@ -2,9 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
-from app.database import get_db
 from app.api.auth import get_current_user
 from app.models.user import User
 from app.services.locks import acquire_lock, release_lock, LockConflictError, purge_expired_locks

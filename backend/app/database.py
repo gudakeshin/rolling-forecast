@@ -64,12 +64,11 @@ def init_db():
     import app.models  # noqa: F401
 
     if settings.is_production:
+        # Production relies solely on Alembic — never mask migration drift with create_all
         run_migrations()
-        # Safety net for new tables not yet in a migration
-        Base.metadata.create_all(bind=engine)
     else:
         try:
             run_migrations()
         except Exception:
-            pass
+            logger.exception("Alembic migration failed in development; using create_all")
         Base.metadata.create_all(bind=engine)

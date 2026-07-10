@@ -5,10 +5,8 @@ for chunking, then stores embeddings in ChromaDB via the vector_store module.
 """
 
 import logging
-import os
 import uuid
 from pathlib import Path
-from typing import Any
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sqlalchemy.orm import Session

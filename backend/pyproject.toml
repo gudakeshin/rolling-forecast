@@ -1,0 +1,34 @@
+[project]
+name = "rolling-forecast"
+version = "0.2.0"
+requires-python = ">=3.11"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+# Phase 0: catch real bugs; expand gradually without blocking on style debt
+select = ["E", "F", "W"]
+ignore = [
+  "E501",  # line length
+  "E402",  # late imports (FastAPI app wiring, alembic)
+  "E712",  # SQLAlchemy `== True` comparisons
+  "E741",  # ambiguous names in math-heavy forecast code
+  "W293",  # trailing whitespace in doc/markdown strings
+]
+
+[tool.ruff.lint.per-file-ignores]
+"alembic/**" = ["E402", "F401"]
+"tests/**" = ["F401", "F811", "F841"]
+"app/main.py" = ["E402"]
+"app/models/**" = ["F821"]  # forward refs in Mapped["Model"] annotations
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = false
+# Phase 0: non-blocking strictness; CI runs mypy --no-error-summary with continue-on-error soft gate
+check_untyped_defs = false
+allow_untyped_defs = true

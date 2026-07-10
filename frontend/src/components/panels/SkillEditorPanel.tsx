@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { apiGet, apiPost, fetchApi } from '../../api/client';
 
 interface SkillInfo {
   name: string;
@@ -23,6 +24,10 @@ interface SkillDetail {
   md_file: string;
 }
 
+interface SkillsListResponse {
+  skills: SkillInfo[];
+}
+
 export function SkillEditorPanel() {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
@@ -33,12 +38,9 @@ export function SkillEditorPanel() {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const apiBase = 'http://localhost:8000';
-
   const fetchSkills = useCallback(async () => {
     try {
-      const res = await fetch(`${apiBase}/api/skills/`);
-      const data = await res.json();
+      const data = await apiGet<SkillsListResponse>('/skills/');
       setSkills(data.skills || []);
     } catch (e) {
       console.error('Failed to fetch skills:', e);
@@ -53,8 +55,7 @@ export function SkillEditorPanel() {
 
   const fetchDetail = async (name: string) => {
     try {
-      const res = await fetch(`${apiBase}/api/skills/${name}`);
-      const data = await res.json();
+      const data = await apiGet<SkillDetail>(`/skills/${name}`);
       setDetail(data);
       setEditContent(data.md_content || '');
       setSelectedSkill(name);
@@ -70,9 +71,8 @@ export function SkillEditorPanel() {
     setMessage(null);
 
     try {
-      const res = await fetch(`${apiBase}/api/skills/${selectedSkill}`, {
+      const res = await fetchApi(`/skills/${selectedSkill}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: editContent }),
       });
 
@@ -82,7 +82,7 @@ export function SkillEditorPanel() {
         fetchDetail(selectedSkill);
         fetchSkills();
       } else {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({ detail: 'Failed to save' }));
         setMessage({ type: 'error', text: err.detail || 'Failed to save' });
       }
     } catch (e) {
@@ -94,7 +94,7 @@ export function SkillEditorPanel() {
 
   const handleReload = async () => {
     try {
-      await fetch(`${apiBase}/api/skills/reload`, { method: 'POST' });
+      await apiPost('/skills/reload');
       fetchSkills();
       setMessage({ type: 'success', text: 'All skill definitions reloaded from disk' });
     } catch (e) {

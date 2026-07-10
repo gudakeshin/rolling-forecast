@@ -1,7 +1,6 @@
 """Dependency graph manager using NetworkX for P&L line item recalculation."""
 
 import logging
-from typing import Any
 import networkx as nx
 from sqlalchemy.orm import Session
 
@@ -304,7 +303,7 @@ class DependencyGraphManager:
         G_test.add_edge(source_id, dependent_id)
 
         if not nx.is_directed_acyclic_graph(G_test):
-            return False, f"Adding this dependency would create a circular reference"
+            return False, "Adding this dependency would create a circular reference"
 
         # Add to database
         dep = LineItemDependency(

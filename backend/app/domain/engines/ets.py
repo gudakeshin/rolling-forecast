@@ -70,7 +70,7 @@ class ETSModel(IForecastModel):
                 "_values": values.tolist(),
             }
 
-        except Exception as e:
+        except Exception:
             # Fallback: simple exponential smoothing
             alpha = 0.3
             level = values[0]

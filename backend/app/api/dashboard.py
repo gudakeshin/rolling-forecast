@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -14,13 +14,12 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.api.auth import get_current_user
 from app.models.user import User
-from app.models.forecast import ForecastVersion, ForecastLineResult, ModelMetadata
+from app.models.forecast import ForecastVersion, ForecastLineResult
 from app.models.line_item import LineItem, LineItemDependency
 from app.models.actuals import ActualsRecord
 from app.models.override import Override
 from app.schemas.forecast import PanelDataResponse
 from app.services.permissions import require_permission
-from app.config import settings
 
 # Import inline scoring utilities from generate_baseline
 from app.domain.skills.generate_baseline import (
@@ -626,7 +625,7 @@ async def get_executive_dashboard(
     if driver_summary["pending"] > 0 or driver_summary["late"] > 0:
         insights.append({
             "type": "action",
-            "title": f"BU driver inputs incomplete",
+            "title": "BU driver inputs incomplete",
             "detail": f"{driver_summary['pending']} submissions pending, {driver_summary['late']} overdue. Missing inputs increase forecast uncertainty.",
             "action": "Follow up with pending business units to collect assumptions.",
         })

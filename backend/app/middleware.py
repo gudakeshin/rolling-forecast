@@ -2,7 +2,6 @@
 
 import logging
 import time
-import traceback
 from typing import Callable
 
 from fastapi import FastAPI, Request, Response

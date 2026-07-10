@@ -4,12 +4,11 @@ import logging
 from typing import Any
 
 import numpy as np
-import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
-from app.models.forecast import ForecastVersion, ForecastLineResult
-from app.models.actuals import ActualsDataset, ActualsRecord
+from app.models.forecast import ForecastLineResult
+from app.models.actuals import ActualsRecord
 from app.models.line_item import LineItem
 
 logger = logging.getLogger(__name__)
@@ -76,7 +75,7 @@ class DetectAnomaliesSkill(BaseSkill):
 
         version_id = params.get("version_id") or context.context_manager.get_active_version_id()
         if not version_id:
-            return SkillResult.error("No active forecast version. Generate a baseline first.")
+            return SkillResult.fail("No active forecast version. Generate a baseline first.")
 
         thresholds = self._get_thresholds(sensitivity)
         all_anomalies: list[dict] = []
@@ -115,7 +114,7 @@ class DetectAnomaliesSkill(BaseSkill):
         ]
 
         if critical_names:
-            summary_lines.append(f"\n**Top items needing attention:**")
+            summary_lines.append("\n**Top items needing attention:**")
             for name in critical_names:
                 item_findings = [a for a in critical if a["line_item"] == name]
                 note = item_findings[0].get("note", "") if item_findings else ""

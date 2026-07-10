@@ -3,12 +3,10 @@
 import logging
 from typing import Any
 
-import numpy as np
 from sqlalchemy.orm import Session
 
 from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.models.forecast import ForecastVersion, ForecastLineResult
-from app.models.line_item import LineItem
 from app.config import settings
 
 logger = logging.getLogger(__name__)

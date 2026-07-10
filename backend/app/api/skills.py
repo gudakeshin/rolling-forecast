@@ -14,7 +14,7 @@ from app.domain.skill_loader import (
     SKILLS_DIR,
 )
 from app.models.user import User
-from app.services.permissions import require_permission, user_has_permission
+from app.services.permissions import require_permission
 from app.services.audit import record_audit
 from app.database import get_db
 from sqlalchemy.orm import Session
@@ -150,7 +150,7 @@ async def create_skill_definition(
         )
 
     try:
-        defn = parse_skill_md(req.content, f"{req.name}.md")
+        parse_skill_md(req.content, f"{req.name}.md")  # validate before save
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

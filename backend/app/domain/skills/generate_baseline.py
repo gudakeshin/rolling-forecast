@@ -302,6 +302,7 @@ class GenerateBaselineSkill(BaseSkill):
             horizon_months=horizon,
             base_period=dataset.period_end,
             random_seed=random_seed,
+            created_by=context.user_id,  # SoD: creator cannot self-approve
         )
         db.add(version)
         db.flush()
@@ -444,7 +445,6 @@ class GenerateBaselineSkill(BaseSkill):
                         summary["model_comparisons"][li.name] = comparison.to_dict()
                     else:
                         selected_model = effective_model_type
-                        selection_mape = 0
 
                     forecast_output = model_registry.fit_and_predict(
                         selected_model, effective_values, effective_dates, horizon,
