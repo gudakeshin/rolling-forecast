@@ -26,7 +26,9 @@ networkx>=3.4.0
 # Auth
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.0
+bcrypt>=4.0.1,<4.1  # passlib incompatible with bcrypt 4.1+ (72-byte wrap bug)
 cryptography>=42.0.0
+structlog>=24.4.0
 
 # Rate limiting
 slowapi>=0.1.9

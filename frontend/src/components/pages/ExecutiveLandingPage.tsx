@@ -199,7 +199,7 @@ export function ExecutiveLandingPage() {
                           <td className="px-3 py-2 text-surface-300">
                             {r.line_item}
                             {r.material && (
-                              <span className="ml-2 text-[10px] text-amber-400">material</span>
+                              <span className="ml-2 text-xs text-amber-400">material</span>
                             )}
                           </td>
                           <td className="px-3 py-2 text-right">{formatCurrency(r.current_forecast)}</td>

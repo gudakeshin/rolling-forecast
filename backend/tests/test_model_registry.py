@@ -79,9 +79,11 @@ class TestModelRegistry:
         values = pd.Series(np.arange(30) * 50 + 1000 + np.random.normal(0, 30, 30))
         dates = pd.DatetimeIndex(pd.date_range("2023-07", periods=30, freq="MS"))
 
-        model_name, mape = registry.auto_select(values, dates)
+        model_name, mape, selection = registry.auto_select(values, dates)
         assert model_name in registry.list_models()
         assert mape >= 0
+        assert selection is not None
+        assert selection.selection_method == "rolling_origin_cv"
 
     def test_auto_select_sparse_data_uses_simpler(self):
         """With sparse data, only simpler models should be candidates."""
@@ -92,7 +94,7 @@ class TestModelRegistry:
         values = pd.Series(np.random.normal(1000, 50, 10))
         dates = pd.DatetimeIndex(pd.date_range("2025-01", periods=10, freq="MS"))
 
-        model_name, mape = registry.auto_select(values, dates)
+        model_name, mape, _selection = registry.auto_select(values, dates)
         # Should not select arima (needs 18 points)
         assert model_name in ["linear", "ets", "prophet"]
 

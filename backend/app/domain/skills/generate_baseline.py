@@ -316,8 +316,13 @@ class GenerateBaselineSkill(BaseSkill):
             if not dataset:
                 return SkillResult.fail(f"Dataset '{dataset_id}' not found.")
 
-        # Get all non-calculated line items
-        line_items = db.query(LineItem).filter(LineItem.is_calculated == False).all()
+        # Get non-calculated line items in the caller's BU scope
+        from app.services.permissions import resolve_skill_user, scoped_line_items
+
+        actor = resolve_skill_user(context)
+        line_items = scoped_line_items(
+            db, actor, LineItem.is_calculated == False  # noqa: E712
+        ).all()
         if not line_items:
             return SkillResult.fail("No line items found. Please ingest actuals data first.")
 

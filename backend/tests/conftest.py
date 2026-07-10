@@ -205,8 +205,11 @@ def seed_actuals(db_session, seed_line_items):
 class MockContextManager:
     """Lightweight context manager for testing without a full Conversation model."""
 
-    def __init__(self):
+    def __init__(self, permissions: set[str] | None = None):
         self._memory: dict = {}
+        # None = allow all (legacy default). Pass an explicit set to enforce RBAC in tests.
+        self.permissions = permissions
+        self.user = None
 
     def get_memory(self, key, default=None):
         return self._memory.get(key, default)
@@ -221,7 +224,9 @@ class MockContextManager:
         self.set_memory("active_version_id", version_id)
 
     def has_permission(self, permission):
-        return True  # Allow all permissions in tests
+        if self.permissions is None:
+            return True
+        return permission in self.permissions
 
 
 @pytest.fixture
@@ -232,11 +237,15 @@ def context_manager():
 
 @pytest.fixture
 def skill_context(db_session, seed_users, context_manager):
-    """Create a SkillContext for testing skills."""
+    """Create a SkillContext for testing skills (analyst — no review permission)."""
+    analyst = seed_users["analyst"]
+    context_manager.user = analyst
+    context_manager.permissions = {"input", "generate", "override"}
     return SkillContext(
         db=db_session,
         context_manager=context_manager,
-        user_id=seed_users["analyst"].id,
+        user_id=analyst.id,
         user_role="analyst",
         conversation_id="test-conversation-001",
+        user=analyst,
     )

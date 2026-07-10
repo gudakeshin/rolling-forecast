@@ -292,7 +292,7 @@ export function ForecastTablePanel({ data }: Props) {
           <option value="value_desc">Value: High → Low</option>
         </select>
 
-        <span className="text-[10px] text-surface-500 ml-auto">
+        <span className="text-xs text-surface-500 ml-auto">
           {sortedRows.length} of {rows.length} items
         </span>
         <button
@@ -312,22 +312,22 @@ export function ForecastTablePanel({ data }: Props) {
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-surface-800 z-10">
               <tr className="border-b border-surface-600">
-                <th className="px-3 py-2.5 text-left text-surface-400 font-semibold uppercase text-[10px] tracking-wider w-[200px]">
+                <th className="px-3 py-2.5 text-left text-surface-400 font-semibold uppercase text-xs tracking-wider w-[200px]">
                   Line Item
                 </th>
-                <th className="px-3 py-2.5 text-left text-surface-400 font-semibold uppercase text-[10px] tracking-wider">
+                <th className="px-3 py-2.5 text-left text-surface-400 font-semibold uppercase text-xs tracking-wider">
                   {isSummaryView ? 'Periods' : 'Period'}
                 </th>
-                <th className="px-3 py-2.5 text-right text-surface-400 font-semibold uppercase text-[10px] tracking-wider">
+                <th className="px-3 py-2.5 text-right text-surface-400 font-semibold uppercase text-xs tracking-wider">
                   Forecast (P50)
                 </th>
-                <th className="px-3 py-2.5 text-center text-surface-400 font-semibold uppercase text-[10px] tracking-wider w-[100px]">
+                <th className="px-3 py-2.5 text-center text-surface-400 font-semibold uppercase text-xs tracking-wider w-[100px]">
                   Confidence
                 </th>
-                <th className="px-3 py-2.5 text-center text-surface-400 font-semibold uppercase text-[10px] tracking-wider w-[80px]">
+                <th className="px-3 py-2.5 text-center text-surface-400 font-semibold uppercase text-xs tracking-wider w-[80px]">
                   Status
                 </th>
-                <th className="px-3 py-2.5 text-center text-surface-400 font-semibold uppercase text-[10px] tracking-wider w-[100px]">
+                <th className="px-3 py-2.5 text-center text-surface-400 font-semibold uppercase text-xs tracking-wider w-[100px]">
                   Actions
                 </th>
               </tr>
@@ -349,7 +349,7 @@ export function ForecastTablePanel({ data }: Props) {
         </div>
       </div>
 
-      <p className="text-[10px] text-surface-500 text-center">
+      <p className="text-xs text-surface-500 text-center">
         Showing {sortedRows.length} items{data.data.total_count ? ` of ${data.data.total_count} total` : ''}
       </p>
     </div>
@@ -378,7 +378,7 @@ function QualitySummaryBanner({
             <Sparkles className="w-4 h-4 text-deloitte-green" />
             <span className="text-xs font-semibold text-white">AI Quality Analysis</span>
           </div>
-          <span className="text-[10px] text-surface-400">
+          <span className="text-xs text-surface-400">
             Avg. confidence: <span className="text-white font-bold">{quality.avg_confidence}</span>/100
           </span>
         </div>
@@ -408,7 +408,7 @@ function QualitySummaryBanner({
           )}
         </div>
 
-        <div className="flex items-center gap-4 text-[10px]">
+        <div className="flex items-center gap-4 text-xs">
           <span className="flex items-center gap-1">
             <span className="w-2 h-2 rounded-full bg-deloitte-green" />
             <span className="text-surface-400">{quality.ok_count} OK</span>
@@ -432,13 +432,13 @@ function QualitySummaryBanner({
             <span className="text-xs font-semibold text-red-400">
               {quality.critical_count} items need immediate action
             </span>
-            <p className="text-[10px] text-surface-400">
+            <p className="text-xs text-surface-400">
               These items have poor model fit or no data — override or provide manual values.
             </p>
           </div>
           <button
             onClick={onOpenReview}
-            className="text-[10px] font-medium px-2.5 py-1 bg-red-500/15 text-red-400 rounded-lg hover:bg-red-500/25 transition-colors whitespace-nowrap"
+            className="text-xs font-medium px-2.5 py-1 bg-red-500/15 text-red-400 rounded-lg hover:bg-red-500/25 transition-colors whitespace-nowrap"
           >
             Review All
           </button>
@@ -452,13 +452,13 @@ function QualitySummaryBanner({
             <span className="text-xs font-semibold text-amber-400">
               {quality.warning_count} items recommended for review
             </span>
-            <p className="text-[10px] text-surface-400">
+            <p className="text-xs text-surface-400">
               Model accuracy is moderate — consider reviewing and adjusting.
             </p>
           </div>
           <button
             onClick={onOpenReview}
-            className="text-[10px] font-medium px-2.5 py-1 bg-amber-500/15 text-amber-400 rounded-lg hover:bg-amber-500/25 transition-colors whitespace-nowrap"
+            className="text-xs font-medium px-2.5 py-1 bg-amber-500/15 text-amber-400 rounded-lg hover:bg-amber-500/25 transition-colors whitespace-nowrap"
           >
             Open Review
           </button>
@@ -576,7 +576,7 @@ function ForecastRowItem({
         </td>
 
         {/* Period */}
-        <td className="px-3 py-2 text-surface-500 font-mono text-[10px]">
+        <td className="px-3 py-2 text-surface-500 font-mono text-xs">
           {isSummary ? (
             <span>{row.period_count}mo</span>
           ) : (
@@ -589,7 +589,7 @@ function ForecastRowItem({
           {isEditing ? (
             <div className="space-y-1.5" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center gap-1 justify-end">
-                <span className="text-[10px] text-surface-500">$</span>
+                <span className="text-xs text-surface-500">$</span>
                 <input
                   ref={editInputRef}
                   type="number"
@@ -607,7 +607,7 @@ function ForecastRowItem({
                 placeholder="Reason for change (min 10 chars)"
                 value={editReason}
                 onChange={(e) => setEditReason(e.target.value)}
-                className="w-full px-1.5 py-1 bg-surface-800 border border-surface-600 rounded text-[10px] text-surface-300 placeholder-surface-600 focus:outline-none focus:border-cyan-500/50"
+                className="w-full px-1.5 py-1 bg-surface-800 border border-surface-600 rounded text-xs text-surface-300 placeholder-surface-600 focus:outline-none focus:border-cyan-500/50"
                 onKeyDown={(e) => {
                   if (e.key === 'Escape') handleCancelEdit();
                   if (e.key === 'Enter' && editReason.trim().length >= 10) handleSaveEdit();
@@ -617,7 +617,7 @@ function ForecastRowItem({
                 <button
                   onClick={handleSaveEdit}
                   disabled={isSaving || editReason.trim().length < 10 || isNaN(parseFloat(editValue))}
-                  className="flex items-center gap-0.5 px-1.5 py-0.5 bg-deloitte-green/20 text-deloitte-green text-[10px] rounded hover:bg-deloitte-green/30 disabled:opacity-30 transition-colors"
+                  className="flex items-center gap-0.5 px-1.5 py-0.5 bg-deloitte-green/20 text-deloitte-green text-xs rounded hover:bg-deloitte-green/30 disabled:opacity-30 transition-colors"
                   title="Save override (Enter)"
                 >
                   {isSaving ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Save className="w-2.5 h-2.5" />}
@@ -625,7 +625,7 @@ function ForecastRowItem({
                 </button>
                 <button
                   onClick={handleCancelEdit}
-                  className="flex items-center gap-0.5 px-1.5 py-0.5 bg-surface-700 text-surface-400 text-[10px] rounded hover:bg-surface-600 transition-colors"
+                  className="flex items-center gap-0.5 px-1.5 py-0.5 bg-surface-700 text-surface-400 text-xs rounded hover:bg-surface-600 transition-colors"
                   title="Cancel (Esc)"
                 >
                   <X className="w-2.5 h-2.5" />
@@ -645,12 +645,12 @@ function ForecastRowItem({
                 )}
               </span>
               {wasOverridden && (
-                <span className="text-[9px] text-surface-500 line-through">
+                <span className="text-xs text-surface-500 line-through">
                   was {formatCurrency(forecastValue)}
                 </span>
               )}
               {isSummary && row.avg_p50 != null && !wasOverridden && (
-                <span className="text-[9px] text-surface-500">
+                <span className="text-xs text-surface-500">
                   avg: {formatCurrency(row.avg_p50)}/mo
                 </span>
               )}
@@ -674,7 +674,7 @@ function ForecastRowItem({
         {/* Actions */}
         <td className="px-3 py-2 text-center" onClick={(e) => e.stopPropagation()}>
           {isReviewed ? (
-            <span className="text-[10px] text-surface-500">Done</span>
+            <span className="text-xs text-surface-500">Done</span>
           ) : hasIssue ? (
             <div className="flex items-center gap-1 justify-center">
               <button
@@ -807,7 +807,7 @@ function RootCauseBadge({ cause }: { cause: string }) {
   const c = config[cause];
   if (!c) return null;
   return (
-    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-semibold border ${c.color}`}>
+    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-xs font-semibold border ${c.color}`}>
       <CircleDot className="w-2 h-2" />
       {c.label}
     </span>
@@ -822,7 +822,7 @@ function MaterialityBadge({ level }: { level: string }) {
     low: 'text-surface-500',
   };
   return (
-    <span className={`text-[9px] font-semibold uppercase ${colors[level] || colors.low}`}>
+    <span className={`text-xs font-semibold uppercase ${colors[level] || colors.low}`}>
       {level} materiality
     </span>
   );
@@ -879,16 +879,16 @@ function ExpandedRemediation({
           {/* Header with metadata */}
           <div className="flex items-center gap-3 flex-wrap">
             <Bot className="w-4 h-4 text-deloitte-green flex-shrink-0" />
-            <span className="text-[10px] font-semibold text-deloitte-green uppercase tracking-wider">
+            <span className="text-xs font-semibold text-deloitte-green uppercase tracking-wider">
               AI Analysis
             </span>
             {row.model_type && (
-              <span className="text-[9px] text-surface-500 font-mono bg-surface-800 px-1.5 py-0.5 rounded">
+              <span className="text-xs text-surface-500 font-mono bg-surface-800 px-1.5 py-0.5 rounded">
                 Model: {row.model_type}
               </span>
             )}
             {row.model_mape != null && (
-              <span className="text-[9px] text-surface-500 font-mono bg-surface-800 px-1.5 py-0.5 rounded">
+              <span className="text-xs text-surface-500 font-mono bg-surface-800 px-1.5 py-0.5 rounded">
                 MAPE: {row.model_mape.toFixed(1)}%
               </span>
             )}
@@ -906,7 +906,7 @@ function ExpandedRemediation({
               <div className="bg-surface-800/60 border border-surface-700/40 rounded-lg p-2.5 space-y-2">
                 <div className="flex items-center gap-1.5">
                   <Activity className="w-3 h-3 text-deloitte-teal" />
-                  <span className="text-[10px] font-semibold text-deloitte-teal uppercase tracking-wider">
+                  <span className="text-xs font-semibold text-deloitte-teal uppercase tracking-wider">
                     Business Drivers
                   </span>
                 </div>
@@ -920,9 +920,9 @@ function ExpandedRemediation({
                 {row.driver_context.dependencies && row.driver_context.dependencies.length > 0 && (
                   <div className="flex items-center gap-2 flex-wrap">
                     <GitBranch className="w-3 h-3 text-surface-500 flex-shrink-0" />
-                    <span className="text-[10px] text-surface-500">Driven by:</span>
+                    <span className="text-xs text-surface-500">Driven by:</span>
                     {row.driver_context.dependencies.map((dep, i) => (
-                      <span key={i} className="text-[10px] px-1.5 py-0.5 bg-surface-700/80 rounded text-surface-300 font-mono">
+                      <span key={i} className="text-xs px-1.5 py-0.5 bg-surface-700/80 rounded text-surface-300 font-mono">
                         {dep.relationship === 'subtract' ? '−' : dep.relationship === 'multiply' ? '×' : '+'}{' '}
                         {dep.name}
                         {dep.forecast_total ? ` ($${Math.abs(dep.forecast_total) >= 1000 ? `${(dep.forecast_total/1000).toFixed(0)}K` : dep.forecast_total.toFixed(0)})` : ''}
@@ -933,7 +933,7 @@ function ExpandedRemediation({
 
                 {/* Actuals trend mini-summary */}
                 {row.driver_context.actuals_trend && (
-                  <div className="flex items-center gap-3 text-[10px] flex-wrap">
+                  <div className="flex items-center gap-3 text-xs flex-wrap">
                     {row.driver_context.actuals_trend.direction === 'upward' ? (
                       <TrendingUp className="w-3 h-3 text-deloitte-green flex-shrink-0" />
                     ) : row.driver_context.actuals_trend.direction === 'downward' ? (
@@ -961,7 +961,7 @@ function ExpandedRemediation({
 
                 {/* Active overrides */}
                 {row.driver_context.active_overrides && row.driver_context.active_overrides.length > 0 && (
-                  <div className="flex items-start gap-2 text-[10px]">
+                  <div className="flex items-start gap-2 text-xs">
                     <Edit3 className="w-3 h-3 text-cyan-400 flex-shrink-0 mt-0.5" />
                     <div>
                       <span className="text-cyan-400 font-semibold">Active overrides: </span>
@@ -1001,7 +1001,7 @@ function ExpandedRemediation({
             <div className="pl-7 space-y-2">
               <div className="flex items-center gap-1.5">
                 <Zap className="w-3 h-3 text-cyan-400" />
-                <span className="text-[10px] font-semibold text-cyan-400 uppercase tracking-wider">
+                <span className="text-xs font-semibold text-cyan-400 uppercase tracking-wider">
                   Recommended Actions
                 </span>
               </div>
@@ -1014,11 +1014,11 @@ function ExpandedRemediation({
                   >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-0.5">
-                        <span className="text-[10px] font-semibold text-surface-200">
+                        <span className="text-xs font-semibold text-surface-200">
                           {idx + 1}. {action.label}
                         </span>
                       </div>
-                      <p className="text-[10px] text-surface-400 leading-relaxed">
+                      <p className="text-xs text-surface-400 leading-relaxed">
                         {action.detail}
                       </p>
                     </div>
@@ -1028,7 +1028,7 @@ function ExpandedRemediation({
                         handleActionClick(action);
                       }}
                       disabled={isActioning}
-                      className={`flex-shrink-0 flex items-center gap-1 text-[10px] font-medium px-2.5 py-1.5 rounded-lg border transition-all ${
+                      className={`flex-shrink-0 flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-lg border transition-all ${
                         copiedAction === action.type
                           ? 'bg-deloitte-green/20 text-deloitte-green border-deloitte-green/30'
                           : actionButtonColor(action.type)
@@ -1065,7 +1065,7 @@ function ExpandedRemediation({
             <div className="pl-7">
               <div className="flex items-start gap-2 px-2.5 py-1.5 bg-surface-800/80 rounded-lg border border-surface-700/30">
                 <Info className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0 mt-0.5" />
-                <p className="text-[10px] text-surface-400 leading-relaxed">
+                <p className="text-xs text-surface-400 leading-relaxed">
                   <span className="text-cyan-400 font-semibold">Suggested: </span>
                   {recommendation === 'override' || recommendation === 'manual_input'
                     ? `Override this forecast for "${row.line_item_name}" with a business-informed estimate, or collect driver assumptions from the BU owner.`
@@ -1079,11 +1079,11 @@ function ExpandedRemediation({
           {/* Quick review buttons */}
           {!isReviewed && (
             <div className="pl-7 flex items-center gap-2 pt-1 border-t border-surface-700/20">
-              <span className="text-[10px] text-surface-500 mr-1">Review decision:</span>
+              <span className="text-xs text-surface-500 mr-1">Review decision:</span>
               <button
                 onClick={(e) => { e.stopPropagation(); onAction(row.id, 'approve'); }}
                 disabled={isActioning}
-                className="text-[10px] font-medium px-2.5 py-1 bg-deloitte-green/10 text-deloitte-green rounded-lg hover:bg-deloitte-green/20 transition-colors flex items-center gap-1 border border-deloitte-green/15"
+                className="text-xs font-medium px-2.5 py-1 bg-deloitte-green/10 text-deloitte-green rounded-lg hover:bg-deloitte-green/20 transition-colors flex items-center gap-1 border border-deloitte-green/15"
               >
                 <CheckCircle2 className="w-3 h-3" />
                 Approve As-Is
@@ -1091,7 +1091,7 @@ function ExpandedRemediation({
               <button
                 onClick={(e) => { e.stopPropagation(); onAction(row.id, 'flag'); }}
                 disabled={isActioning}
-                className="text-[10px] font-medium px-2.5 py-1 bg-amber-500/10 text-amber-400 rounded-lg hover:bg-amber-500/20 transition-colors flex items-center gap-1 border border-amber-500/15"
+                className="text-xs font-medium px-2.5 py-1 bg-amber-500/10 text-amber-400 rounded-lg hover:bg-amber-500/20 transition-colors flex items-center gap-1 border border-amber-500/15"
               >
                 <Eye className="w-3 h-3" />
                 Flag for Later
@@ -1099,7 +1099,7 @@ function ExpandedRemediation({
               <button
                 onClick={(e) => { e.stopPropagation(); onAction(row.id, 'reject'); }}
                 disabled={isActioning}
-                className="text-[10px] font-medium px-2.5 py-1 bg-red-500/10 text-red-400 rounded-lg hover:bg-red-500/20 transition-colors flex items-center gap-1 border border-red-500/15"
+                className="text-xs font-medium px-2.5 py-1 bg-red-500/10 text-red-400 rounded-lg hover:bg-red-500/20 transition-colors flex items-center gap-1 border border-red-500/15"
               >
                 <XCircle className="w-3 h-3" />
                 Reject
@@ -1126,7 +1126,7 @@ function ConfidenceIndicator({ score, level }: { score: number; level: string })
 
   return (
     <div className="flex flex-col items-center gap-0.5">
-      <span className={`text-[10px] font-bold ${textColor}`}>
+      <span className={`text-xs font-bold ${textColor}`}>
         {Math.round(score)}
       </span>
       <div className="w-12 h-1.5 rounded-full bg-surface-700 overflow-hidden">
@@ -1149,7 +1149,7 @@ function StatusBadge({
 }) {
   if (reviewStatus === 'approved') {
     return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-semibold bg-deloitte-green/15 text-deloitte-green border border-deloitte-green/20">
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-xs font-semibold bg-deloitte-green/15 text-deloitte-green border border-deloitte-green/20">
         <ShieldCheck className="w-2.5 h-2.5" />
         Approved
       </span>
@@ -1157,7 +1157,7 @@ function StatusBadge({
   }
   if (reviewStatus === 'rejected') {
     return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-semibold bg-red-500/15 text-red-400 border border-red-500/20">
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-xs font-semibold bg-red-500/15 text-red-400 border border-red-500/20">
         <XCircle className="w-2.5 h-2.5" />
         Rejected
       </span>
@@ -1168,35 +1168,35 @@ function StatusBadge({
     case 'override':
     case 'manual_input':
       return (
-        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-semibold bg-red-500/15 text-red-400 border border-red-500/20">
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-xs font-semibold bg-red-500/15 text-red-400 border border-red-500/20">
           <AlertTriangle className="w-2.5 h-2.5" />
           Action
         </span>
       );
     case 'review':
       return (
-        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/20">
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-xs font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/20">
           <Eye className="w-2.5 h-2.5" />
           Review
         </span>
       );
     case 'flag':
       return (
-        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-semibold bg-orange-500/15 text-orange-400 border border-orange-500/20">
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-xs font-semibold bg-orange-500/15 text-orange-400 border border-orange-500/20">
           <AlertTriangle className="w-2.5 h-2.5" />
           Flagged
         </span>
       );
     case 'approve':
       return (
-        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-semibold bg-deloitte-green/10 text-deloitte-green/70 border border-deloitte-green/15">
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-xs font-semibold bg-deloitte-green/10 text-deloitte-green/70 border border-deloitte-green/15">
           <CheckCircle2 className="w-2.5 h-2.5" />
           OK
         </span>
       );
     default:
       return (
-        <span className="text-[9px] text-surface-500">—</span>
+        <span className="text-xs text-surface-500">—</span>
       );
   }
 }
@@ -1221,7 +1221,7 @@ function StatCard({
   return (
     <div className={`bg-surface-800/50 border rounded-lg p-3 text-center ${colorClass}`}>
       <div className="text-lg font-bold">{value ?? 0}</div>
-      <div className="text-[10px] text-surface-500 uppercase tracking-wider font-medium">
+      <div className="text-xs text-surface-500 uppercase tracking-wider font-medium">
         {label}
       </div>
     </div>

@@ -124,7 +124,7 @@ function StatCard({
   return (
     <div className={`bg-surface-800/50 border rounded-lg p-3 text-center ${colorClass}`}>
       <div className="text-lg font-bold">{value}</div>
-      <div className="text-[10px] text-surface-500 uppercase tracking-wider font-medium">
+      <div className="text-xs text-surface-500 uppercase tracking-wider font-medium">
         {label}
       </div>
     </div>

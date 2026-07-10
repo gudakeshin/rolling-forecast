@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import Depends, HTTPException, status
-from sqlalchemy.orm import Query
+from sqlalchemy.orm import Query, Session
 
 from app.models.user import User
 
@@ -52,6 +52,33 @@ def line_item_scope_filter(query: Query, user: User, line_item_model) -> Query:
     return query.filter(
         (line_item_model.business_unit == bu) | (line_item_model.business_unit.is_(None))
     )
+
+
+def resolve_skill_user(context) -> User | None:
+    """Resolve the acting User from a SkillContext (prefers attached user object)."""
+    user = getattr(context, "user", None)
+    if user is not None:
+        return user
+    cm = getattr(context, "context_manager", None)
+    if cm is not None and getattr(cm, "user", None) is not None:
+        return cm.user
+    user_id = getattr(context, "user_id", None)
+    db: Session | None = getattr(context, "db", None)
+    if user_id and db is not None:
+        return db.query(User).filter(User.id == user_id).first()
+    return None
+
+
+def scoped_line_items(db: Session, user: User | None, *filters) -> Query:
+    """LineItem query restricted to the caller's BU scope when user is known."""
+    from app.models.line_item import LineItem
+
+    q = db.query(LineItem)
+    for f in filters:
+        q = q.filter(f)
+    if user is None:
+        return q
+    return line_item_scope_filter(q, user, LineItem)
 
 
 def require_permission(permission: str):

@@ -173,7 +173,7 @@ export function SkillEditorPanel() {
                 {skill.tags.slice(0, 3).map((tag) => (
                   <span
                     key={tag}
-                    className="px-1.5 py-0.5 text-[10px] bg-surface-700 text-surface-400 rounded"
+                    className="px-1.5 py-0.5 text-xs bg-surface-700 text-surface-400 rounded"
                   >
                     {tag}
                   </span>
@@ -306,11 +306,11 @@ export function SkillEditorPanel() {
                       >
                         <div className="flex items-center gap-2">
                           <code className="text-xs font-mono text-deloitte-green">{p.name}</code>
-                          <span className="text-[10px] px-1.5 py-0.5 bg-surface-700 text-surface-400 rounded">
+                          <span className="text-xs px-1.5 py-0.5 bg-surface-700 text-surface-400 rounded">
                             {p.type}
                           </span>
                           {p.required && (
-                            <span className="text-[10px] px-1.5 py-0.5 bg-red-500/10 text-red-400 rounded">
+                            <span className="text-xs px-1.5 py-0.5 bg-red-500/10 text-red-400 rounded">
                               required
                             </span>
                           )}
@@ -321,7 +321,7 @@ export function SkillEditorPanel() {
                             {p.enum.map((v: string) => (
                               <span
                                 key={v}
-                                className="text-[10px] px-1 py-0.5 bg-surface-700 text-surface-300 rounded font-mono"
+                                className="text-xs px-1 py-0.5 bg-surface-700 text-surface-300 rounded font-mono"
                               >
                                 {v}
                               </span>
@@ -349,7 +349,7 @@ export function SkillEditorPanel() {
 function MetaCard({ label, value }: { label: string; value: string }) {
   return (
     <div className="px-3 py-2 bg-surface-800 rounded border border-surface-700">
-      <p className="text-[10px] text-surface-400 uppercase tracking-wider">{label}</p>
+      <p className="text-xs text-surface-400 uppercase tracking-wider">{label}</p>
       <p className="text-sm font-semibold text-white mt-0.5">{value}</p>
     </div>
   );

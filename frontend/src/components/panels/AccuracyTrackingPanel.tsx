@@ -148,7 +148,7 @@ export function AccuracyTrackingPanel({ data }: Props) {
             <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl p-4">
               <h4 className="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-3">
                 Bias Detection Trend
-                <span className="ml-2 text-[9px] font-normal text-surface-500">(positive = over-forecast, negative = under-forecast)</span>
+                <span className="ml-2 text-xs font-normal text-surface-500">(positive = over-forecast, negative = under-forecast)</span>
               </h4>
               <ResponsiveContainer width="100%" height={150}>
                 <ComposedChart data={bias_trend} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
@@ -243,11 +243,11 @@ export function AccuracyTrackingPanel({ data }: Props) {
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-surface-800 z-10">
                 <tr className="border-b border-surface-700">
-                  <th className="px-3 py-2 text-left text-surface-400 font-semibold text-[10px] uppercase">Item</th>
-                  <th className="px-3 py-2 text-right text-surface-400 font-semibold text-[10px] uppercase">Forecast</th>
-                  <th className="px-3 py-2 text-right text-surface-400 font-semibold text-[10px] uppercase">Actual</th>
-                  <th className="px-3 py-2 text-right text-surface-400 font-semibold text-[10px] uppercase">MAPE</th>
-                  <th className="px-3 py-2 text-right text-surface-400 font-semibold text-[10px] uppercase">Bias</th>
+                  <th className="px-3 py-2 text-left text-surface-400 font-semibold text-xs uppercase">Item</th>
+                  <th className="px-3 py-2 text-right text-surface-400 font-semibold text-xs uppercase">Forecast</th>
+                  <th className="px-3 py-2 text-right text-surface-400 font-semibold text-xs uppercase">Actual</th>
+                  <th className="px-3 py-2 text-right text-surface-400 font-semibold text-xs uppercase">MAPE</th>
+                  <th className="px-3 py-2 text-right text-surface-400 font-semibold text-xs uppercase">Bias</th>
                 </tr>
               </thead>
               <tbody>
@@ -255,7 +255,7 @@ export function AccuracyTrackingPanel({ data }: Props) {
                   <tr key={i} className="border-b border-surface-700/20 hover:bg-red-500/5 transition-colors">
                     <td className="px-3 py-1.5">
                       <div className="text-surface-300 truncate max-w-[120px]">{item.line_item_name}</div>
-                      <div className="text-surface-500 text-[10px]">{item.period} • {item.model_type}</div>
+                      <div className="text-surface-500 text-xs">{item.period} • {item.model_type}</div>
                     </td>
                     <td className="px-3 py-1.5 text-right text-surface-200 font-mono">{formatCurrency(item.forecast)}</td>
                     <td className="px-3 py-1.5 text-right text-surface-200 font-mono">{formatCurrency(item.actual)}</td>
@@ -278,7 +278,7 @@ export function AccuracyTrackingPanel({ data }: Props) {
       )}
 
       {/* Footer */}
-      <p className="text-[10px] text-surface-500 text-center">
+      <p className="text-xs text-surface-500 text-center">
         Based on {overall.total_comparisons} forecast-vs-actual comparisons
       </p>
     </div>

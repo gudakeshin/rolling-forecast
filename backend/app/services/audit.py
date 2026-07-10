@@ -27,6 +27,13 @@ def record_audit(
     commit: bool = False,
 ) -> AuditEvent:
     """Append an immutable audit event. Callers should not update/delete AuditEvent rows."""
+    if request_id is None:
+        try:
+            from app.middleware import get_request_id
+
+            request_id = get_request_id()
+        except Exception:
+            request_id = None
     event = AuditEvent(
         action=action,
         entity_type=entity_type,

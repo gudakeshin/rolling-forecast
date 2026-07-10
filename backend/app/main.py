@@ -15,10 +15,40 @@ from passlib.context import CryptContext
 
 logger = logging.getLogger(__name__)
 
-logging.basicConfig(
-    level=getattr(logging, settings.log_level),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+
+def _configure_logging() -> None:
+    """Prefer structlog JSON in non-dev; fall back to stdlib basicConfig."""
+    level = getattr(logging, settings.log_level, logging.INFO)
+    try:
+        import structlog
+
+        shared = [
+            structlog.contextvars.merge_contextvars,
+            structlog.processors.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+        ]
+        if settings.app_env == "development":
+            renderer: object = structlog.dev.ConsoleRenderer()
+        else:
+            renderer = structlog.processors.JSONRenderer()
+
+        structlog.configure(
+            processors=[*shared, structlog.processors.CallsiteParameterAdder(), renderer],
+            wrapper_class=structlog.make_filtering_bound_logger(level),
+            logger_factory=structlog.PrintLoggerFactory(),
+            cache_logger_on_first_use=True,
+        )
+        logging.basicConfig(level=level, format="%(message)s")
+    except ImportError:
+        logging.basicConfig(
+            level=level,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        )
+
+
+_configure_logging()
 
 
 def seed_roles_and_admin(db):
@@ -225,13 +255,14 @@ app.include_router(integrations_router, prefix="/api")
 app.include_router(locks_router, prefix="/api")
 app.include_router(jobs_router, prefix="/api")
 
-# Prometheus metrics (optional dependency)
-try:
-    from prometheus_fastapi_instrumentator import Instrumentator
+# Prometheus metrics (skip in tests — instrumentator breaks on Starlette Mount routes)
+if settings.app_env != "test":
+    try:
+        from prometheus_fastapi_instrumentator import Instrumentator
 
-    Instrumentator(
-        should_group_status_codes=True,
-        excluded_handlers=["/metrics", "/livez", "/readyz", "/health"],
-    ).instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
-except ImportError:
-    pass
+        Instrumentator(
+            should_group_status_codes=True,
+            excluded_handlers=["/metrics", "/livez", "/readyz", "/health"],
+        ).instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+    except ImportError:
+        pass

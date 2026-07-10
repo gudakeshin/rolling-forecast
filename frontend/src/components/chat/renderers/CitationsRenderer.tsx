@@ -22,7 +22,7 @@ export function CitationsRenderer({ data }: Props) {
 
   return (
     <div className="my-2 rounded-xl border border-surface-700/50 bg-surface-800/40 px-3 py-2">
-      <p className="text-[11px] uppercase tracking-wide text-surface-500 mb-1.5">Sources</p>
+      <p className="text-xs uppercase tracking-wide text-surface-500 mb-1.5">Sources</p>
       <ol className="space-y-1.5 list-none">
         {citations.map((c, i) => (
           <li key={String(c.id ?? i)} className="flex gap-2 text-xs">

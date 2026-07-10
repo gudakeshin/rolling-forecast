@@ -126,7 +126,7 @@ def test_bu_scope_blocks_cross_bu_line_items(db_session, seed_roles):
     user = User(
         email="bu@test.local",
         username="bu_analyst",
-        hashed_password=pwd.hash("x"),
+        hashed_password=pwd.hash("bu_analyst"),
         full_name="BU Analyst",
         business_unit="North America",
         role_id=analyst_role.id,
@@ -146,6 +146,32 @@ def test_bu_scope_blocks_cross_bu_line_items(db_session, seed_roles):
     codes = {li.account_code for li in q.all()}
     assert codes == {"NA-1", "SHARED"}
     assert "EU-1" not in codes
+
+
+def test_scoped_line_items_helper_respects_bu(db_session, seed_roles):
+    from app.services.permissions import scoped_line_items
+
+    pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    role = seed_roles["analyst"]
+    role.can_view_all_bus = False
+    user = User(
+        email="scope@test.local",
+        username="scope_analyst",
+        hashed_password=pwd.hash("scope_analyst"),
+        full_name="Scope Analyst",
+        business_unit="Europe",
+        role_id=role.id,
+    )
+    db_session.add(user)
+    db_session.add_all([
+        LineItem(account_code="NA-2", name="NA", category="Revenue", business_unit="North America"),
+        LineItem(account_code="EU-2", name="EU", category="Revenue", business_unit="Europe"),
+    ])
+    db_session.commit()
+    user.role = role
+
+    codes = {li.account_code for li in scoped_line_items(db_session, user).all()}
+    assert codes == {"EU-2"}
 
 
 def test_login_rate_limit_returns_429(client):

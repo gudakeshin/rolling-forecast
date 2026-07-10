@@ -98,7 +98,7 @@ export function ConversationSidebar() {
               }`}
             >
               <div className="font-medium truncate">{c.title || 'Untitled'}</div>
-              <div className="text-[10px] text-surface-500 mt-0.5">
+              <div className="text-xs text-surface-500 mt-0.5">
                 {c.message_count ?? 0} messages
               </div>
             </button>

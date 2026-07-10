@@ -40,15 +40,8 @@ async def get_forecast_table(
     )
 
     # BU-level read authorization
-    from app.services.permissions import can_view_all_bus
-    if not can_view_all_bus(current_user):
-        bu = current_user.business_unit
-        if bu:
-            query = query.filter(
-                (LineItem.business_unit == bu) | (LineItem.business_unit.is_(None))
-            )
-        else:
-            query = query.filter(LineItem.business_unit.is_(None))
+    from app.services.permissions import line_item_scope_filter
+    query = line_item_scope_filter(query, current_user, LineItem)
 
     if period:
         query = query.filter(ForecastLineResult.period == period)
@@ -176,12 +169,18 @@ async def get_review_queue(
     db: Session = Depends(get_db),
 ):
     """Get items that need review, sorted by materiality."""
+    from app.services.permissions import line_item_scope_filter
+
     results = (
-        db.query(ForecastLineResult)
-        .join(LineItem)
-        .filter(
-            ForecastLineResult.version_id == version_id,
-            ForecastLineResult.confidence_level.in_(["low", "medium"]),
+        line_item_scope_filter(
+            db.query(ForecastLineResult)
+            .join(LineItem)
+            .filter(
+                ForecastLineResult.version_id == version_id,
+                ForecastLineResult.confidence_level.in_(["low", "medium"]),
+            ),
+            current_user,
+            LineItem,
         )
         .order_by(ForecastLineResult.confidence_score.asc())
         .all()
@@ -275,16 +274,22 @@ async def get_comparison_panel(
         raise HTTPException(status_code=404, detail="One or both versions not found")
 
     # Get aggregated results for both
+    from app.services.permissions import line_item_scope_filter
+
     def get_results(vid):
         return (
-            db.query(
-                ForecastLineResult.line_item_id,
-                LineItem.name.label("line_name"),
-                LineItem.category,
-                func.sum(ForecastLineResult.p50).label("total"),
+            line_item_scope_filter(
+                db.query(
+                    ForecastLineResult.line_item_id,
+                    LineItem.name.label("line_name"),
+                    LineItem.category,
+                    func.sum(ForecastLineResult.p50).label("total"),
+                )
+                .join(LineItem)
+                .filter(ForecastLineResult.version_id == vid),
+                current_user,
+                LineItem,
             )
-            .join(LineItem)
-            .filter(ForecastLineResult.version_id == vid)
             .group_by(ForecastLineResult.line_item_id, LineItem.name, LineItem.category)
             .all()
         )

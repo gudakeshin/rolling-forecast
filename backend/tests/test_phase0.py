@@ -102,7 +102,7 @@ def test_sod_creator_cannot_self_approve(client):
             creator = User(
                 email="creator@test.local",
                 username="creator",
-                hashed_password=pwd.hash("creator"),
+        hashed_password=pwd.hash("creator"),
                 full_name="Forecast Creator",
                 role_id=admin_role.id,
             )

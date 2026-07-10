@@ -99,16 +99,16 @@ export function ComparisonPanel({ data }: Props) {
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-surface-800 z-10">
               <tr className="border-b border-surface-700">
-                <th className="px-3 py-2 text-left text-surface-400 font-semibold text-[10px] uppercase tracking-wider">
+                <th className="px-3 py-2 text-left text-surface-400 font-semibold text-xs uppercase tracking-wider">
                   Line Item
                 </th>
-                <th className="px-3 py-2 text-right text-surface-400 font-semibold text-[10px] uppercase tracking-wider">
+                <th className="px-3 py-2 text-right text-surface-400 font-semibold text-xs uppercase tracking-wider">
                   {va?.name?.substring(0, 10) || 'A'}
                 </th>
-                <th className="px-3 py-2 text-right text-surface-400 font-semibold text-[10px] uppercase tracking-wider">
+                <th className="px-3 py-2 text-right text-surface-400 font-semibold text-xs uppercase tracking-wider">
                   {vb?.name?.substring(0, 10) || 'B'}
                 </th>
-                <th className="px-3 py-2 text-right text-surface-400 font-semibold text-[10px] uppercase tracking-wider">
+                <th className="px-3 py-2 text-right text-surface-400 font-semibold text-xs uppercase tracking-wider">
                   %
                 </th>
               </tr>
@@ -167,7 +167,7 @@ function MiniStat({
     <div className="bg-surface-800/50 border border-surface-700 rounded-lg p-2.5 text-center">
       <Icon className={`w-4 h-4 mx-auto ${color} mb-1`} />
       <div className={`text-sm font-bold ${color}`}>{value}</div>
-      <div className="text-[9px] text-surface-500 uppercase tracking-wider">{label}</div>
+      <div className="text-xs text-surface-500 uppercase tracking-wider">{label}</div>
     </div>
   );
 }

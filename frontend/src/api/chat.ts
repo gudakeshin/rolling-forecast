@@ -45,6 +45,7 @@ export async function sendMessage(
   let currentEvent = '';
   let currentData = '';
 
+  // eslint-disable-next-line no-constant-condition -- SSE stream read loop
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;

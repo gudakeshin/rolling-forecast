@@ -218,7 +218,7 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`flex-1 py-1.5 px-2 rounded-md text-[10px] font-semibold uppercase tracking-wider transition-all ${
+            className={`flex-1 py-1.5 px-2 rounded-md text-xs font-semibold uppercase tracking-wider transition-all ${
               activeTab === tab
                 ? 'bg-deloitte-green/20 text-deloitte-green'
                 : 'text-surface-500 hover:text-surface-300'
@@ -258,7 +258,7 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
             <p className="text-xs text-surface-400 mb-1">
               {isUploading ? 'Processing...' : 'Drop files here or click to upload'}
             </p>
-            <p className="text-[10px] text-surface-600">
+            <p className="text-xs text-surface-600">
               PDF, DOCX, PPTX, XLSX, CSV, TXT, HTML
             </p>
           </div>
@@ -267,7 +267,7 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
           <div className="bg-surface-800/40 border border-surface-700/50 rounded-lg p-3">
             <div className="flex items-center gap-2 mb-2">
               <Link2 className="w-3.5 h-3.5 text-sky-400" />
-              <span className="text-[10px] text-surface-400 uppercase tracking-wider font-semibold">Index from URL</span>
+              <span className="text-xs text-surface-400 uppercase tracking-wider font-semibold">Index from URL</span>
             </div>
             <div className="flex gap-2">
               <input
@@ -311,7 +311,7 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
             <select
               value={scopeFilter}
               onChange={e => setScopeFilter(e.target.value)}
-              className="bg-surface-800/60 border border-surface-700/50 rounded-lg px-2 py-1 text-[10px] text-surface-300 focus:outline-none"
+              className="bg-surface-800/60 border border-surface-700/50 rounded-lg px-2 py-1 text-xs text-surface-300 focus:outline-none"
             >
               <option value="all">All Scopes</option>
               <option value="user">My Documents</option>
@@ -322,7 +322,7 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
               <select
                 value={typeFilter}
                 onChange={e => setTypeFilter(e.target.value)}
-                className="bg-surface-800/60 border border-surface-700/50 rounded-lg px-2 py-1 text-[10px] text-surface-300 focus:outline-none"
+                className="bg-surface-800/60 border border-surface-700/50 rounded-lg px-2 py-1 text-xs text-surface-300 focus:outline-none"
               >
                 <option value="all">All Types</option>
                 {uniqueTypes.map(t => (
@@ -339,7 +339,7 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
               <p className="text-xs">No documents uploaded yet</p>
               <button
                 onClick={() => setActiveTab('upload')}
-                className="mt-2 text-[10px] text-deloitte-green hover:underline"
+                className="mt-2 text-xs text-deloitte-green hover:underline"
               >
                 Upload your first document
               </button>
@@ -391,9 +391,9 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
                     {isExpanded && (
                       <div className="px-3 pb-2.5 border-t border-surface-700/30 pt-2 space-y-1.5">
                         {doc.description && (
-                          <p className="text-[10px] text-surface-400 italic">{doc.description}</p>
+                          <p className="text-xs text-surface-400 italic">{doc.description}</p>
                         )}
-                        <div className="flex flex-wrap gap-1.5 text-[9px] text-surface-500">
+                        <div className="flex flex-wrap gap-1.5 text-xs text-surface-500">
                           <span className="flex items-center gap-0.5">
                             <Tag className="w-2.5 h-2.5" /> {doc.file_type.toUpperCase()}
                           </span>
@@ -409,7 +409,7 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
                             href={doc.source_url}
                             target="_blank"
                             rel="noreferrer"
-                            className="flex items-center gap-1 text-[10px] text-sky-400 hover:underline"
+                            className="flex items-center gap-1 text-xs text-sky-400 hover:underline"
                           >
                             <ExternalLink className="w-2.5 h-2.5" /> {doc.source_url}
                           </a>
@@ -460,7 +460,7 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
 
           {searchResults.length > 0 ? (
             <div className="space-y-2">
-              <p className="text-[10px] text-surface-500">{searchResults.length} results found</p>
+              <p className="text-xs text-surface-500">{searchResults.length} results found</p>
               {searchResults.map((result, i) => (
                 <div
                   key={result.chunk_id}
@@ -468,16 +468,16 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
                 >
                   <div className="flex items-center justify-between mb-1.5">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] font-bold text-deloitte-green">{i + 1}</span>
-                      <span className="text-[10px] text-white font-medium truncate max-w-[200px]">
+                      <span className="text-xs font-bold text-deloitte-green">{i + 1}</span>
+                      <span className="text-xs text-white font-medium truncate max-w-[200px]">
                         {result.original_name}
                       </span>
                     </div>
-                    <span className="text-[9px] px-1.5 py-0.5 bg-deloitte-green/10 text-deloitte-green rounded">
+                    <span className="text-xs px-1.5 py-0.5 bg-deloitte-green/10 text-deloitte-green rounded">
                       {Math.round(result.score * 100)}% match
                     </span>
                   </div>
-                  <p className="text-[10px] text-surface-400 leading-relaxed line-clamp-4">
+                  <p className="text-xs text-surface-400 leading-relaxed line-clamp-4">
                     {result.content}
                   </p>
                 </div>
@@ -487,13 +487,13 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
             <div className="text-center py-6 text-surface-600">
               <Search className="w-6 h-6 mx-auto mb-2 opacity-40" />
               <p className="text-xs">No results found</p>
-              <p className="text-[10px] mt-1">Try different keywords or upload more documents</p>
+              <p className="text-xs mt-1">Try different keywords or upload more documents</p>
             </div>
           ) : !searchQuery ? (
             <div className="text-center py-6 text-surface-600">
               <Search className="w-6 h-6 mx-auto mb-2 opacity-40" />
               <p className="text-xs">Search across all your uploaded documents</p>
-              <p className="text-[10px] mt-1">Uses semantic search to find relevant content</p>
+              <p className="text-xs mt-1">Uses semantic search to find relevant content</p>
             </div>
           ) : null}
         </div>

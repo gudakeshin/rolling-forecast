@@ -17,7 +17,7 @@ export function Header() {
             <span className="text-sm font-bold text-white tracking-wide leading-none">
               Rolling Forecast
             </span>
-            <span className="text-[10px] text-deloitte-green font-semibold tracking-widest uppercase leading-tight">
+            <span className="text-xs text-deloitte-green font-semibold tracking-widest uppercase leading-tight">
               Deloitte
             </span>
           </div>

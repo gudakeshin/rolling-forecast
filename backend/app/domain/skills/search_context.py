@@ -82,7 +82,7 @@ class SearchContextSkill(BaseSkill):
                 snippet += "..."
 
             summary_lines.append(
-                f"**{i}. [{source}]** (relevance: {score_pct}%)\n{snippet}\n"
+                f"**[{i}] {source}** (relevance: {score_pct}%)\n{snippet}\n"
             )
 
         content_blocks.append(self._text_block("\n".join(summary_lines)))

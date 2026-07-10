@@ -82,7 +82,7 @@ export function InputBar({ onSend, isStreaming }: Props) {
   return (
     <div className="relative">
       {uploadStatus && (
-        <div className="absolute -top-8 left-0 right-0 flex items-center justify-center gap-1.5 text-[10px] text-deloitte-green animate-fade-in">
+        <div className="absolute -top-8 left-0 right-0 flex items-center justify-center gap-1.5 text-xs text-deloitte-green animate-fade-in">
           <CheckCircle className="w-3 h-3" /> {uploadStatus}
         </div>
       )}

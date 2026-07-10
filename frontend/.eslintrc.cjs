@@ -1,28 +1,34 @@
-{
-  "root": true,
-  "env": {
-    "browser": true,
-    "es2020": true
+module.exports = {
+  root: true,
+  env: {
+    browser: true,
+    es2020: true,
   },
-  "extends": [
+  extends: [
     "eslint:recommended",
     "plugin:@typescript-eslint/recommended",
-    "plugin:react-hooks/recommended"
+    "plugin:react-hooks/recommended",
+    "plugin:jsx-a11y/recommended",
   ],
-  "parser": "@typescript-eslint/parser",
-  "parserOptions": {
-    "ecmaVersion": "latest",
-    "sourceType": "module",
-    "ecmaFeatures": { "jsx": true }
+  parser: "@typescript-eslint/parser",
+  parserOptions: {
+    ecmaVersion: "latest",
+    sourceType: "module",
+    ecmaFeatures: { jsx: true },
   },
-  "plugins": ["@typescript-eslint", "react-hooks"],
-  "settings": {
-    "react": { "version": "detect" }
+  plugins: ["@typescript-eslint", "react-hooks", "jsx-a11y"],
+  settings: {
+    react: { version: "detect" },
   },
-  "rules": {
+  rules: {
     "@typescript-eslint/no-explicit-any": "off",
-    "@typescript-eslint/no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
-    "no-console": "off"
+    "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
+    "no-console": "off",
+    "jsx-a11y/no-autofocus": "warn",
+    // Existing panels still use clickable divs — warn until SlidePanel sweep completes
+    "jsx-a11y/click-events-have-key-events": "warn",
+    "jsx-a11y/no-static-element-interactions": "warn",
+    "jsx-a11y/label-has-associated-control": "warn",
   },
-  "ignorePatterns": ["dist/", "node_modules/", "*.config.js", "*.config.ts"]
-}
+  ignorePatterns: ["dist/", "node_modules/", "*.config.js", "*.config.ts"],
+};

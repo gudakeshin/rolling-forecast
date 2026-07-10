@@ -1,12 +1,20 @@
-@import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;500;600;700&display=swap');
+@import '@fontsource/open-sans/300.css';
+@import '@fontsource/open-sans/400.css';
+@import '@fontsource/open-sans/500.css';
+@import '@fontsource/open-sans/600.css';
+@import '@fontsource/open-sans/700.css';
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
+  html {
+    font-size: 16px;
+  }
+
   body {
-    @apply bg-surface-900 text-gray-100 antialiased font-sans;
+    @apply bg-surface-900 text-gray-100 antialiased font-sans text-sm;
   }
 
   /* Custom scrollbar — Deloitte themed */

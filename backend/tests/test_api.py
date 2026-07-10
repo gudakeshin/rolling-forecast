@@ -1,10 +1,16 @@
 """Tests for API endpoints (health, auth, panel)."""
 
-import pytest
-from fastapi.testclient import TestClient
-
 import os
+
+import pytest
+
+# Must set env BEFORE importing the app (prometheus is gated on APP_ENV)
+os.environ["APP_ENV"] = "test"
+os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-ci-at-least-32-chars")
 os.environ["DATABASE_URL"] = "sqlite:///./test_api_rolling_forecast.db"
+os.environ.setdefault("SEED_DEMO_USERS", "true")
+
+from fastapi.testclient import TestClient
 
 from app.main import app
 from app.database import Base, engine
@@ -22,7 +28,9 @@ def setup_db():
 
 @pytest.fixture
 def client():
-    return TestClient(app)
+    # Lifespan seeds demo users when SEED_DEMO_USERS=true
+    with TestClient(app) as c:
+        yield c
 
 
 class TestHealthEndpoint:

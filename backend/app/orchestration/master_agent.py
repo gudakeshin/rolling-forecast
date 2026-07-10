@@ -95,6 +95,7 @@ class MasterAgent:
             user_role=self.context_manager.user_role,
             conversation_id=self.context_manager.conversation_id,
             working_memory=dict(self.context_manager._working_memory),
+            user=self.context_manager.user,
         )
 
     def _get_agent(self):
@@ -186,13 +187,20 @@ class MasterAgent:
             # Stream the agent execution with recursion + wall-clock budget
             import asyncio
 
+            from app.services.observability import get_langfuse_callback
+
             stream_budget_s = float(getattr(settings, "max_forecast_generation_minutes", 30)) * 60
             stream_budget_s = min(stream_budget_s, 180.0)  # chat turn cap
+
+            run_config: dict[str, Any] = {"recursion_limit": 25}
+            langfuse_cb = get_langfuse_callback()
+            if langfuse_cb is not None:
+                run_config["callbacks"] = [langfuse_cb]
 
             async def _consume():
                 async for event in agent.astream(
                     {"messages": messages},
-                    config={"recursion_limit": 25},
+                    config=run_config,
                     stream_mode="updates",
                 ):
                     yield event

@@ -173,7 +173,7 @@ export function AdminPage() {
               <div key={r.id} className="bg-surface-900 border border-surface-700/50 rounded-lg p-4">
                 <div className="font-semibold mb-1">{r.name}</div>
                 <p className="text-xs text-surface-500 mb-2">{r.description}</p>
-                <div className="flex flex-wrap gap-2 text-[10px]">
+                <div className="flex flex-wrap gap-2 text-xs">
                   {['can_input', 'can_generate', 'can_override', 'can_review', 'can_publish', 'can_admin'].map(
                     (k) =>
                       r[k] && (
@@ -269,7 +269,7 @@ export function AdminPage() {
 
             <div className="bg-surface-900 border border-surface-700/50 rounded-xl p-4 space-y-2">
               <h3 className="text-sm font-semibold">Upload CSV</h3>
-              <p className="text-[11px] text-surface-500">
+              <p className="text-xs text-surface-500">
                 Columns: from_currency,to_currency,period,rate[,rate_type]
               </p>
               <input

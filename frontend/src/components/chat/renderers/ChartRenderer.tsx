@@ -6,26 +6,25 @@ import {
   ComposedChart, PieChart, Pie, Scatter, Brush,
 } from 'recharts';
 import { usePanelStore } from '../../../store/panelStore';
+import { chartTheme } from '../../../theme/chartTheme';
+import { DataTable } from '../../ui/DataTable';
 
 const COLORS = {
-  green: '#86BC25',
+  green: chartTheme.colors.primary,
   greenDark: '#046A38',
   greenLight: '#C4D600',
   teal: '#0076A8',
-  tealLight: '#00A3E0',
+  tealLight: chartTheme.colors.secondary,
   blue: '#012169',
   blueLight: '#0097A9',
   warmGray: '#53565A',
-  coolGray: '#97999B',
+  coolGray: chartTheme.colors.tertiary,
   lightGray: '#D0D0CE',
-  red: '#E84855',
-  amber: '#FFB547',
+  red: chartTheme.colors.danger,
+  amber: chartTheme.colors.warning,
 };
 
-const SERIES_COLORS = [
-  COLORS.green, COLORS.teal, COLORS.tealLight,
-  COLORS.greenLight, COLORS.blueLight, COLORS.amber,
-];
+const SERIES_COLORS = [...chartTheme.series];
 
 type ChartType =
   | 'bar' | 'line' | 'area' | 'bridge' | 'confidence'
@@ -86,11 +85,20 @@ export function ChartRenderer({ data }: Props) {
 
   const openPanel = usePanelStore((s) => s.openPanel);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const [viewAsTable, setViewAsTable] = useState(false);
 
   const labelFor = (key: string) => y_labels?.[key] || key.replace(/_/g, ' ');
   const visibleKeys = useMemo(
     () => y_keys.filter((k) => !hidden.has(k)),
     [y_keys, hidden],
+  );
+
+  const tableColumns = useMemo(
+    () => [
+      { key: x_key, label: x_key },
+      ...y_keys.map((k) => ({ key: k, label: labelFor(k) })),
+    ],
+    [x_key, y_keys, y_labels],
   );
 
   const onLegendClick = (e: any) => {
@@ -126,14 +134,33 @@ export function ChartRenderer({ data }: Props) {
   ) : null;
 
   return (
-    <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl p-4 my-2">
-      {title && (
-        <h4 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
-          <div className="w-0.5 h-3.5 bg-deloitte-green rounded-full" />
-          {title}
-        </h4>
-      )}
+    <div
+      className="bg-surface-800/60 border border-surface-700/50 rounded-xl p-4 my-2"
+      role="img"
+      aria-label={title ? `Chart: ${title}` : `Chart of type ${chart_type}`}
+    >
+      <div className="flex items-center justify-between gap-2 mb-3">
+        {title ? (
+          <h4 className="text-sm font-semibold text-white flex items-center gap-2">
+            <div className="w-0.5 h-3.5 bg-deloitte-green rounded-full" />
+            {title}
+          </h4>
+        ) : (
+          <span />
+        )}
+        <button
+          type="button"
+          className="text-xs text-surface-400 hover:text-white underline-offset-2 hover:underline"
+          onClick={() => setViewAsTable((v) => !v)}
+          aria-pressed={viewAsTable}
+        >
+          {viewAsTable ? 'View as chart' : 'View as table'}
+        </button>
+      </div>
 
+      {viewAsTable ? (
+        <DataTable columns={tableColumns} rows={chartData as Record<string, unknown>[]} />
+      ) : (
       <ResponsiveContainer width="100%" height={height}>
         {chart_type === 'bar' ? (
           <BarChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
@@ -337,9 +364,12 @@ export function ChartRenderer({ data }: Props) {
           </BarChart>
         )}
       </ResponsiveContainer>
-      <p className="text-[10px] text-surface-500 mt-1">
-        Click legend to toggle series · drag brush to zoom · click a point to drill
-      </p>
+      )}
+      {!viewAsTable && (
+        <p className="text-xs text-surface-500 mt-1">
+          Click legend to toggle series · drag brush to zoom · click a point to drill
+        </p>
+      )}
     </div>
   );
 }

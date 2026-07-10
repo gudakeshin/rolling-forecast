@@ -27,6 +27,7 @@ class SkillContext:
     user_role: str
     conversation_id: str
     working_memory: dict[str, Any] = field(default_factory=dict)
+    user: Any = None  # optional User for BU scoping inside skills
 
 
 @dataclass

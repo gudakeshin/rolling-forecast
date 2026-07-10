@@ -49,9 +49,12 @@ def upgrade() -> None:
                 "roles",
                 sa.Column("can_view_all_bus", sa.Boolean(), server_default=sa.false()),
             )
-            # Admins see all BUs by default
+            # Admins see all BUs by default (TRUE works on Postgres + SQLite)
             op.execute(
-                "UPDATE roles SET can_view_all_bus = 1 WHERE name = 'admin' OR can_admin = 1"
+                sa.text(
+                    "UPDATE roles SET can_view_all_bus = TRUE "
+                    "WHERE name = 'admin' OR can_admin = TRUE"
+                )
             )
 
 

@@ -53,9 +53,13 @@ export function MessageBubble({ message }: Props) {
 
             {/* Content blocks */}
             {message.content_blocks && message.content_blocks.length > 0 ? (
-              message.content_blocks.map((block, i) => (
-                <ContentBlockRenderer key={i} block={block} />
-              ))
+              (() => {
+                const citationsBlock = message.content_blocks.find((b) => b.type === 'citations');
+                const citations = citationsBlock?.data?.citations;
+                return message.content_blocks.map((block, i) => (
+                  <ContentBlockRenderer key={i} block={block} citations={citations} />
+                ));
+              })()
             ) : (
               <TextRenderer text={message.content} />
             )}
@@ -73,14 +77,20 @@ export function MessageBubble({ message }: Props) {
   );
 }
 
-function ContentBlockRenderer({ block }: { block: { type: string; data: any } }) {
+function ContentBlockRenderer({
+  block,
+  citations,
+}: {
+  block: { type: string; data: any };
+  citations?: any[];
+}) {
   try {
     if (!block || !block.data) {
       return null;
     }
     switch (block.type) {
       case 'text':
-        return <TextRenderer text={block.data.text ?? ''} />;
+        return <TextRenderer text={block.data.text ?? ''} citations={citations} />;
       case 'table':
         return <TableRenderer data={block.data} />;
       case 'chart':
