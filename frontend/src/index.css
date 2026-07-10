@@ -9,12 +9,38 @@
 @tailwind utilities;
 
 @layer base {
+  :root,
+  html.dark,
+  html[data-theme='dark'] {
+    --rf-bg: #0d0d0d;
+    --rf-bg-elevated: #1a1a1a;
+    --rf-border: rgba(45, 45, 45, 0.8);
+    --rf-text: #f5f5f5;
+    --rf-text-muted: #97999b;
+  }
+
+  html.light,
+  html[data-theme='light'] {
+    --rf-bg: #f4f5f7;
+    --rf-bg-elevated: #ffffff;
+    --rf-border: rgba(208, 208, 206, 0.9);
+    --rf-text: #1a1a1a;
+    --rf-text-muted: #53565a;
+  }
+
   html {
     font-size: 16px;
   }
 
   body {
-    @apply bg-surface-900 text-gray-100 antialiased font-sans text-sm;
+    @apply antialiased font-sans text-sm;
+    background-color: var(--rf-bg);
+    color: var(--rf-text);
+  }
+
+  html.light body,
+  html[data-theme='light'] body {
+    @apply text-surface-800;
   }
 
   /* Custom scrollbar — Deloitte themed */
@@ -36,6 +62,11 @@
   ::selection {
     background: rgba(134, 188, 37, 0.3);
     color: #fff;
+  }
+
+  html.light ::selection,
+  html[data-theme='light'] ::selection {
+    color: #1a1a1a;
   }
 }
 
@@ -78,5 +109,15 @@
   /* Deloitte teal glow */
   .glow-teal {
     box-shadow: 0 0 20px rgba(0, 118, 168, 0.15);
+  }
+
+  .rf-shell {
+    background-color: var(--rf-bg);
+    color: var(--rf-text);
+  }
+
+  .rf-elevated {
+    background-color: var(--rf-bg-elevated);
+    border-color: var(--rf-border);
   }
 }

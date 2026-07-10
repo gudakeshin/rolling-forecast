@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Budget entities for forecast vs budget comparison."""
 
 import uuid
@@ -46,7 +48,7 @@ class BudgetLineItem(Base):
     line_item_id: Mapped[int] = mapped_column(
         ForeignKey("line_items.id"), nullable=False, index=True
     )
-    period: Mapped[str] = mapped_column(String(7), nullable=False)  # YYYY-MM
+    period: Mapped[str] = mapped_column(String(16), nullable=False)  # YYYY-MM or FY label
     value: Mapped[float] = mapped_column(Float, nullable=False)
 
     budget_version: Mapped["BudgetVersion"] = relationship(back_populates="line_items")

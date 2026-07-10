@@ -2,7 +2,7 @@ import { useRef, useEffect } from 'react';
 import { useChatStore } from '../../store/chatStore';
 import { MessageList } from './MessageList';
 import { InputBar } from './InputBar';
-import { sendMessage } from '../../api/chat';
+import { getConversations, sendMessage } from '../../api/chat';
 import type { ContentBlock } from '../../types/chat';
 import { TrendingUp, Upload, BarChart3, Search, GitCompare } from 'lucide-react';
 
@@ -20,6 +20,7 @@ export function ChatContainer() {
     finishStreaming,
     cancelStreaming,
     setActiveConversation,
+    setConversations,
   } = useChatStore();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -95,6 +96,14 @@ export function ChatContainer() {
         panel_payload: finalPanelPayload,
         created_at: new Date().toISOString(),
       });
+
+      // Keep left sidebar in sync (new chats + updated titles)
+      try {
+        const list = await getConversations();
+        setConversations(list);
+      } catch {
+        /* non-fatal */
+      }
     } catch (error: any) {
       cancelStreaming();
       addMessage({

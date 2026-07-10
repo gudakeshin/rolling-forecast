@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Forecast version, line results, and model metadata models."""
 
 import uuid
@@ -43,8 +45,8 @@ class ForecastVersion(Base):
     # Forecast parameters
     horizon_months: Mapped[int] = mapped_column(Integer, default=12)
     base_period: Mapped[str | None] = mapped_column(
-        String(7), nullable=True
-    )  # Last actuals period
+        String(16), nullable=True
+    )  # Last actuals period (YYYY-MM or FY2026-P01)
     model_versions: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     random_seed: Mapped[int] = mapped_column(Integer, default=42)
 
@@ -101,12 +103,15 @@ class ForecastLineResult(Base):
     line_item_id: Mapped[int] = mapped_column(
         ForeignKey("line_items.id"), nullable=False
     )
-    period: Mapped[str] = mapped_column(String(7), nullable=False)  # "2026-03"
+    period: Mapped[str] = mapped_column(String(16), nullable=False)  # YYYY-MM or FY2026-P01
 
     # Forecast values
     p10: Mapped[float | None] = mapped_column(Float, nullable=True)  # 10th percentile
     p50: Mapped[float] = mapped_column(Float, nullable=False)  # Point forecast (median)
     p90: Mapped[float | None] = mapped_column(Float, nullable=True)  # 90th percentile
+
+    # How interval bounds were produced (model | linear_aggregation | mint_diagonal)
+    bounds_method: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
     # Confidence
     confidence_score: Mapped[float] = mapped_column(

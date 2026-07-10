@@ -32,8 +32,17 @@ const panelIcons: Record<string, any> = {
 };
 
 export function PanelContainer() {
-  const { panelType, panelParams, panelData, isLoading, closePanel, setPanelData, setLoading } =
-    usePanelStore();
+  const {
+    panelType,
+    panelParams,
+    panelData,
+    isLoading,
+    closePanel,
+    setPanelData,
+    setLoading,
+    widthMode,
+    toggleWidth,
+  } = usePanelStore();
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -105,6 +114,8 @@ export function PanelContainer() {
         title="Skill Editor"
         icon={<Settings2 className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
         onClose={closePanel}
+        widthExpanded={widthMode === 'wide'}
+        onToggleWidth={toggleWidth}
       >
         <div className="-m-4 h-[calc(100%+2rem)] overflow-hidden">
           <SkillEditorPanel />
@@ -118,6 +129,8 @@ export function PanelContainer() {
       title={panelData?.title || panelType?.replace(/_/g, ' ') || 'Details'}
       icon={<Icon className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
       onClose={closePanel}
+      widthExpanded={widthMode === 'wide'}
+      onToggleWidth={toggleWidth}
     >
       {isLoading ? (
         <div className="flex flex-col items-center justify-center h-32 gap-2">

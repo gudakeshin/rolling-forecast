@@ -7,6 +7,15 @@
     <title>Rolling Forecast | Deloitte</title>
   </head>
   <body class="bg-surface-900 text-white">
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('rf_theme') || 'dark';
+          document.documentElement.setAttribute('data-theme', t);
+          document.documentElement.classList.add(t);
+        } catch (e) {}
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

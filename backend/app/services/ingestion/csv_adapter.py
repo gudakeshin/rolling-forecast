@@ -159,21 +159,24 @@ class CSVActualsProvider(IActualsProvider):
         return df
 
     def _normalize_period(self, period_val) -> str:
-        """Normalize various period formats to YYYY-MM."""
+        """Normalize period formats to YYYY-MM or pass through FY2026-P01 labels."""
         period_str = str(period_val).strip()
-        # Try common formats
+        if period_str.upper().startswith("FY") and "-P" in period_str.upper():
+            # Canonicalize FY2026-P1 → FY2026-P01
+            body = period_str[2:]
+            fy_s, p_s = body.upper().replace("P", "").split("-", 1)
+            return f"FY{int(fy_s)}-P{int(p_s):02d}"
         for fmt in ["%Y-%m", "%Y/%m", "%m/%Y", "%Y-%m-%d", "%m/%d/%Y"]:
             try:
                 dt = pd.to_datetime(period_str, format=fmt)
                 return dt.strftime("%Y-%m")
             except (ValueError, TypeError):
                 continue
-        # Fallback: try pandas auto-detect
         try:
             dt = pd.to_datetime(period_str)
             return dt.strftime("%Y-%m")
         except Exception:
-            return period_str  # Return as-is
+            return period_str
 
     def _compute_hash(self, df: pd.DataFrame) -> str:
         """Compute SHA-256 hash of the DataFrame for lineage tracking."""
@@ -181,9 +184,14 @@ class CSVActualsProvider(IActualsProvider):
         return hashlib.sha256(content).hexdigest()
 
     def _get_expected_periods(self, start: str, end: str) -> list[str]:
-        """Generate a list of all expected YYYY-MM periods between start and end."""
+        """Generate expected periods between start and end (calendar-aware)."""
+        from app.services.period_calendar import get_calendar_config, period_range
+
         try:
-            date_range = pd.date_range(start=start + "-01", end=end + "-01", freq="MS")
-            return [d.strftime("%Y-%m") for d in date_range]
+            return period_range(start, end, get_calendar_config())
         except Exception:
-            return []
+            try:
+                date_range = pd.date_range(start=start + "-01", end=end + "-01", freq="MS")
+                return [d.strftime("%Y-%m") for d in date_range]
+            except Exception:
+                return []

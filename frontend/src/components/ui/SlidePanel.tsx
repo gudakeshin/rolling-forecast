@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
-import { X } from 'lucide-react';
+import { X, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { IconButton } from './Pressable';
 
 interface SlidePanelProps {
@@ -8,12 +8,23 @@ interface SlidePanelProps {
   onClose: () => void;
   children: ReactNode;
   headerExtra?: ReactNode;
+  /** When set, shows expand/collapse control for the right panel width */
+  widthExpanded?: boolean;
+  onToggleWidth?: () => void;
 }
 
 /**
  * Shared slide-over panel shell with dialog semantics, Esc-close, and focus restore.
  */
-export function SlidePanel({ title, icon, onClose, children, headerExtra }: SlidePanelProps) {
+export function SlidePanel({
+  title,
+  icon,
+  onClose,
+  children,
+  headerExtra,
+  widthExpanded,
+  onToggleWidth,
+}: SlidePanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
 
@@ -55,9 +66,24 @@ export function SlidePanel({ title, icon, onClose, children, headerExtra }: Slid
           </h3>
           {headerExtra}
         </div>
-        <IconButton label="Close panel" onClick={onClose}>
-          <X className="w-4 h-4" aria-hidden="true" />
-        </IconButton>
+        <div className="flex items-center gap-0.5 shrink-0">
+          {onToggleWidth && (
+            <IconButton
+              label={widthExpanded ? 'Narrow panel' : 'Widen panel'}
+              onClick={onToggleWidth}
+              title={widthExpanded ? 'Narrow panel' : 'Widen panel'}
+            >
+              {widthExpanded ? (
+                <PanelRightClose className="w-4 h-4" aria-hidden="true" />
+              ) : (
+                <PanelRightOpen className="w-4 h-4" aria-hidden="true" />
+              )}
+            </IconButton>
+          )}
+          <IconButton label="Close panel" onClick={onClose}>
+            <X className="w-4 h-4" aria-hidden="true" />
+          </IconButton>
+        </div>
       </div>
       <div className="flex-1 overflow-y-auto p-4">{children}</div>
     </div>

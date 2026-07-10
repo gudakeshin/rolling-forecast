@@ -29,6 +29,41 @@ ignore = [
 python_version = "3.11"
 ignore_missing_imports = true
 warn_unused_ignores = false
-# Phase 0: non-blocking strictness; CI runs mypy --no-error-summary with continue-on-error soft gate
 check_untyped_defs = false
 allow_untyped_defs = true
+# Hard gate in CI: remaining debt isolated via overrides below
+disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+module = "app.models.*"
+# SQLAlchemy forward refs in Mapped["X"] — names resolve at runtime via relationship strings
+disable_error_code = ["name-defined"]
+
+[[tool.mypy.overrides]]
+module = [
+  "app.api.dashboard",
+  "app.api.approvals",
+  "app.api.panel",
+  "app.api.executive",
+  "app.api.integrations",
+  "app.domain.skills.generate_commentary",
+  "app.domain.skills.ingest_actuals",
+  "app.domain.skills.collect_driver_input",
+  "app.domain.skills.detect_anomalies",
+  "app.domain.skills.auto_accuracy_report",
+  "app.domain.skills.run_ensemble",
+  "app.domain.skills.apply_override",
+  "app.domain.skills.score_confidence",
+  "app.domain.engines.arima",
+  "app.domain.engines.ets",
+  "app.domain.skill_loader",
+  "app.domain.composer",
+  "app.services.error_handlers",
+  "app.services.vector_store",
+  "app.services.context_engine",
+  "app.orchestration.context_manager",
+  "app.orchestration.task_planner",
+  "app.main",
+  "seed_data.generate_seed",
+]
+ignore_errors = true

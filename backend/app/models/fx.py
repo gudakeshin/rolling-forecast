@@ -1,6 +1,6 @@
-"""FX rates and forecast accuracy vintage tracking models."""
-
 from __future__ import annotations
+
+"""FX rates and forecast accuracy vintage tracking models."""
 
 import uuid
 from datetime import datetime, timezone
@@ -22,7 +22,7 @@ class FxRate(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     from_currency: Mapped[str] = mapped_column(String(3), nullable=False)
     to_currency: Mapped[str] = mapped_column(String(3), nullable=False)
-    period: Mapped[str] = mapped_column(String(7), nullable=False)  # YYYY-MM
+    period: Mapped[str] = mapped_column(String(16), nullable=False)  # YYYY-MM or FY label
     rate: Mapped[float] = mapped_column(Float, nullable=False)
     rate_type: Mapped[str] = mapped_column(String(20), default="average")  # average | spot | budget
     created_at: Mapped[datetime] = mapped_column(
@@ -56,7 +56,7 @@ class ForecastAccuracyRecord(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     version_id: Mapped[str] = mapped_column(ForeignKey("forecast_versions.id"), nullable=False, index=True)
     line_item_id: Mapped[int] = mapped_column(ForeignKey("line_items.id"), nullable=False, index=True)
-    period: Mapped[str] = mapped_column(String(7), nullable=False)
+    period: Mapped[str] = mapped_column(String(16), nullable=False)
     horizon_offset: Mapped[int] = mapped_column(Integer, nullable=False)  # months ahead of base_period
     predicted_p10: Mapped[float | None] = mapped_column(Float, nullable=True)
     predicted_p50: Mapped[float] = mapped_column(Float, nullable=False)

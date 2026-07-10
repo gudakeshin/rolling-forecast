@@ -79,7 +79,7 @@ def _compute_confidence_score(result: ForecastLineResult) -> float:
         weights.append(0.20)
 
     # 4. Model type base score (15%)
-    base = _MODEL_BASE_SCORES.get(result.model_type, 50)
+    base = _MODEL_BASE_SCORES.get(result.model_type or "linear", 50)
     scores.append(base)
     weights.append(0.15)
 
@@ -350,6 +350,12 @@ class GenerateBaselineSkill(BaseSkill):
         db.flush()
         fx_hashes: list[str] = []
 
+        from app.domain.engines.base_model import make_period_labels
+        from app.services.period_calendar import get_calendar_config, push_calendar, reset_calendar
+        from app.services.reconciliation import BOUNDS_METHOD_MODEL, reconcile_version
+
+        cal_token = push_calendar(get_calendar_config(db))
+
         # Generate forecast for each line item
         model_registry = get_model_registry()
         summary: dict[str, Any] = {
@@ -428,16 +434,16 @@ class GenerateBaselineSkill(BaseSkill):
                 # EC2: All zeros -- skip modeling
                 if analysis.is_all_zeros:
                     summary["zero_lines"] += 1
-                    for i in range(horizon):
-                        current = dates[-1] + pd.offsets.MonthBegin(i + 1)
+                    for period in make_period_labels(dates[-1], horizon):
                         line_result = ForecastLineResult(
                             version_id=version.id,
                             line_item_id=li.id,
-                            period=current.strftime("%Y-%m"),
+                            period=period,
                             p10=0.0, p50=0.0, p90=0.0,
                             confidence_score=0,
                             confidence_level="low",
                             model_type="zero",
+                            bounds_method=BOUNDS_METHOD_MODEL,
                         )
                         db.add(line_result)
                     summary["success"] += 1
@@ -448,19 +454,19 @@ class GenerateBaselineSkill(BaseSkill):
                     summary["sparse_lines"] += 1
                     avg_val = float(values.mean())
                     std_val = float(values.std()) if len(values) > 1 else avg_val * 0.2
-                    for i in range(horizon):
-                        current = dates[-1] + pd.offsets.MonthBegin(i + 1)
+                    for period in make_period_labels(dates[-1], horizon):
                         p50 = max(0, avg_val) if not li.allow_negative else avg_val
                         line_result = ForecastLineResult(
                             version_id=version.id,
                             line_item_id=li.id,
-                            period=current.strftime("%Y-%m"),
+                            period=period,
                             p10=max(0, p50 - 1.28 * std_val) if not li.allow_negative else p50 - 1.28 * std_val,
                             p50=p50,
                             p90=p50 + 1.28 * std_val,
                             confidence_score=0,
                             confidence_level="low",
                             model_type="average",
+                            bounds_method=BOUNDS_METHOD_MODEL,
                         )
                         db.add(line_result)
                     summary["success"] += 1
@@ -544,6 +550,7 @@ class GenerateBaselineSkill(BaseSkill):
                             model_type=selected_model,
                             model_mape=honest_mape,
                             model_r_squared=forecast_output.fit_metrics.get("r_squared"),
+                            bounds_method=BOUNDS_METHOD_MODEL,
                         )
                         db.add(line_result)
                         db.flush()  # Ensure line_result.id is assigned
@@ -578,6 +585,16 @@ class GenerateBaselineSkill(BaseSkill):
         except Exception as e:
             logger.error(f"Forecast generation error: {e}", exc_info=True)
             all_warnings.append(f"Generation error: {str(e)[:200]}")
+        finally:
+            reset_calendar(cal_token)
+
+        # Reconcile CoA parents (p50 identities + MinT-diagonal bounds)
+        try:
+            recon = reconcile_version(db, version.id)
+            logger.info("MinT reconciliation: %s", recon)
+        except Exception as e:
+            logger.warning("Reconciliation skipped: %s", e)
+            all_warnings.append(f"CoA reconciliation skipped: {str(e)[:120]}")
 
         # ──────────────────────────────────────────────────
         # PHASE: Inline confidence scoring & remediation

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """P&L line item and dependency graph models."""
 
 from sqlalchemy import String, Integer, Boolean, ForeignKey, Text

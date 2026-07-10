@@ -21,9 +21,7 @@ jobs:
       - name: Ruff
         run: ruff check app tests alembic
       - name: Mypy
-        # Soft gate: existing type debt is tracked; do not block merges yet
-        run: mypy app --ignore-missing-imports --no-error-summary
-        continue-on-error: true
+        run: mypy app --config-file pyproject.toml --no-error-summary
 
   backend-test:
     runs-on: ubuntu-latest
@@ -91,7 +89,7 @@ jobs:
           test "$(alembic heads | wc -l)" -eq 1
           alembic upgrade head
           alembic current | tee /tmp/current.txt
-          grep -q "006_fx_accuracy" /tmp/current.txt
+          grep -q "007_fiscal_mint" /tmp/current.txt
 
   frontend:
     runs-on: ubuntu-latest

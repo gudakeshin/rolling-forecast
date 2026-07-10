@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """User and Role models for RBAC."""
 
 import uuid

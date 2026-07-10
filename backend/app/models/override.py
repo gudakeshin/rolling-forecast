@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Override model -- tracks human overrides to forecast values."""
 
 import uuid
@@ -21,7 +23,7 @@ class Override(Base):
     line_item_id: Mapped[int] = mapped_column(
         ForeignKey("line_items.id"), nullable=False
     )
-    period: Mapped[str] = mapped_column(String(7), nullable=False)
+    period: Mapped[str] = mapped_column(String(16), nullable=False)
 
     # Values
     original_model_value: Mapped[float] = mapped_column(Float, nullable=False)

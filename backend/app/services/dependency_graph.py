@@ -247,6 +247,8 @@ class DependencyGraphManager:
                         result.p10 = sum(lowers)
                     if uppers:
                         result.p90 = sum(uppers)
+                    if hasattr(result, "bounds_method"):
+                        result.bounds_method = "linear_aggregation"
                     recalc_count += 1
 
         self.db.flush()

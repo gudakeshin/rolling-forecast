@@ -63,13 +63,16 @@ export async function apiPut<T>(url: string, body?: any): Promise<T> {
   return response.json();
 }
 
-export async function apiDelete<T>(url: string): Promise<T> {
+export async function apiDelete<T = void>(url: string): Promise<T | void> {
   const response = await fetchApi(url, { method: 'DELETE' });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Request failed' }));
     throw new Error(error.detail || 'Request failed');
   }
-  return response.json();
+  if (response.status === 204) return;
+  const text = await response.text();
+  if (!text) return;
+  return JSON.parse(text) as T;
 }
 
 export async function uploadFile(url: string, file: File): Promise<any> {

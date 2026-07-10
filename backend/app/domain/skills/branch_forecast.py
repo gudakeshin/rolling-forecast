@@ -162,9 +162,9 @@ class BranchForecastSkill(BaseSkill):
 
         db.flush()
 
-        # Recompute calculated lines (EBITDA, GM, etc.) for P&L coherence
-        from app.services.dependency_graph import DependencyGraphManager
-        DependencyGraphManager(db).recalculate_all(branch.id)
+        # Recompute calculated lines + MinT-diagonal interval bounds
+        from app.services.reconciliation import reconcile_version
+        reconcile_version(db, branch.id)
         db.commit()
 
         # Build response

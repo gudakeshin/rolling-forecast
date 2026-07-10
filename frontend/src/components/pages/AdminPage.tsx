@@ -23,6 +23,11 @@ export function AdminPage() {
   const [audit, setAudit] = useState<any>(null);
   const [fxRates, setFxRates] = useState<FxRate[]>([]);
   const [reportingCurrency, setReportingCurrency] = useState('USD');
+  const [fiscalCalendar, setFiscalCalendar] = useState({
+    calendar_type: 'gregorian_month',
+    fiscal_year_start_month: 2,
+    week_start: 6,
+  });
   const [fxForm, setFxForm] = useState({
     from_currency: 'EUR',
     to_currency: 'USD',
@@ -41,12 +46,18 @@ export function AdminPage() {
       if (t === 'coa') setCoa(await apiGet('/admin/coa'));
       if (t === 'audit') setAudit(await apiGet('/admin/audit?limit=50'));
       if (t === 'fx') {
-        const [rates, currency] = await Promise.all([
+        const [rates, currency, calendar] = await Promise.all([
           apiGet<FxRate[]>('/admin/fx/rates'),
           apiGet<{ reporting_currency: string }>('/admin/fx/settings/reporting_currency'),
+          apiGet<{
+            calendar_type: string;
+            fiscal_year_start_month: number;
+            week_start: number;
+          }>('/admin/fx/settings/fiscal_calendar'),
         ]);
         setFxRates(rates);
         setReportingCurrency(currency.reporting_currency);
+        setFiscalCalendar(calendar);
       }
     } catch (e: any) {
       setError(e.message || 'Failed to load');
@@ -75,6 +86,19 @@ export function AdminPage() {
       );
       setReportingCurrency(res.reporting_currency);
       setMessage(`Reporting currency set to ${res.reporting_currency}`);
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+
+  const saveFiscalCalendar = async () => {
+    try {
+      const res = await apiPut<typeof fiscalCalendar>(
+        '/admin/fx/settings/fiscal_calendar',
+        fiscalCalendar,
+      );
+      setFiscalCalendar(res);
+      setMessage(`Fiscal calendar set to ${res.calendar_type}`);
     } catch (e: any) {
       setError(e.message);
     }
@@ -241,6 +265,48 @@ export function AdminPage() {
                   className="px-3 py-1.5 text-xs bg-deloitte-green text-black font-semibold rounded-lg"
                 >
                   Save
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-surface-900 border border-surface-700/50 rounded-xl p-4 space-y-3">
+              <h3 className="text-sm font-semibold">Fiscal calendar</h3>
+              <p className="text-xs text-surface-500">
+                Gregorian months (YYYY-MM) or NRF-style 4-4-5 (FY2026-P01).
+              </p>
+              <div className="flex flex-wrap gap-2 items-center">
+                <select
+                  value={fiscalCalendar.calendar_type}
+                  onChange={(e) =>
+                    setFiscalCalendar({ ...fiscalCalendar, calendar_type: e.target.value })
+                  }
+                  className="bg-surface-800 border border-surface-600 rounded-lg px-3 py-1.5 text-sm"
+                >
+                  <option value="gregorian_month">Gregorian months</option>
+                  <option value="fiscal_445">4-4-5 fiscal</option>
+                </select>
+                <label className="text-xs text-surface-400 flex items-center gap-1">
+                  FY start month
+                  <input
+                    type="number"
+                    min={1}
+                    max={12}
+                    value={fiscalCalendar.fiscal_year_start_month}
+                    onChange={(e) =>
+                      setFiscalCalendar({
+                        ...fiscalCalendar,
+                        fiscal_year_start_month: Number(e.target.value),
+                      })
+                    }
+                    className="w-16 bg-surface-800 border border-surface-600 rounded-lg px-2 py-1 text-sm"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={saveFiscalCalendar}
+                  className="px-3 py-1.5 text-xs bg-deloitte-green text-black font-semibold rounded-lg"
+                >
+                  Save calendar
                 </button>
               </div>
             </div>

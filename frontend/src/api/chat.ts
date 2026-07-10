@@ -1,6 +1,6 @@
 import { useAuthStore } from '../store/authStore';
 import type { Conversation, ChatMessage } from '../types/chat';
-import { apiGet } from './client';
+import { apiGet, apiDelete } from './client';
 
 // SSE parser v2 — handles \r\n line endings from sse-starlette
 console.log('[chat] SSE parser v2 loaded');
@@ -34,14 +34,11 @@ export async function sendMessage(
     throw new Error('Failed to send message');
   }
 
-  // Read SSE stream
   const reader = response.body?.getReader();
   if (!reader) throw new Error('No response body');
 
   const decoder = new TextDecoder();
   let buffer = '';
-  // SSE parser state — persists across chunks so events split across
-  // chunk boundaries are correctly assembled.
   let currentEvent = '';
   let currentData = '';
 
@@ -52,12 +49,10 @@ export async function sendMessage(
 
     buffer += decoder.decode(value, { stream: true });
 
-    // Parse SSE events from buffer (handle both \r\n and \n line endings)
     const lines = buffer.split('\n');
-    buffer = lines.pop() || ''; // Keep incomplete line in buffer
+    buffer = lines.pop() || '';
 
     for (const rawLine of lines) {
-      // Strip carriage return (sse-starlette uses \r\n)
       const line = rawLine.replace(/\r$/, '');
 
       if (line.startsWith('event: ')) {
@@ -65,7 +60,6 @@ export async function sendMessage(
       } else if (line.startsWith('data: ')) {
         currentData = line.slice(6);
       } else if (line === '' && currentEvent && currentData) {
-        // Complete event — dispatch it
         try {
           const data = JSON.parse(currentData);
           onEvent({ event: currentEvent, data });
@@ -89,4 +83,8 @@ export async function getConversation(id: string): Promise<{
   messages: ChatMessage[];
 }> {
   return apiGet(`/chat/conversations/${id}`);
+}
+
+export async function deleteConversation(id: string): Promise<void> {
+  await apiDelete(`/chat/conversations/${id}`);
 }

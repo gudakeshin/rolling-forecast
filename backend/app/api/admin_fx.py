@@ -272,3 +272,66 @@ async def upload_rates_csv(
         "errors": errors[:50],
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+# ── Fiscal calendar ──────────────────────────────────────────────
+
+
+class FiscalCalendarBody(BaseModel):
+    calendar_type: str = Field(..., pattern="^(gregorian_month|fiscal_445)$")
+    fiscal_year_start_month: int = Field(default=2, ge=1, le=12)
+    week_start: int = Field(default=6, ge=0, le=6)
+
+
+@router.get("/settings/fiscal_calendar")
+async def get_fiscal_calendar(
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+):
+    from app.services.period_calendar import get_calendar_config
+
+    cfg = get_calendar_config(db)
+    return {
+        "calendar_type": cfg.calendar_type.value,
+        "fiscal_year_start_month": cfg.fiscal_year_start_month,
+        "week_start": cfg.week_start,
+    }
+
+
+@router.put("/settings/fiscal_calendar")
+async def put_fiscal_calendar(
+    body: FiscalCalendarBody,
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+):
+    from app.services.period_calendar import (
+        CalendarType,
+        FiscalCalendarConfig,
+        set_calendar_config,
+    )
+
+    cfg = FiscalCalendarConfig(
+        calendar_type=CalendarType(body.calendar_type),
+        fiscal_year_start_month=body.fiscal_year_start_month,
+        week_start=body.week_start,
+    )
+    set_calendar_config(db, cfg)
+    record_audit(
+        db,
+        action="admin.fiscal_calendar",
+        entity_type="system_setting",
+        entity_id="fiscal_calendar",
+        actor_id=current_user.id,
+        actor_username=current_user.username,
+        details={
+            "calendar_type": cfg.calendar_type.value,
+            "fiscal_year_start_month": cfg.fiscal_year_start_month,
+            "week_start": cfg.week_start,
+        },
+    )
+    db.commit()
+    return {
+        "calendar_type": cfg.calendar_type.value,
+        "fiscal_year_start_month": cfg.fiscal_year_start_month,
+        "week_start": cfg.week_start,
+    }

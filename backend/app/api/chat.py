@@ -185,3 +185,37 @@ async def get_conversation(
         ],
         working_memory=conversation.working_memory,
     )
+
+
+@router.delete("/conversations/{conversation_id}", status_code=204)
+async def delete_conversation(
+    conversation_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete a conversation and all of its messages (owner only)."""
+    conversation = (
+        db.query(Conversation)
+        .filter(
+            Conversation.id == conversation_id,
+            Conversation.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Detach documents scoped to this conversation (FK is nullable, no cascade)
+    try:
+        from app.models.document import Document
+
+        db.query(Document).filter(Document.conversation_id == conversation_id).update(
+            {"conversation_id": None},
+            synchronize_session=False,
+        )
+    except Exception:
+        pass
+
+    db.delete(conversation)
+    db.commit()
+    return None

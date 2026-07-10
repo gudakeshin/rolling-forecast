@@ -1,6 +1,6 @@
-"""Integration connection registry — Fernet-encrypted URLs, admin-managed."""
-
 from __future__ import annotations
+
+"""Integration connection registry — Fernet-encrypted URLs, admin-managed."""
 
 import uuid
 from datetime import datetime, timezone

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Document and DocumentChunk models for the context engine."""
 
 import uuid

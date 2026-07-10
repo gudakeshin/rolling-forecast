@@ -41,8 +41,12 @@ class SkillResult:
     error: str | None = None
 
     @staticmethod
-    def ok(message: str, data: dict = None, content_blocks: list = None,
-           panel_payload: dict = None) -> "SkillResult":
+    def ok(
+        message: str,
+        data: dict | None = None,
+        content_blocks: list | None = None,
+        panel_payload: dict | None = None,
+    ) -> "SkillResult":
         return SkillResult(
             success=True,
             message=message,
@@ -52,7 +56,7 @@ class SkillResult:
         )
 
     @staticmethod
-    def fail(message: str, error: str = None) -> "SkillResult":
+    def fail(message: str, error: str | None = None) -> "SkillResult":
         return SkillResult(
             success=False,
             message=message,

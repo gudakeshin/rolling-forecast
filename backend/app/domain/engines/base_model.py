@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any
 import numpy as np
 import pandas as pd
@@ -13,11 +14,23 @@ class ForecastOutput:
     point_forecast: np.ndarray  # P50 values
     lower_bound: np.ndarray     # P10 values
     upper_bound: np.ndarray     # P90 values
-    periods: list[str]          # YYYY-MM period labels
+    periods: list[str]          # Period labels (YYYY-MM or FY2026-P01)
     model_type: str
     parameters: dict[str, Any] = field(default_factory=dict)
     fit_metrics: dict[str, float] = field(default_factory=dict)  # MAPE, R², AIC, etc.
     diagnostics: dict[str, Any] = field(default_factory=dict)    # Seasonality, breaks, etc.
+
+
+def make_period_labels(last_date: pd.Timestamp | date, horizon: int) -> list[str]:
+    """Horizon period labels after last_date using the active fiscal calendar."""
+    from app.services.period_calendar import date_to_period, forecast_horizon_periods, get_calendar_config
+
+    cfg = get_calendar_config()
+    if isinstance(last_date, pd.Timestamp):
+        d = last_date.date()
+    else:
+        d = last_date
+    return forecast_horizon_periods(date_to_period(d, cfg), horizon, cfg)
 
 
 class IForecastModel(ABC):

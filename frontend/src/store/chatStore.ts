@@ -2,23 +2,23 @@ import { create } from 'zustand';
 import type { ChatMessage, Conversation, ContentBlock } from '../types/chat';
 
 interface ChatState {
-  // Conversations
   conversations: Conversation[];
   activeConversationId: string | null;
   messages: ChatMessage[];
+  sidebarExpanded: boolean;
 
-  // Streaming state
   isStreaming: boolean;
   streamingMessage: ChatMessage | null;
   currentToolName: string | null;
 
-  // Actions
   setConversations: (conversations: Conversation[]) => void;
+  removeConversation: (id: string) => void;
   setActiveConversation: (id: string | null) => void;
   setMessages: (messages: ChatMessage[]) => void;
   addMessage: (message: ChatMessage) => void;
+  setSidebarExpanded: (expanded: boolean) => void;
+  toggleSidebar: () => void;
 
-  // Streaming actions
   startStreaming: (conversationId: string) => void;
   appendStreamContent: (text: string) => void;
   addStreamContentBlock: (block: ContentBlock) => void;
@@ -27,15 +27,36 @@ interface ChatState {
   cancelStreaming: () => void;
 }
 
-export const useChatStore = create<ChatState>((set, get) => ({
+const SIDEBAR_KEY = 'rf_chat_sidebar_expanded';
+
+function readSidebarExpanded(): boolean {
+  try {
+    const v = localStorage.getItem(SIDEBAR_KEY);
+    if (v === null) return true;
+    return v === '1';
+  } catch {
+    return true;
+  }
+}
+
+export const useChatStore = create<ChatState>((set) => ({
   conversations: [],
   activeConversationId: null,
   messages: [],
+  sidebarExpanded: readSidebarExpanded(),
   isStreaming: false,
   streamingMessage: null,
   currentToolName: null,
 
   setConversations: (conversations) => set({ conversations }),
+
+  removeConversation: (id) =>
+    set((state) => ({
+      conversations: state.conversations.filter((c) => c.id !== id),
+      ...(state.activeConversationId === id
+        ? { activeConversationId: null, messages: [] }
+        : {}),
+    })),
 
   setActiveConversation: (id) => set({ activeConversationId: id }),
 
@@ -45,6 +66,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => ({
       messages: [...state.messages, message],
     })),
+
+  setSidebarExpanded: (expanded) => {
+    try {
+      localStorage.setItem(SIDEBAR_KEY, expanded ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+    set({ sidebarExpanded: expanded });
+  },
+
+  toggleSidebar: () =>
+    set((state) => {
+      const expanded = !state.sidebarExpanded;
+      try {
+        localStorage.setItem(SIDEBAR_KEY, expanded ? '1' : '0');
+      } catch {
+        /* ignore */
+      }
+      return { sidebarExpanded: expanded };
+    }),
 
   startStreaming: (conversationId) =>
     set({

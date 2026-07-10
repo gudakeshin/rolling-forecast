@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Driver input models -- BU head assumption submissions."""
 
 import uuid

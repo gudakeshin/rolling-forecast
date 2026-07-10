@@ -47,6 +47,54 @@ def test_period_calendar_horizon_offset():
     assert period_range("2025-01", "2025-03") == ["2025-01", "2025-02", "2025-03"]
 
 
+def test_fiscal_445_period_labels():
+    from app.services.period_calendar import (
+        CalendarType,
+        FiscalCalendarConfig,
+        add_periods,
+        date_to_period,
+        forecast_horizon_periods,
+        period_to_date,
+        push_calendar,
+        reset_calendar,
+    )
+    from datetime import date
+
+    cfg = FiscalCalendarConfig(calendar_type=CalendarType.FISCAL_445, fiscal_year_start_month=2, week_start=6)
+    token = push_calendar(cfg)
+    try:
+        # A mid-year date maps to an FY-P label
+        label = date_to_period(date(2026, 6, 15), cfg)
+        assert label.startswith("FY")
+        assert "-P" in label
+        nxt = add_periods(label, 1, cfg)
+        assert nxt != label
+        horizon = forecast_horizon_periods(label, 3, cfg)
+        assert len(horizon) == 3
+        assert period_to_date(horizon[0], cfg) > period_to_date(label, cfg)
+    finally:
+        reset_calendar(token)
+
+
+def test_make_period_labels_respects_calendar_context():
+    from app.domain.engines.base_model import make_period_labels
+    from app.services.period_calendar import (
+        CalendarType,
+        FiscalCalendarConfig,
+        push_calendar,
+        reset_calendar,
+    )
+    import pandas as pd
+
+    cfg = FiscalCalendarConfig(calendar_type=CalendarType.FISCAL_445)
+    token = push_calendar(cfg)
+    try:
+        labels = make_period_labels(pd.Timestamp("2026-03-01"), 2)
+        assert all(p.startswith("FY") for p in labels)
+    finally:
+        reset_calendar(token)
+
+
 def test_fact_placeholders_and_numeric_validator():
     text = "Revenue is {fact:revenue_total} vs prior {fact:missing}."
     rendered = render_fact_placeholders(text, {"revenue_total": 1250000.5})
@@ -131,3 +179,85 @@ async def test_scenario_recalculate_all(db_session, seed_line_items, seed_actual
 
     # At minimum, recalculate_all must not crash and leaves stay scaled
     assert rev_row.p50 == pytest.approx(1100.0)
+
+
+@pytest.mark.asyncio
+async def test_mint_reconcile_tags_bounds(db_session, seed_line_items):
+    """MinT reconciliation sets bounds_method on calculated parents."""
+    from app.models.forecast import ForecastVersion, ForecastLineResult
+    from app.models.line_item import LineItemDependency
+    from app.services.coa_dependencies import ensure_standard_dependencies
+    from app.services.reconciliation import BOUNDS_METHOD_MINT, reconcile_version
+
+    items = list(seed_line_items.values())
+    ensure_standard_dependencies(db_session, items)
+    ebitda = seed_line_items.get("EBITDA")
+    rev = seed_line_items.get("REV-001")
+    if not ebitda or not rev:
+        pytest.skip("seed missing EBITDA/REV")
+    if not (
+        db_session.query(LineItemDependency)
+        .filter(
+            LineItemDependency.dependent_item_id == ebitda.id,
+            LineItemDependency.source_item_id == rev.id,
+        )
+        .first()
+    ):
+        db_session.add(
+            LineItemDependency(
+                dependent_item_id=ebitda.id,
+                source_item_id=rev.id,
+                relationship_type="sum",
+                weight=1.0,
+            )
+        )
+        db_session.commit()
+
+    version = ForecastVersion(name="mint-test", status="draft", horizon_months=1)
+    db_session.add(version)
+    db_session.flush()
+    period = "2026-01"
+    for code, li in seed_line_items.items():
+        if li.is_calculated:
+            db_session.add(
+                ForecastLineResult(
+                    version_id=version.id,
+                    line_item_id=li.id,
+                    period=period,
+                    p10=0.0,
+                    p50=0.0,
+                    p90=0.0,
+                    is_calculated=True,
+                )
+            )
+        else:
+            base = 1000.0 if "REV" in code else 400.0
+            db_session.add(
+                ForecastLineResult(
+                    version_id=version.id,
+                    line_item_id=li.id,
+                    period=period,
+                    p10=base * 0.9,
+                    p50=base,
+                    p90=base * 1.1,
+                    is_calculated=False,
+                    bounds_method="model",
+                )
+            )
+    db_session.commit()
+
+    out = reconcile_version(db_session, version.id)
+    db_session.commit()
+    assert out["bounds_method"] == BOUNDS_METHOD_MINT
+
+    parent = (
+        db_session.query(ForecastLineResult)
+        .filter(
+            ForecastLineResult.version_id == version.id,
+            ForecastLineResult.line_item_id == ebitda.id,
+            ForecastLineResult.period == period,
+        )
+        .one()
+    )
+    assert parent.bounds_method in (BOUNDS_METHOD_MINT, "linear_aggregation")
+    assert parent.p50 is not None

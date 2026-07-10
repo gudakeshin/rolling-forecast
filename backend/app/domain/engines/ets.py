@@ -137,12 +137,9 @@ class ETSModel(IForecastModel):
         lower = forecast - widths
         upper = forecast + widths
 
-        # Period labels
-        periods = []
-        current = last_date
-        for _ in range(horizon):
-            current = current + pd.offsets.MonthBegin(1)
-            periods.append(current.strftime("%Y-%m"))
+        from app.domain.engines.base_model import make_period_labels
+
+        periods = make_period_labels(last_date, horizon)
 
         return ForecastOutput(
             point_forecast=forecast,

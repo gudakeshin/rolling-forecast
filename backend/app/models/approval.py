@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Multi-level approval workflow with segregation of duties."""
 
 import uuid

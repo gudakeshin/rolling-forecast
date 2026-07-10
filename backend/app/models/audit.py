@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Append-only audit event log for SOX / enterprise compliance."""
 
 import uuid
