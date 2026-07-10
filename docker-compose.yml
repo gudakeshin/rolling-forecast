@@ -15,15 +15,15 @@ services:
     image: postgres:16-alpine
     container_name: forecast-db
     environment:
-      POSTGRES_USER: forecast
-      POSTGRES_PASSWORD: forecast
-      POSTGRES_DB: rolling_forecast
+      POSTGRES_USER: ${POSTGRES_USER:-forecast}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-rolling_forecast}
     ports:
       - "5432:5432"
     volumes:
       - forecast-pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U forecast -d rolling_forecast"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-forecast} -d ${POSTGRES_DB:-rolling_forecast}"]
       interval: 10s
       timeout: 5s
       retries: 5

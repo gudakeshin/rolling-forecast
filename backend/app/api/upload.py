@@ -1,14 +1,12 @@
 """File upload endpoint for actuals data."""
 
-import os
-import shutil
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.orm import Session
 
-from app.database import get_db
 from app.api.auth import get_current_user
+from app.database import get_db
 from app.models.user import User
-from app.config import settings
+from app.services.upload_safety import save_upload
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -19,27 +17,17 @@ async def upload_actuals(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Upload a CSV/Excel file containing actuals data."""
-    # Validate file type
-    allowed_extensions = {".csv", ".xlsx", ".xls"}
-    file_ext = os.path.splitext(file.filename)[1].lower()
-    if file_ext not in allowed_extensions:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File type '{file_ext}' not supported. Allowed: {allowed_extensions}",
-        )
+    """Upload a CSV/Excel file containing actuals data.
 
-    # Ensure upload directory exists
-    os.makedirs(settings.upload_dir, exist_ok=True)
-
-    # Save file
-    file_path = os.path.join(settings.upload_dir, file.filename)
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
+    Client filename is metadata only — storage uses a UUID path.
+    """
+    saved = await save_upload(file, allowed_extensions={".csv", ".xlsx", ".xls"})
     return {
-        "filename": file.filename,
-        "file_path": file_path,
-        "size_bytes": os.path.getsize(file_path),
-        "message": f"File '{file.filename}' uploaded successfully. Use the chat to ingest it into the forecast system.",
+        "filename": saved["original_name"],
+        "file_path": saved["stored_path"],
+        "size_bytes": saved["size_bytes"],
+        "message": (
+            f"File '{saved['original_name']}' uploaded successfully. "
+            "Use the chat to ingest it into the forecast system."
+        ),
     }

@@ -3,8 +3,9 @@
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from jose import jwt, JWTError
 from passlib.context import CryptContext
@@ -16,6 +17,7 @@ from app.models.user import User, Role
 from app.schemas.auth import LoginRequest, TokenResponse, UserCreate, UserResponse
 from app.services.audit import record_audit
 from app.services.permissions import require_permission
+from app.rate_limit import limiter
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -52,9 +54,10 @@ def get_current_user(
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(request: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == request.username).first()
-    if not user or not user.hashed_password or not pwd_context.verify(request.password, user.hashed_password):
+@limiter.limit("10/minute")
+async def login(request: Request, body: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == body.username).first()
+    if not user or not user.hashed_password or not pwd_context.verify(body.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
@@ -213,41 +216,56 @@ async def get_me(current_user: User = Depends(get_current_user)):
 
 @router.get("/oidc/login")
 async def oidc_login():
-    """Start OIDC authorization-code flow (enterprise SSO)."""
+    """Start OIDC authorization-code flow with state, nonce, and PKCE (S256)."""
     if not settings.oidc_enabled:
         raise HTTPException(status_code=404, detail="OIDC SSO is not enabled")
     if not settings.oidc_issuer or not settings.oidc_client_id:
         raise HTTPException(status_code=500, detail="OIDC is enabled but not configured")
 
+    from app.services.oidc_store import create_oidc_pending, pkce_challenge
+
+    pending = create_oidc_pending()
     authorize_url = settings.oidc_issuer.rstrip("/") + "/protocol/openid-connect/auth"
-    # Generic OIDC: also try /.well-known discovery in production deployments
     params = {
         "client_id": settings.oidc_client_id,
         "response_type": "code",
         "scope": settings.oidc_scopes,
         "redirect_uri": settings.oidc_redirect_uri,
+        "state": pending.state,
+        "nonce": pending.nonce,
+        "code_challenge": pkce_challenge(pending.code_verifier),
+        "code_challenge_method": "S256",
     }
     return RedirectResponse(f"{authorize_url}?{urlencode(params)}")
 
 
 @router.get("/oidc/callback")
-async def oidc_callback(code: str, db: Session = Depends(get_db)):
-    """Exchange OIDC code for tokens and issue an app JWT."""
+async def oidc_callback(
+    code: str,
+    state: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """Exchange OIDC code for tokens; redirect with a one-time app code (not JWT)."""
     if not settings.oidc_enabled:
         raise HTTPException(status_code=404, detail="OIDC SSO is not enabled")
 
     import httpx
+    from app.services.oidc_store import issue_one_time_code, pop_oidc_pending
+
+    pending = pop_oidc_pending(state)
+    if not pending:
+        raise HTTPException(status_code=400, detail="Invalid or expired OIDC state")
 
     token_url = settings.oidc_issuer.rstrip("/") + "/protocol/openid-connect/token"
     async with httpx.AsyncClient(timeout=30.0) as client:
-        # Discover token endpoint if possible
         try:
             discovery = await client.get(
                 settings.oidc_issuer.rstrip("/") + "/.well-known/openid-configuration"
             )
             if discovery.status_code == 200:
-                token_url = discovery.json().get("token_endpoint", token_url)
-                userinfo_url = discovery.json().get("userinfo_endpoint")
+                disc = discovery.json()
+                token_url = disc.get("token_endpoint", token_url)
+                userinfo_url = disc.get("userinfo_endpoint")
             else:
                 userinfo_url = settings.oidc_issuer.rstrip("/") + "/protocol/openid-connect/userinfo"
         except Exception:
@@ -261,11 +279,27 @@ async def oidc_callback(code: str, db: Session = Depends(get_db)):
                 "redirect_uri": settings.oidc_redirect_uri,
                 "client_id": settings.oidc_client_id,
                 "client_secret": settings.oidc_client_secret,
+                "code_verifier": pending.code_verifier,
             },
         )
         if token_resp.status_code >= 400:
             raise HTTPException(status_code=401, detail="OIDC token exchange failed")
         tokens = token_resp.json()
+
+        # Validate nonce in id_token when present
+        id_token = tokens.get("id_token")
+        if id_token:
+            try:
+                # Signature verification against IdP JWKS is preferred; decode claims
+                # without verify for nonce check when JWKS not wired (Phase 4).
+                claims = jwt.get_unverified_claims(id_token)
+                if claims.get("nonce") and claims.get("nonce") != pending.nonce:
+                    raise HTTPException(status_code=401, detail="OIDC nonce mismatch")
+            except HTTPException:
+                raise
+            except Exception:
+                pass
+
         access = tokens.get("access_token")
         userinfo = await client.get(
             userinfo_url, headers={"Authorization": f"Bearer {access}"}
@@ -285,7 +319,7 @@ async def oidc_callback(code: str, db: Session = Depends(get_db)):
         user = User(
             email=email,
             username=username,
-            hashed_password=pwd_context.hash(f"oidc:{username}"),  # unusable local login
+            hashed_password=pwd_context.hash(f"oidc:{username}"),
             full_name=info.get("name") or username,
             role_id=role.id if role else None,
             is_active=True,
@@ -294,7 +328,6 @@ async def oidc_callback(code: str, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(user)
 
-    app_token = create_access_token({"sub": user.id, "role": user.role.name if user.role else "analyst"})
     record_audit(
         db,
         action="auth.oidc_login",
@@ -304,9 +337,35 @@ async def oidc_callback(code: str, db: Session = Depends(get_db)):
         actor_username=user.username,
         commit=True,
     )
-    # Redirect to frontend with token fragment (SPA picks it up)
+    one_time = issue_one_time_code(user.id)
     frontend = settings.cors_origin_list[0] if settings.cors_origin_list else "http://localhost:5173"
-    return RedirectResponse(f"{frontend}/login?sso_token={app_token}")
+    return RedirectResponse(f"{frontend}/login?sso_code={one_time}")
+
+
+class SSOExchangeRequest(BaseModel):
+    code: str
+
+
+@router.post("/oidc/exchange", response_model=TokenResponse)
+async def oidc_exchange(body: SSOExchangeRequest, db: Session = Depends(get_db)):
+    """Exchange a one-time SSO code (from callback redirect) for an app JWT."""
+    from app.services.oidc_store import redeem_one_time_code
+
+    user_id = redeem_one_time_code(body.code)
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Invalid or expired SSO code")
+    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found or inactive")
+    app_token = create_access_token(
+        {"sub": user.id, "role": user.role.name if user.role else "analyst"}
+    )
+    return TokenResponse(
+        access_token=app_token,
+        user_id=user.id,
+        username=user.username,
+        role=user.role.name if user.role else "analyst",
+    )
 
 
 @router.get("/sso/status")

@@ -57,11 +57,16 @@ def run_migrations() -> None:
 def init_db():
     """Initialize schema.
 
-    Production: prefer Alembic migrations (run on deploy / startup).
-    Development: create_all for convenience after attempting migrations.
+    Production: Alembic migrations only (never create_all).
+    Test: create_all only (avoid Alembic dual-engine SQLite locks).
+    Development: try migrations, then create_all for convenience.
     """
     # Import models so metadata is populated
     import app.models  # noqa: F401
+
+    if settings.app_env.lower() == "test":
+        Base.metadata.create_all(bind=engine)
+        return
 
     if settings.is_production:
         # Production relies solely on Alembic — never mask migration drift with create_all

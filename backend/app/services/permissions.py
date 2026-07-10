@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import Depends, HTTPException, status
+from sqlalchemy.orm import Query
 
 from app.models.user import User
 
@@ -26,6 +27,31 @@ def user_has_permission(user: User, permission: str) -> bool:
     if not attr or not user.role:
         return False
     return bool(getattr(user.role, attr, False))
+
+
+def can_view_all_bus(user: User) -> bool:
+    """True if user may read line items across all business units."""
+    if not user.role:
+        return False
+    if getattr(user.role, "can_view_all_bus", False) or user.role.can_admin:
+        return True
+    return user.role.name == "admin"
+
+
+def line_item_scope_filter(query: Query, user: User, line_item_model) -> Query:
+    """Restrict a LineItem query to the caller's BU unless they can view all.
+
+    Line items with NULL business_unit are treated as shared (visible to all).
+    """
+    if can_view_all_bus(user):
+        return query
+    bu = user.business_unit
+    if not bu:
+        # No BU assigned and no cross-BU privilege → only shared (null BU) rows
+        return query.filter(line_item_model.business_unit.is_(None))
+    return query.filter(
+        (line_item_model.business_unit == bu) | (line_item_model.business_unit.is_(None))
+    )
 
 
 def require_permission(permission: str):

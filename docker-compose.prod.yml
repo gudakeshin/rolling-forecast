@@ -27,8 +27,9 @@ services:
       - LOG_LEVEL=WARNING
       - SEED_DEMO_USERS=false
       - ALLOW_OPEN_REGISTRATION=false
-      - DATABASE_URL=postgresql://forecast:forecast@db:5432/rolling_forecast
-      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost}
+      - DATABASE_URL=${DATABASE_URL:?Set DATABASE_URL}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?Set JWT_SECRET_KEY}
+      - CORS_ORIGINS=${CORS_ORIGINS:?Set CORS_ORIGINS}
     depends_on:
       db:
         condition: service_healthy
@@ -40,7 +41,7 @@ services:
       target: production
     command: ["nginx", "-g", "daemon off;"]
     ports:
-      - "80:80"
+      - "80:8080"
     volumes: []
     depends_on:
       - backend

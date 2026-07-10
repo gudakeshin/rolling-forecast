@@ -11,6 +11,7 @@ from app.models.document import Document, DocumentChunk
 from app.models.audit import AuditEvent
 from app.models.budget import BudgetVersion, BudgetLineItem
 from app.models.approval import ApprovalWorkflow, ApprovalStep
+from app.models.integration import IntegrationConnection
 
 __all__ = [
     "User",
@@ -34,4 +35,5 @@ __all__ = [
     "BudgetLineItem",
     "ApprovalWorkflow",
     "ApprovalStep",
+    "IntegrationConnection",
 ]

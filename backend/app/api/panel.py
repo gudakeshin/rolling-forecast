@@ -39,6 +39,17 @@ async def get_forecast_table(
         .filter(ForecastLineResult.version_id == version_id)
     )
 
+    # BU-level read authorization
+    from app.services.permissions import can_view_all_bus
+    if not can_view_all_bus(current_user):
+        bu = current_user.business_unit
+        if bu:
+            query = query.filter(
+                (LineItem.business_unit == bu) | (LineItem.business_unit.is_(None))
+            )
+        else:
+            query = query.filter(LineItem.business_unit.is_(None))
+
     if period:
         query = query.filter(ForecastLineResult.period == period)
     if category:

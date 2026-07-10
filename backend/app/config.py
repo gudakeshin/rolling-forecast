@@ -42,10 +42,14 @@ class Settings(BaseSettings):
     langfuse_secret_key: str = ""
     langfuse_host: str = "https://cloud.langfuse.com"
 
-    # Warehouse / ERP
+    # Warehouse / ERP (legacy env fallbacks — prefer connection registry)
     warehouse_connection_url: str = ""
     erp_api_url: str = ""
     erp_api_token: str = ""
+    integration_secret_key: str = ""  # Fernet material; falls back to jwt_secret_key
+
+    # Upload limits
+    max_upload_bytes: int = 25 * 1024 * 1024  # 25 MB
 
     # Distribution
     smtp_host: str = ""
@@ -100,6 +104,20 @@ class Settings(BaseSettings):
             raise RuntimeError(
                 "JWT_SECRET_KEY must be set to a strong secret (>=32 chars) in production"
             )
+        # Reject obviously weak / default DB credentials in the URL
+        db = (self.database_url or "").lower()
+        if "forecast:forecast@" in db or "postgres:postgres@" in db or "password@" in db:
+            raise RuntimeError(
+                "DATABASE_URL must not use default/weak credentials in production"
+            )
+        if self.oidc_enabled and (
+            not self.oidc_issuer or not self.oidc_client_id or not self.oidc_client_secret
+        ):
+            raise RuntimeError("OIDC is enabled but issuer/client_id/client_secret are incomplete")
+        if not self.cors_origin_list:
+            raise RuntimeError("CORS_ORIGINS must be set explicitly in production")
+        if "*" in self.cors_origin_list:
+            raise RuntimeError("CORS_ORIGINS must not include '*' when credentials are enabled")
 
     def validate_llm_config(self, *, fail_hard: bool | None = None) -> None:
         """Fail fast when Anthropic key/model are misconfigured.

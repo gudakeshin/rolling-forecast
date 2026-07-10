@@ -1,38 +1,54 @@
-"""ERP / warehouse / budget import integrations."""
+"""ERP / warehouse / budget import integrations — connection-registry based."""
 
 from __future__ import annotations
 
 import csv
 import io
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.database import get_db
-from app.models.user import User
-from app.models.line_item import LineItem
 from app.models.actuals import ActualsDataset, ActualsRecord
-from app.models.budget import BudgetVersion, BudgetLineItem
-from app.services.permissions import require_permission
-from app.services.ingestion.erp_adapter import get_actuals_provider
-from app.services.coa_dependencies import ensure_standard_dependencies
+from app.models.budget import BudgetLineItem, BudgetVersion
+from app.models.integration import IntegrationConnection
+from app.models.line_item import LineItem
+from app.models.user import User
 from app.services.audit import record_audit
+from app.services.coa_dependencies import ensure_standard_dependencies
+from app.services.ingestion.erp_adapter import get_actuals_provider
+from app.services.permissions import require_permission
+from app.services.secret_box import decrypt_secret
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
 
 class WarehousePullRequest(BaseModel):
-    connection_url: str | None = None
+    connection_id: str
     query: str
     source_name: str = "warehouse"
 
 
 class ERPPullRequest(BaseModel):
-    url: str | None = None
-    token: str | None = None
+    connection_id: str
+    relative_path: str = Field(..., description="Path relative to the registered ERP base URL")
     source_name: str = "erp"
+
+
+def _load_connection(db: Session, connection_id: str, kind: str) -> IntegrationConnection:
+    conn = (
+        db.query(IntegrationConnection)
+        .filter(IntegrationConnection.id == connection_id)
+        .first()
+    )
+    if not conn:
+        raise HTTPException(404, "Integration connection not found")
+    if not conn.enabled:
+        raise HTTPException(400, "Integration connection is disabled")
+    if conn.kind != kind:
+        raise HTTPException(400, f"Connection kind must be '{kind}', got '{conn.kind}'")
+    return conn
 
 
 async def _persist_actuals_df(db: Session, result, source_type: str, source_name: str, user: User):
@@ -108,12 +124,34 @@ async def pull_warehouse(
     current_user: User = Depends(require_permission("generate")),
     db: Session = Depends(get_db),
 ):
-    provider = get_actuals_provider("warehouse", connection_url=body.connection_url or settings.warehouse_connection_url)
+    conn = _load_connection(db, body.connection_id, "warehouse")
+    try:
+        url = decrypt_secret(conn.encrypted_url)
+    except ValueError as e:
+        raise HTTPException(500, str(e)) from e
+
+    provider = get_actuals_provider("warehouse", connection_url=url)
     result = await provider.pull_actuals({
-        "connection_url": body.connection_url or settings.warehouse_connection_url,
         "query": body.query,
         "source_name": body.source_name,
     })
+    if not result.success and result.error and "Only SELECT" in result.error:
+        raise HTTPException(400, result.error)
+    if not result.success and result.error and "single SELECT" in result.error:
+        raise HTTPException(400, result.error)
+    if not result.success and result.error and "Forbidden SQL" in result.error:
+        raise HTTPException(400, result.error)
+
+    record_audit(
+        db,
+        action="integrations.warehouse_pull",
+        entity_type="integration_connection",
+        entity_id=conn.id,
+        actor_id=current_user.id,
+        actor_username=current_user.username,
+        details={"connection_name": conn.name, "success": result.success},
+        commit=False,
+    )
     return await _persist_actuals_df(db, result, "warehouse", body.source_name, current_user)
 
 
@@ -123,12 +161,28 @@ async def pull_erp(
     current_user: User = Depends(require_permission("generate")),
     db: Session = Depends(get_db),
 ):
-    provider = get_actuals_provider("erp")
+    conn = _load_connection(db, body.connection_id, "erp")
+    try:
+        base_url = decrypt_secret(conn.encrypted_url)
+        token = decrypt_secret(conn.encrypted_token) if conn.encrypted_token else None
+    except ValueError as e:
+        raise HTTPException(500, str(e)) from e
+
+    provider = get_actuals_provider("erp", base_url=base_url, token=token)
     result = await provider.pull_actuals({
-        "url": body.url or settings.erp_api_url,
-        "token": body.token or settings.erp_api_token,
+        "relative_path": body.relative_path,
         "source_name": body.source_name,
     })
+    record_audit(
+        db,
+        action="integrations.erp_pull",
+        entity_type="integration_connection",
+        entity_id=conn.id,
+        actor_id=current_user.id,
+        actor_username=current_user.username,
+        details={"connection_name": conn.name, "path": body.relative_path, "success": result.success},
+        commit=False,
+    )
     return await _persist_actuals_df(db, result, "erp", body.source_name, current_user)
 
 
@@ -141,7 +195,11 @@ async def import_budget(
     db: Session = Depends(get_db),
 ):
     """Import budget CSV with columns: account_code, period, value [, account_name, category]."""
-    raw = await file.read()
+    from app.services.upload_safety import save_upload
+
+    saved = await save_upload(file, allowed_extensions={".csv"})
+    with open(saved["stored_path"], "rb") as fh:
+        raw = fh.read()
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
@@ -160,7 +218,7 @@ async def import_budget(
         name=name or f"Budget FY{fiscal_year}",
         fiscal_year=fiscal_year,
         status="active",
-        source_name=file.filename,
+        source_name=saved["original_name"],
         created_by=current_user.id,
     )
     db.add(budget)
@@ -169,7 +227,6 @@ async def import_budget(
     existing = {li.account_code: li for li in db.query(LineItem).all()}
     created = 0
     for row in rows:
-        # normalize keys
         row = {k.lower(): v for k, v in row.items()}
         code = str(row["account_code"])
         if code not in existing:

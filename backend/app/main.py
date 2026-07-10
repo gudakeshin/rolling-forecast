@@ -26,25 +26,34 @@ def seed_roles_and_admin(db):
     roles_data = [
         {"name": "admin", "description": "System administrator",
          "can_input": True, "can_generate": True, "can_override": True,
-         "can_review": True, "can_publish": True, "can_admin": True},
+         "can_review": True, "can_publish": True, "can_admin": True,
+         "can_view_all_bus": True},
         {"name": "analyst", "description": "FP&A Analyst",
          "can_input": True, "can_generate": True, "can_override": True,
-         "can_review": False, "can_publish": False, "can_admin": False},
+         "can_review": False, "can_publish": False, "can_admin": False,
+         "can_view_all_bus": False},
         {"name": "reviewer", "description": "Finance Director / Reviewer",
          "can_input": True, "can_generate": True, "can_override": True,
-         "can_review": True, "can_publish": False, "can_admin": False},
+         "can_review": True, "can_publish": False, "can_admin": False,
+         "can_view_all_bus": True},
         {"name": "publisher", "description": "Can publish forecasts",
          "can_input": True, "can_generate": True, "can_override": True,
-         "can_review": True, "can_publish": True, "can_admin": False},
+         "can_review": True, "can_publish": True, "can_admin": False,
+         "can_view_all_bus": True},
         {"name": "input_provider", "description": "BU Head / Input Provider",
          "can_input": True, "can_generate": False, "can_override": False,
-         "can_review": False, "can_publish": False, "can_admin": False},
+         "can_review": False, "can_publish": False, "can_admin": False,
+         "can_view_all_bus": False},
     ]
 
     for role_data in roles_data:
         existing = db.query(Role).filter(Role.name == role_data["name"]).first()
         if not existing:
             db.add(Role(**role_data))
+        else:
+            # Keep can_view_all_bus in sync for seeded roles on upgrade
+            if hasattr(existing, "can_view_all_bus"):
+                existing.can_view_all_bus = role_data.get("can_view_all_bus", False)
 
     db.commit()
 
@@ -169,10 +178,18 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Request-ID"],
 )
 register_exception_handlers(app)
+
+# Rate limiting (in-memory; Redis in Phase 4)
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from app.rate_limit import limiter
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 from app.api.health import router as health_router
 from app.api.auth import router as auth_router
@@ -183,6 +200,7 @@ from app.api.dashboard import router as dashboard_router
 from app.api.skills import router as skills_router
 from app.api.context import router as context_router
 from app.api.admin import router as admin_router
+from app.api.admin_integrations import router as admin_integrations_router
 from app.api.executive import router as executive_router
 from app.api.approvals import router as approvals_router
 from app.api.integrations import router as integrations_router
@@ -197,6 +215,7 @@ app.include_router(dashboard_router, prefix="/api")
 app.include_router(skills_router)
 app.include_router(context_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
+app.include_router(admin_integrations_router, prefix="/api")
 app.include_router(executive_router, prefix="/api")
 app.include_router(approvals_router, prefix="/api")
 app.include_router(integrations_router, prefix="/api")

@@ -20,20 +20,23 @@ from passlib.context import CryptContext
 
 
 @pytest.fixture
-def client(db_session):
+def client():
+    """HTTP client; lifespan seeds demo users when SEED_DEMO_USERS=true."""
+    import os
+    os.environ["SEED_DEMO_USERS"] = "true"
+    os.environ["APP_ENV"] = "test"
     from app.main import app
-    from app.database import get_db
+    from app.rate_limit import limiter
 
-    def _override():
-        try:
-            yield db_session
-        finally:
-            pass
+    try:
+        limiter.reset()
+    except Exception:
+        storage = getattr(limiter, "_storage", None)
+        if storage is not None and hasattr(storage, "reset"):
+            storage.reset()
 
-    app.dependency_overrides[get_db] = _override
     with TestClient(app) as c:
         yield c
-    app.dependency_overrides.clear()
 
 
 def _auth_header(client: TestClient, username: str, password: str) -> dict[str, str]:
@@ -81,76 +84,71 @@ async def test_csv_missing_required_columns_hard_reject():
     assert "Missing required columns" in result.error
 
 
-def test_sod_creator_cannot_self_approve(client, db_session):
+def test_sod_creator_cannot_self_approve(client):
     """Generator who created the forecast must get 403 when approving (SoD)."""
+    from app.database import SessionLocal
+    from app.models.approval import ApprovalWorkflow, ApprovalStep
+    from app.models.forecast import ForecastVersion
+    from app.models.user import Role, User
+
     pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    db = SessionLocal()
+    try:
+        admin_role = db.query(Role).filter(Role.name == "admin").first()
+        assert admin_role is not None
 
-    # Lifespan may have seeded roles; reuse admin so the review permission gate passes
-    # and SoD is the only reason for 403.
-    admin_role = db_session.query(Role).filter(Role.name == "admin").first()
-    if not admin_role:
-        admin_role = Role(
-            name="admin",
-            description="Admin",
-            can_input=True,
-            can_generate=True,
-            can_override=True,
-            can_review=True,
-            can_publish=True,
-            can_admin=True,
+        creator = db.query(User).filter(User.username == "creator").first()
+        if not creator:
+            creator = User(
+                email="creator@test.local",
+                username="creator",
+                hashed_password=pwd.hash("creator"),
+                full_name="Forecast Creator",
+                role_id=admin_role.id,
+            )
+            db.add(creator)
+            db.flush()
+
+        version = ForecastVersion(
+            name="FC-SoD-Test",
+            status="in_review",
+            version_type="scheduled",
+            horizon_months=12,
+            created_by=creator.id,
+            created_at=datetime.now(timezone.utc),
         )
-        db_session.add(admin_role)
-        db_session.flush()
+        db.add(version)
+        db.flush()
 
-    creator = db_session.query(User).filter(User.username == "creator").first()
-    if not creator:
-        creator = User(
-            email="creator@test.local",
-            username="creator",
-            hashed_password=pwd.hash("creator"),
-            full_name="Forecast Creator",
-            role_id=admin_role.id,
+        wf = ApprovalWorkflow(
+            name="SoD Test Workflow",
+            description="test",
+            is_active=True,
+            require_sod=True,
+            levels=[{"level": 1, "role": "admin", "label": "Admin"}],
+            created_at=datetime.now(timezone.utc),
         )
-        db_session.add(creator)
-        db_session.flush()
+        db.add(wf)
+        db.flush()
 
-    version = ForecastVersion(
-        name="FC-SoD-Test",
-        status="in_review",
-        version_type="scheduled",
-        horizon_months=12,
-        created_by=creator.id,
-        created_at=datetime.now(timezone.utc),
-    )
-    db_session.add(version)
-    db_session.flush()
-
-    wf = ApprovalWorkflow(
-        name="SoD Test Workflow",
-        description="test",
-        is_active=True,
-        require_sod=True,
-        levels=[{"level": 1, "role": "admin", "label": "Admin"}],
-        created_at=datetime.now(timezone.utc),
-    )
-    db_session.add(wf)
-    db_session.flush()
-
-    step = ApprovalStep(
-        version_id=version.id,
-        workflow_id=wf.id,
-        level=1,
-        required_role="admin",
-        status="pending",
-        created_at=datetime.now(timezone.utc),
-    )
-    db_session.add(step)
-    db_session.commit()
+        step = ApprovalStep(
+            version_id=version.id,
+            workflow_id=wf.id,
+            level=1,
+            required_role="admin",
+            status="pending",
+            created_at=datetime.now(timezone.utc),
+        )
+        db.add(step)
+        db.commit()
+        step_id = step.id
+    finally:
+        db.close()
 
     headers = _auth_header(client, "creator", "creator")
     r = client.post(
         "/api/approvals/decide",
-        json={"step_id": step.id, "action": "approve", "comments": "self"},
+        json={"step_id": step_id, "action": "approve", "comments": "self"},
         headers=headers,
     )
     assert r.status_code == 403

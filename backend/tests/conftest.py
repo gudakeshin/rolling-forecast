@@ -9,7 +9,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 # Override database before importing app modules
-os.environ["DATABASE_URL"] = "sqlite:///./test_rolling_forecast.db"
+os.environ.setdefault("DATABASE_URL", "sqlite:///./test_app.db")
+os.environ.setdefault("APP_ENV", "test")
+os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-ci-at-least-32-chars")
+os.environ.setdefault("SEED_DEMO_USERS", "true")
 
 from app.database import Base
 from app.models.user import Role, User
@@ -21,7 +24,8 @@ from app.domain.base_skill import SkillContext
 from passlib.context import CryptContext
 
 
-TEST_DB_URL = "sqlite:///./test_rolling_forecast.db"
+# Unit-test DB is isolated from the app's test_app.db used by TestClient
+UNIT_DB_URL = "sqlite:///:memory:"
 
 
 @pytest.fixture(scope="session")
@@ -34,15 +38,19 @@ def event_loop():
 
 @pytest.fixture(scope="function")
 def db_engine():
-    """Create a fresh test database for each test."""
-    engine = create_engine(TEST_DB_URL, echo=False)
+    """In-memory DB for unit tests — never touches the app TestClient database file."""
+    from sqlalchemy.pool import StaticPool
+
+    engine = create_engine(
+        UNIT_DB_URL,
+        echo=False,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(engine)
     yield engine
     Base.metadata.drop_all(engine)
     engine.dispose()
-    # Clean up test db file
-    if os.path.exists("test_rolling_forecast.db"):
-        os.remove("test_rolling_forecast.db")
 
 
 @pytest.fixture(scope="function")
@@ -57,40 +65,56 @@ def db_session(db_engine):
 
 @pytest.fixture
 def seed_roles(db_session):
-    """Seed default roles."""
-    roles = [
-        Role(name="admin", description="Admin", can_input=True, can_generate=True,
-             can_override=True, can_review=True, can_publish=True, can_admin=True),
-        Role(name="analyst", description="Analyst", can_input=True, can_generate=True,
-             can_override=True, can_review=False, can_publish=False, can_admin=False),
+    """Seed default roles (idempotent — lifespan may have already created them)."""
+    specs = [
+        dict(name="admin", description="Admin", can_input=True, can_generate=True,
+             can_override=True, can_review=True, can_publish=True, can_admin=True,
+             can_view_all_bus=True),
+        dict(name="analyst", description="Analyst", can_input=True, can_generate=True,
+             can_override=True, can_review=False, can_publish=False, can_admin=False,
+             can_view_all_bus=False),
     ]
-    for r in roles:
-        db_session.add(r)
+    out = {}
+    for spec in specs:
+        existing = db_session.query(Role).filter(Role.name == spec["name"]).first()
+        if existing:
+            for k, v in spec.items():
+                if k != "name" and hasattr(existing, k):
+                    setattr(existing, k, v)
+            out[spec["name"]] = existing
+        else:
+            role = Role(**spec)
+            db_session.add(role)
+            out[spec["name"]] = role
     db_session.commit()
-    return {r.name: r for r in roles}
+    return out
 
 
 @pytest.fixture
 def seed_users(db_session, seed_roles):
-    """Seed test users."""
+    """Seed test users (idempotent)."""
     pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-    admin = User(
-        email="admin@test.local",
-        username="admin",
-        hashed_password=pwd_ctx.hash("admin"),
-        full_name="Test Admin",
-        role_id=seed_roles["admin"].id,
+    def _user(username, email, role_key, **extra):
+        existing = db_session.query(User).filter(User.username == username).first()
+        if existing:
+            return existing
+        u = User(
+            email=email,
+            username=username,
+            hashed_password=pwd_ctx.hash(username),
+            full_name=extra.pop("full_name", username),
+            role_id=seed_roles[role_key].id,
+            **extra,
+        )
+        db_session.add(u)
+        return u
+
+    admin = _user("admin", "admin@test.local", "admin", full_name="Test Admin")
+    analyst = _user(
+        "analyst", "analyst@test.local", "analyst",
+        full_name="Test Analyst", business_unit="North America",
     )
-    analyst = User(
-        email="analyst@test.local",
-        username="analyst",
-        hashed_password=pwd_ctx.hash("analyst"),
-        full_name="Test Analyst",
-        business_unit="North America",
-        role_id=seed_roles["analyst"].id,
-    )
-    db_session.add_all([admin, analyst])
     db_session.commit()
     return {"admin": admin, "analyst": analyst}
 

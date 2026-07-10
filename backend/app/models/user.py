@@ -20,6 +20,9 @@ class Role(Base):
     can_review: Mapped[bool] = mapped_column(Boolean, default=False)  # Approve/reject
     can_publish: Mapped[bool] = mapped_column(Boolean, default=False)  # Publish to stakeholders
     can_admin: Mapped[bool] = mapped_column(Boolean, default=False)  # Configure system
+    can_view_all_bus: Mapped[bool] = mapped_column(
+        Boolean, default=False
+    )  # Cross-BU read access (admins default True)
 
     users: Mapped[list["User"]] = relationship(back_populates="role")
 

@@ -17,11 +17,17 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Create non-root user
+RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser
+
 # Copy application code
 COPY . .
 
-# Create required directories
-RUN mkdir -p uploads seed_data
+# Create required directories and hand off ownership
+RUN mkdir -p uploads seed_data data exports \
+    && chown -R appuser:appuser /app
+
+USER appuser
 
 # Expose port
 EXPOSE 8000

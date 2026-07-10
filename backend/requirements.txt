@@ -26,6 +26,13 @@ networkx>=3.4.0
 # Auth
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.0
+cryptography>=42.0.0
+
+# Rate limiting
+slowapi>=0.1.9
+
+# SQL safety
+sqlparse>=0.5.0
 
 # Streaming
 sse-starlette>=2.2.0
