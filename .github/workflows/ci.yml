@@ -48,7 +48,16 @@ jobs:
       - name: Security scans
         run: |
           pip install pip-audit bandit
-          pip-audit -r requirements.txt --ignore-vuln GHSA-wj6h-64fc-37mp || true
+          # Fail on new vulns; ignore known unfixed transitive issues
+          # (starlette awaiting FastAPI pin bump; chromadb has no fix release yet)
+          pip-audit -r requirements.txt \
+            --ignore-vuln GHSA-wj6h-64fc-37mp \
+            --ignore-vuln PYSEC-2026-311 \
+            --ignore-vuln PYSEC-2026-161 \
+            --ignore-vuln PYSEC-2026-249 \
+            --ignore-vuln PYSEC-2026-248 \
+            --ignore-vuln CVE-2026-48818 \
+            --ignore-vuln CVE-2026-48817
           bandit -q -r app -x tests -ll
 
   migrations:
@@ -109,11 +118,11 @@ jobs:
       - name: ESLint
         run: npx eslint "src/**/*.{ts,tsx}" --max-warnings 200
       - name: Unit tests
-        run: npx vitest run --passWithNoTests
+        run: npx vitest run
       - name: Playwright smoke
         # Self-skips when E2E_BASE_URL is unset (no browser install needed)
         run: npx playwright test
       - name: npm audit
-        run: npm audit --audit-level=high || true
+        run: npm audit --audit-level=high
       - name: Build
         run: npm run build

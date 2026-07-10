@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { X, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { IconButton } from './Pressable';
+import { t } from '../../i18n';
 
 interface SlidePanelProps {
   title: string;
@@ -69,9 +70,9 @@ export function SlidePanel({
         <div className="flex items-center gap-0.5 shrink-0">
           {onToggleWidth && (
             <IconButton
-              label={widthExpanded ? 'Narrow panel' : 'Widen panel'}
+              label={widthExpanded ? t('panel.narrow') : t('panel.widen')}
               onClick={onToggleWidth}
-              title={widthExpanded ? 'Narrow panel' : 'Widen panel'}
+              title={widthExpanded ? t('panel.narrow') : t('panel.widen')}
             >
               {widthExpanded ? (
                 <PanelRightClose className="w-4 h-4" aria-hidden="true" />
@@ -80,7 +81,7 @@ export function SlidePanel({
               )}
             </IconButton>
           )}
-          <IconButton label="Close panel" onClick={onClose}>
+          <IconButton label={t('panel.close')} onClick={onClose}>
             <X className="w-4 h-4" aria-hidden="true" />
           </IconButton>
         </div>

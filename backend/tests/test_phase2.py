@@ -263,6 +263,109 @@ async def test_mint_reconcile_tags_bounds(db_session, seed_line_items):
     assert parent.p50 is not None
 
 
+def test_chat_history_summarizes_evicted_turns(db_session, seed_users):
+    """When history exceeds token budget, older turns become a summary prefix."""
+    from app.models.conversation import Conversation, Message
+    from app.orchestration.context_manager import ContextManager
+
+    user = seed_users["analyst"]
+    conv = Conversation(user_id=user.id, title="hist")
+    db_session.add(conv)
+    db_session.flush()
+    for i in range(12):
+        db_session.add(
+            Message(
+                conversation_id=conv.id,
+                role="user" if i % 2 == 0 else "assistant",
+                content=f"Turn {i} " + ("x" * 200),
+            )
+        )
+    db_session.commit()
+
+    cm = ContextManager(db=db_session, conversation=conv, user=user)
+    history = cm.get_chat_history(max_messages=50, max_tokens=400)
+    assert history
+    assert history[0]["role"] == "assistant"
+    assert "Earlier conversation summary" in history[0]["content"]
+    assert len(history) >= 2
+
+
+def test_cross_dimensional_mint_rollup(db_session):
+    """BU-dimensioned siblings roll up to a null-BU total with MinT bounds."""
+    from app.models.forecast import ForecastVersion, ForecastLineResult
+    from app.models.line_item import LineItem
+    from app.services.reconciliation import (
+        BOUNDS_METHOD_MINT_CROSS,
+        reconcile_cross_dimensional,
+    )
+
+    total = LineItem(
+        account_code="REV-TOTAL-X",
+        name="Revenue Cross",
+        category="Revenue",
+        business_unit=None,
+        is_calculated=False,
+    )
+    bu_a = LineItem(
+        account_code="REV-A-X",
+        name="Revenue Cross",
+        category="Revenue",
+        business_unit="BU-A",
+        is_calculated=False,
+    )
+    bu_b = LineItem(
+        account_code="REV-B-X",
+        name="Revenue Cross",
+        category="Revenue",
+        business_unit="BU-B",
+        is_calculated=False,
+    )
+    db_session.add_all([total, bu_a, bu_b])
+    db_session.flush()
+
+    version = ForecastVersion(
+        name="FC-cross",
+        status="draft",
+        version_type="scheduled",
+        horizon_months=1,
+    )
+    db_session.add(version)
+    db_session.flush()
+    period = "2025-01"
+    for li, p50 in ((bu_a, 100.0), (bu_b, 50.0)):
+        db_session.add(
+            ForecastLineResult(
+                version_id=version.id,
+                line_item_id=li.id,
+                period=period,
+                p10=p50 * 0.8,
+                p50=p50,
+                p90=p50 * 1.2,
+                is_calculated=False,
+                bounds_method="model",
+            )
+        )
+    db_session.commit()
+
+    out = reconcile_cross_dimensional(db_session, version.id)
+    db_session.commit()
+    assert out["rollup_updated"] >= 1
+
+    rollup = (
+        db_session.query(ForecastLineResult)
+        .filter(
+            ForecastLineResult.version_id == version.id,
+            ForecastLineResult.line_item_id == total.id,
+            ForecastLineResult.period == period,
+        )
+        .one()
+    )
+    assert rollup.p50 == pytest.approx(150.0)
+    assert rollup.bounds_method == BOUNDS_METHOD_MINT_CROSS
+    assert rollup.p10 is not None and rollup.p10 < rollup.p50
+    assert rollup.p90 is not None and rollup.p90 > rollup.p50
+
+
 def test_period_to_date_accepts_fiscal_labels():
     """Baseline date construction must not assume YYYY-MM + '-01'."""
     from datetime import date

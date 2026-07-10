@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { Send, Paperclip, Loader2, FileText, CheckCircle } from 'lucide-react';
 import { uploadFile, apiPost } from '../../api/client';
+import { useI18n } from '../../i18n/useI18n';
 
 const ACTUALS_EXTENSIONS = new Set(['.csv', '.xlsx', '.xls']);
 const CONTEXT_EXTENSIONS = new Set(['.pdf', '.docx', '.doc', '.pptx', '.txt', '.md', '.html', '.htm']);
@@ -15,6 +16,7 @@ interface Props {
 }
 
 export function InputBar({ onSend, isStreaming }: Props) {
+  const { t } = useI18n();
   const [input, setInput] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
@@ -91,9 +93,9 @@ export function InputBar({ onSend, isStreaming }: Props) {
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={isUploading}
-          aria-label="Upload file"
+          aria-label={t('chat.upload')}
           className="flex-shrink-0 p-1.5 hover:bg-surface-700 rounded-lg transition-colors text-surface-400 hover:text-deloitte-green disabled:opacity-50 min-h-[44px] min-w-[44px] flex items-center justify-center"
-          title="Upload file (CSV/Excel for actuals, PDF/DOCX/PPTX/TXT for context)"
+          title={t('chat.upload')}
         >
           {isUploading ? (
             <Loader2 className="w-5 h-5 animate-spin" />
@@ -114,8 +116,8 @@ export function InputBar({ onSend, isStreaming }: Props) {
           value={input}
           onChange={handleInput}
           onKeyDown={handleKeyDown}
-          placeholder="Ask about your forecast..."
-          aria-label="Message composer"
+          placeholder={t('chat.placeholder')}
+          aria-label={t('chat.placeholder')}
           rows={1}
           className="flex-1 bg-transparent text-white placeholder-surface-500 resize-none focus:outline-none text-sm leading-6 max-h-[200px]"
           disabled={isStreaming}
@@ -125,7 +127,7 @@ export function InputBar({ onSend, isStreaming }: Props) {
           type="button"
           onClick={handleSend}
           disabled={!input.trim() || isStreaming}
-          aria-label="Send message"
+          aria-label={t('chat.send')}
           className="flex-shrink-0 p-1.5 bg-deloitte-green hover:bg-deloitte-green/90 disabled:bg-surface-700 disabled:text-surface-600 text-black rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
         >
           {isStreaming ? (
@@ -137,7 +139,7 @@ export function InputBar({ onSend, isStreaming }: Props) {
       </div>
 
       <p className="text-center text-xs text-surface-500 mt-2">
-        AI-generated forecasts require human review before publication
+        {t('chat.disclaimer')}
       </p>
     </div>
   );

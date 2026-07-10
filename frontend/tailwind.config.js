@@ -56,16 +56,16 @@ export default {
           900: '#000816',
         },
         surface: {
-          50: '#FAFAFA',
-          100: '#F5F5F5',
-          200: '#E8E8E8',
-          300: '#D0D0CE',    // Deloitte Light Gray
-          400: '#97999B',    // Deloitte Cool Gray
-          500: '#75787B',
-          600: '#53565A',    // Deloitte Warm Gray
-          700: '#2D2D2D',
-          800: '#1A1A1A',
-          900: '#0D0D0D',
+          50: 'var(--surface-50)',
+          100: 'var(--surface-100)',
+          200: 'var(--surface-200)',
+          300: 'var(--surface-300)',
+          400: 'var(--surface-400)',
+          500: 'var(--surface-500)',
+          600: 'var(--surface-600)',
+          700: 'var(--surface-700)',
+          800: 'var(--surface-800)',
+          900: 'var(--surface-900)',
         },
       },
       fontFamily: {

@@ -15,10 +15,15 @@ export const chartTheme = {
   fontSize: 12,
   tooltip: {
     contentStyle: {
-      background: '#1a1d23',
-      border: '1px solid #2d323c',
+      background: 'var(--rf-bg-elevated)',
+      border: '1px solid var(--rf-border)',
       borderRadius: 8,
       fontSize: 12,
+      color: 'var(--rf-text)',
     },
   },
+  axis: {
+    fill: 'var(--rf-chart-axis)',
+  },
+  grid: 'var(--rf-chart-grid)',
 } as const;

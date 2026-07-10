@@ -17,15 +17,44 @@
     --rf-border: rgba(45, 45, 45, 0.8);
     --rf-text: #f5f5f5;
     --rf-text-muted: #97999b;
+    --surface-50: #fafafa;
+    --surface-100: #f5f5f5;
+    --surface-200: #e8e8e8;
+    --surface-300: #d0d0ce;
+    --surface-400: #97999b;
+    --surface-500: #75787b;
+    --surface-600: #53565a;
+    --surface-700: #2d2d2d;
+    --surface-800: #1a1a1a;
+    --surface-900: #0d0d0d;
+    --rf-on-surface: #f5f5f5;
+    --rf-chart-axis: #9ca3af;
+    --rf-chart-grid: rgba(255, 255, 255, 0.06);
+    color-scheme: dark;
   }
 
   html.light,
   html[data-theme='light'] {
     --rf-bg: #f4f5f7;
     --rf-bg-elevated: #ffffff;
-    --rf-border: rgba(208, 208, 206, 0.9);
+    --rf-border: rgba(208, 208, 206, 0.95);
     --rf-text: #1a1a1a;
     --rf-text-muted: #53565a;
+    /* Invert surface scale so dark-first Tailwind classes stay readable */
+    --surface-50: #0d0d0d;
+    --surface-100: #1a1a1a;
+    --surface-200: #2d2d2d;
+    --surface-300: #53565a;
+    --surface-400: #75787b;
+    --surface-500: #97999b;
+    --surface-600: #b8b9ba;
+    --surface-700: #d0d0ce;
+    --surface-800: #ffffff;
+    --surface-900: #f4f5f7;
+    --rf-on-surface: #1a1a1a;
+    --rf-chart-axis: #53565a;
+    --rf-chart-grid: rgba(0, 0, 0, 0.08);
+    color-scheme: light;
   }
 
   html {
@@ -36,11 +65,7 @@
     @apply antialiased font-sans text-sm;
     background-color: var(--rf-bg);
     color: var(--rf-text);
-  }
-
-  html.light body,
-  html[data-theme='light'] body {
-    @apply text-surface-800;
+    min-height: 100dvh;
   }
 
   /* Custom scrollbar — Deloitte themed */
@@ -67,6 +92,26 @@
   html.light ::selection,
   html[data-theme='light'] ::selection {
     color: #1a1a1a;
+  }
+
+  /* Light theme: text-white / bg-black used as primary surfaces */
+  html.light .text-white,
+  html[data-theme='light'] .text-white {
+    color: var(--rf-on-surface) !important;
+  }
+
+  html.light .bg-black,
+  html[data-theme='light'] .bg-black,
+  html.light .bg-black\/60,
+  html[data-theme='light'] .bg-black\/60 {
+    background-color: var(--rf-bg-elevated) !important;
+  }
+
+  html.light .prose-invert,
+  html[data-theme='light'] .prose-invert {
+    --tw-prose-body: var(--rf-text);
+    --tw-prose-headings: var(--rf-text);
+    --tw-prose-bold: var(--rf-text);
   }
 }
 
@@ -101,12 +146,10 @@
     40% { opacity: 1; }
   }
 
-  /* Deloitte green glow effect */
   .glow-green {
     box-shadow: 0 0 20px rgba(134, 188, 37, 0.15);
   }
 
-  /* Deloitte teal glow */
   .glow-teal {
     box-shadow: 0 0 20px rgba(0, 118, 168, 0.15);
   }

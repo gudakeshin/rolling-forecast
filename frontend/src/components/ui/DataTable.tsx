@@ -8,7 +8,8 @@ import {
   type SortingState,
 } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Download, ArrowUpDown } from 'lucide-react';
+import { Download, FileSpreadsheet, ArrowUpDown } from 'lucide-react';
+import { t } from '../../i18n';
 
 export interface DataTableColumn {
   key: string;
@@ -45,6 +46,30 @@ export function downloadCsv(filename: string, columns: DataTableColumn[], rows: 
   URL.revokeObjectURL(url);
 }
 
+async function downloadXlsx(filename: string, columns: DataTableColumn[], rows: Record<string, unknown>[]) {
+  const ExcelJS = (await import('exceljs')).default;
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Data');
+  ws.addRow(columns.map((c) => c.label));
+  for (const row of rows) {
+    ws.addRow(columns.map((c) => {
+      const v = row[c.key];
+      return v == null ? '' : (v as string | number | boolean | Date);
+    }));
+  }
+  ws.getRow(1).font = { bold: true };
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename.endsWith('.xlsx') ? filename : `${filename.replace(/\.csv$/i, '')}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 const VIRTUALIZE_THRESHOLD = 40;
 
 export function DataTable<T extends Record<string, unknown>>({
@@ -56,6 +81,7 @@ export function DataTable<T extends Record<string, unknown>>({
   rowHeight = 32,
 }: Props<T>) {
   const [sorting, setSorting] = useState<SortingState>([]);
+  const [exportingXlsx, setExportingXlsx] = useState(false);
   const parentRef = useRef<HTMLDivElement>(null);
 
   const colDefs = useMemo<ColumnDef<T>[]>(
@@ -103,22 +129,43 @@ export function DataTable<T extends Record<string, unknown>>({
       ? virtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
       : 0;
 
+  const onXlsx = async () => {
+    setExportingXlsx(true);
+    try {
+      await downloadXlsx(exportFilename, columns, rows as Record<string, unknown>[]);
+    } finally {
+      setExportingXlsx(false);
+    }
+  };
+
   return (
     <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl my-2 overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-surface-700/50">
-        <h4 className="text-sm font-semibold text-white flex items-center gap-2">
-          {title && <div className="w-0.5 h-3.5 bg-deloitte-green rounded-full" />}
-          {title || 'Table'}
+      <div className="flex items-center justify-between px-3 py-2 border-b border-surface-700/50 gap-2">
+        <h4 className="text-sm font-semibold text-white flex items-center gap-2 min-w-0">
+          {title && <div className="w-0.5 h-3.5 bg-deloitte-green rounded-full shrink-0" />}
+          <span className="truncate">{title || t('table.title')}</span>
         </h4>
-        <button
-          type="button"
-          onClick={() => downloadCsv(exportFilename, columns, rows as Record<string, unknown>[])}
-          className="inline-flex items-center gap-1.5 text-xs text-surface-300 hover:text-white px-2 py-1 rounded-md border border-surface-600 hover:border-deloitte-green/40"
-          aria-label="Export CSV"
-        >
-          <Download className="w-3.5 h-3.5" />
-          CSV
-        </button>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => downloadCsv(exportFilename, columns, rows as Record<string, unknown>[])}
+            className="inline-flex items-center gap-1.5 text-xs text-surface-300 hover:text-white px-2 py-1 rounded-md border border-surface-600 hover:border-deloitte-green/40"
+            aria-label={t('table.exportCsv')}
+          >
+            <Download className="w-3.5 h-3.5" />
+            CSV
+          </button>
+          <button
+            type="button"
+            onClick={onXlsx}
+            disabled={exportingXlsx}
+            className="inline-flex items-center gap-1.5 text-xs text-surface-300 hover:text-white px-2 py-1 rounded-md border border-surface-600 hover:border-deloitte-green/40 disabled:opacity-50"
+            aria-label={t('table.exportXlsx')}
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            {exportingXlsx ? '…' : 'XLSX'}
+          </button>
+        </div>
       </div>
       <div ref={parentRef} className="overflow-auto" style={{ maxHeight }}>
         <table className="w-full text-xs" style={{ fontSize: 12 }}>

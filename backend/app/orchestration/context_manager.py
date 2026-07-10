@@ -66,8 +66,9 @@ class ContextManager:
         """
         Get conversation history for the LLM context window.
 
-        Uses a token budget (approx 4 chars/token) keeping system-relevant recent
-        turns; older middle messages are dropped (summarization deferred).
+        Uses a token budget (approx 4 chars/token): keep recent turns, and
+        replace evicted older turns with a compact extractive summary so the
+        model retains continuity without blowing the context window.
         """
         messages = (
             self.db.query(Message)
@@ -83,7 +84,6 @@ class ContextManager:
             if msg.role in ("user", "assistant"):
                 history.append({"role": msg.role, "content": msg.content or ""})
 
-        # Keep newest messages within token budget
         budget = max_tokens
         kept: list[dict[str, str]] = []
         for msg in reversed(history):
@@ -93,7 +93,38 @@ class ContextManager:
             kept.append(msg)
             budget -= cost
         kept.reverse()
-        return kept[-max_messages:]
+        kept = kept[-max_messages:]
+
+        # Summarize anything that fell outside the kept window
+        if len(kept) < len(history):
+            dropped = history[: len(history) - len(kept)]
+            summary = self._summarize_evicted(dropped, max_chars=min(budget * 4, 2000))
+            if summary:
+                return [{"role": "assistant", "content": summary}, *kept]
+        return kept
+
+    @staticmethod
+    def _summarize_evicted(messages: list[dict[str, str]], max_chars: int = 2000) -> str:
+        """Extractive summary of dropped turns (no LLM call — deterministic)."""
+        if not messages:
+            return ""
+        snippets: list[str] = []
+        for msg in messages:
+            role = "User" if msg["role"] == "user" else "Assistant"
+            text = " ".join((msg.get("content") or "").split())
+            if not text:
+                continue
+            if len(text) > 180:
+                text = text[:177] + "..."
+            snippets.append(f"{role}: {text}")
+        body = " | ".join(snippets)
+        header = (
+            f"[Earlier conversation summary — {len(messages)} turn(s) condensed] "
+        )
+        room = max(max_chars - len(header), 80)
+        if len(body) > room:
+            body = body[: room - 3] + "..."
+        return header + body
 
     def get_system_context(self) -> str:
         """Build the system prompt with user context and working memory."""
