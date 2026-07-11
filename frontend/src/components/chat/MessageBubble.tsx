@@ -6,14 +6,19 @@ import { StatusCard } from './renderers/StatusCard';
 import { ActionCard } from './renderers/ActionCard';
 import { PanelTrigger } from './renderers/PanelTrigger';
 import { CitationsRenderer } from './renderers/CitationsRenderer';
-import { User, Wrench } from 'lucide-react';
+import { IconButton } from '../ui/Pressable';
+import { User, Wrench, RotateCcw } from 'lucide-react';
+import { useI18n } from '../../i18n/useI18n';
 
 interface Props {
   message: ChatMessage;
+  onRegenerate?: () => void;
+  canRegenerate?: boolean;
 }
 
-export function MessageBubble({ message }: Props) {
+export function MessageBubble({ message, onRegenerate, canRegenerate }: Props) {
   const isUser = message.role === 'user';
+  const { t } = useI18n();
 
   return (
     <div className={`flex gap-3 chat-message-enter ${isUser ? 'justify-end' : ''}`}>
@@ -62,6 +67,20 @@ export function MessageBubble({ message }: Props) {
               })()
             ) : (
               <TextRenderer text={message.content} />
+            )}
+
+            {canRegenerate && onRegenerate && (
+              <div className="pt-1">
+                <IconButton
+                  label={t('chat.regenerate')}
+                  title={t('chat.regenerate')}
+                  onClick={() => onRegenerate()}
+                  className="text-surface-500 hover:text-surface-200 gap-1.5 px-2"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span className="text-xs">{t('chat.regenerate')}</span>
+                </IconButton>
+              </div>
             )}
           </>
         )}

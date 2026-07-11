@@ -219,6 +219,52 @@ def test_scoped_line_items_helper_respects_bu(db_session, seed_roles):
     assert codes == {"EU-2"}
 
 
+def test_executive_latest_respects_bu_scope(db_session, seed_roles, seed_users):
+    """Analyst without can_view_all_bus must not see other-BU line items in KPIs."""
+    from datetime import datetime, timezone
+
+    from app.models.forecast import ForecastVersion, ForecastLineResult
+    from app.models.line_item import LineItem
+    from app.services.permissions import line_item_scope_filter
+
+    analyst = seed_users["analyst"]
+    analyst.business_unit = "Europe"
+    analyst.role.can_view_all_bus = False
+    db_session.commit()
+
+    na = LineItem(account_code="NA-X", name="NA Rev", category="Revenue", business_unit="North America")
+    eu = LineItem(account_code="EU-X", name="EU Rev", category="Revenue", business_unit="Europe")
+    db_session.add_all([na, eu])
+    db_session.flush()
+
+    version = ForecastVersion(
+        name="Scoped",
+        status="published",
+        horizon_months=3,
+        base_period="2025-01",
+        published_at=datetime.now(timezone.utc),
+    )
+    db_session.add(version)
+    db_session.flush()
+    db_session.add_all([
+        ForecastLineResult(version_id=version.id, line_item_id=na.id, period="2025-02", p50=1000),
+        ForecastLineResult(version_id=version.id, line_item_id=eu.id, period="2025-02", p50=200),
+    ])
+    db_session.commit()
+
+    rows = (
+        line_item_scope_filter(
+            db_session.query(ForecastLineResult, LineItem)
+            .join(LineItem, LineItem.id == ForecastLineResult.line_item_id)
+            .filter(ForecastLineResult.version_id == version.id),
+            analyst,
+            LineItem,
+        ).all()
+    )
+    names = {li.name for _, li in rows}
+    assert names == {"EU Rev"}
+
+
 def test_login_rate_limit_returns_429(client):
     """Brute-force login attempts should eventually 429."""
     saw_429 = False
@@ -228,3 +274,4 @@ def test_login_rate_limit_returns_429(client):
             saw_429 = True
             break
     assert saw_429, "Expected 429 after repeated failed logins"
+

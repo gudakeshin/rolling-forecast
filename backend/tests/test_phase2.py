@@ -436,3 +436,80 @@ def test_agent_cache_reuses_compiled_graph(monkeypatch):
     ma.invalidate_agent_cache()
     assert a1._get_agent() is sentinel
     assert calls["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_conversation_token_budget_blocks_astream():
+    """Per-conversation token budget must refuse before invoking the LLM."""
+    from app.orchestration import master_agent as ma
+
+    ma.invalidate_agent_cache()
+
+    class FakeCM:
+        user_id = "u1"
+        user_role = "analyst"
+        conversation_id = "c1"
+        user = None
+        _working_memory = {"token_usage": 199_999}
+
+        def get_system_context(self):
+            return "ctx"
+
+        def get_relevant_context(self, *a, **k):
+            return ""
+
+        def get_chat_history(self, **k):
+            return []
+
+        def get_memory(self, key, default=None):
+            return self._working_memory.get(key, default)
+
+        def set_memory(self, key, value):
+            self._working_memory[key] = value
+
+        def get_token_usage(self):
+            return int(self.get_memory("token_usage") or 0)
+
+        def record_token_usage(self, tokens):
+            return self.get_token_usage()
+
+        def estimate_message_tokens(self, *texts):
+            return sum(max(1, len(t or "") // 4) for t in texts)
+
+        def check_token_budget(self, upcoming=0):
+            budget = 200_000
+            used = self.get_token_usage()
+            return (used + upcoming) < budget, used, budget
+
+    agent = ma.MasterAgent(context_manager=FakeCM(), db=None)  # type: ignore[arg-type]
+    events = []
+    async for ev in agent.astream("hello world this is a long enough prompt"):
+        events.append(ev)
+    assert any(e["event"] == "error" for e in events)
+    assert any(
+        "token budget" in (e.get("data") or {}).get("error", "").lower()
+        for e in events
+        if e["event"] == "error"
+    )
+
+
+def test_forced_model_runs_cv_not_in_sample():
+    """Non-auto model path must obtain CV MAPE; engines expose in_sample_mape separately."""
+    rng = np.random.default_rng(3)
+    n = 48
+    values = pd.Series(50 + np.arange(n) * 1.5 + rng.normal(0, 2, n))
+    dates = pd.date_range("2021-01-01", periods=n, freq="MS")
+    reg = ModelRegistry()
+
+    # Rolling-origin CV works for a forced (non-auto) model
+    linear = reg.get("linear")
+    assert linear is not None
+    cv = linear.evaluate_cv(values, dates, n_folds=3, fold_horizon=3)
+    assert cv["n_folds_used"] > 1
+    assert cv["mean_mape"] != float("inf")
+
+    # Fit metrics use the in_sample_mape key (not the old ambiguous "mape")
+    pytest.importorskip("statsmodels")
+    out = reg.fit_and_predict("arima", values, dates, horizon=3)
+    assert "in_sample_mape" in out.fit_metrics
+    assert "mape" not in out.fit_metrics  # renamed to avoid confidence leakage

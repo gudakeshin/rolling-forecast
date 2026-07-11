@@ -79,11 +79,19 @@ class DetectAnomaliesSkill(BaseSkill):
 
         thresholds = self._get_thresholds(sensitivity)
         all_anomalies: list[dict] = []
+        actor = None
+        try:
+            from app.services.permissions import resolve_skill_user
+            actor = resolve_skill_user(context)
+        except Exception:
+            actor = None
 
         if target in ("actuals", "both"):
-            all_anomalies.extend(self._scan_actuals(db, params, method, thresholds))
+            all_anomalies.extend(self._scan_actuals(db, params, method, thresholds, user=actor))
         if target in ("forecast", "both"):
-            all_anomalies.extend(self._scan_forecast(db, version_id, params, method, thresholds))
+            all_anomalies.extend(
+                self._scan_forecast(db, version_id, params, method, thresholds, user=actor)
+            )
 
         if not all_anomalies:
             return SkillResult.ok(
@@ -170,13 +178,17 @@ class DetectAnomaliesSkill(BaseSkill):
             return "info"
 
     def _scan_actuals(
-        self, db: Session, params: dict, method: str, thresholds: dict
+        self, db: Session, params: dict, method: str, thresholds: dict, user=None
     ) -> list[dict]:
         """Scan actuals data for anomalies."""
         anomalies = []
 
-        # Get all line items (filtered)
+        # Get all line items (filtered + BU-scoped)
+        from app.services.permissions import line_item_scope_filter
+
         query = db.query(LineItem)
+        if user is not None:
+            query = line_item_scope_filter(query, user, LineItem)
         category = params.get("category")
         line_item_name = params.get("line_item_name")
         if category:
@@ -221,16 +233,20 @@ class DetectAnomaliesSkill(BaseSkill):
         return anomalies
 
     def _scan_forecast(
-        self, db: Session, version_id: str, params: dict, method: str, thresholds: dict
+        self, db: Session, version_id: str, params: dict, method: str, thresholds: dict, user=None
     ) -> list[dict]:
         """Scan forecast data for anomalies."""
         anomalies = []
+
+        from app.services.permissions import line_item_scope_filter
 
         query = (
             db.query(ForecastLineResult, LineItem)
             .join(LineItem)
             .filter(ForecastLineResult.version_id == version_id)
         )
+        if user is not None:
+            query = line_item_scope_filter(query, user, LineItem)
         category = params.get("category")
         line_item_name = params.get("line_item_name")
         if category:

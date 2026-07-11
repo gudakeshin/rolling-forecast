@@ -22,6 +22,7 @@ export function ChatContainer() {
     cancelStreaming,
     setActiveConversation,
     setConversations,
+    truncateForRegenerate,
   } = useChatStore();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -118,6 +119,14 @@ export function ChatContainer() {
     }
   };
 
+  const handleRegenerate = () => {
+    if (isStreaming) return;
+    const prompt = truncateForRegenerate();
+    if (prompt) {
+      void handleSend(prompt);
+    }
+  };
+
   const isEmpty = messages.length === 0 && !streamingMessage;
 
   return (
@@ -127,7 +136,12 @@ export function ChatContainer() {
       ) : (
         <div className="flex-1 overflow-y-auto px-4 py-6">
           <div className="max-w-3xl mx-auto">
-            <MessageList messages={messages} streamingMessage={streamingMessage} />
+            <MessageList
+              messages={messages}
+              streamingMessage={streamingMessage}
+              onRegenerate={handleRegenerate}
+              isStreaming={isStreaming}
+            />
             <div ref={messagesEndRef} />
           </div>
         </div>

@@ -511,17 +511,60 @@ class GenerateBaselineSkill(BaseSkill):
                         summary["model_comparisons"][li.name] = comparison.to_dict()
                     else:
                         selected_model = effective_model_type
-                        selection_mape = None
+                        # Always run rolling-origin CV for the chosen model —
+                        # never feed in-sample MAPE into confidence scoring.
+                        try:
+                            model = model_registry.get(selected_model)
+                            if model is None:
+                                raise ValueError(f"Unknown model '{selected_model}'")
+                            cv = model.evaluate_cv(
+                                effective_values, effective_dates, n_folds=3, fold_horizon=3
+                            )
+                            selection_mape = cv.get("mean_mape")
+                            summary["model_comparisons"][li.name] = {
+                                "best_model": selected_model,
+                                "best_mape": selection_mape,
+                                "selection_method": "rolling_origin_cv",
+                                "comparisons": [{
+                                    "model_name": selected_model,
+                                    "mape": selection_mape,
+                                    "fold_mapes": cv.get("fold_mapes") or [],
+                                    "n_folds": cv.get("n_folds_used") or 0,
+                                    "selected": True,
+                                    "eligible": True,
+                                }],
+                            }
+                        except Exception as cv_err:
+                            logger.warning(
+                                "CV MAPE failed for forced model %s on %s: %s",
+                                selected_model, li.name, cv_err,
+                            )
+                            selection_mape = None
 
                     forecast_output = model_registry.fit_and_predict(
                         selected_model, effective_values, effective_dates, horizon,
                         random_seed=random_seed,
                     )
 
-                    # Prefer CV MAPE for confidence; fall back to in-sample only if no CV
+                    # Prefer CV MAPE for confidence; never use in-sample for scoring.
+                    # Store in-sample separately for diagnostics only.
                     cv_mape = selection_mape if selection_mape is not None else None
-                    in_sample = forecast_output.fit_metrics.get("in_sample_mape") or forecast_output.fit_metrics.get("mape")
-                    honest_mape = cv_mape if cv_mape is not None and cv_mape != float("inf") else in_sample
+                    in_sample = (
+                        forecast_output.fit_metrics.get("in_sample_mape")
+                        or forecast_output.fit_metrics.get("mape")
+                    )
+                    if cv_mape is not None and cv_mape != float("inf"):
+                        honest_mape = cv_mape
+                    else:
+                        # No usable CV — leave model_mape null so confidence
+                        # does not claim an optimistic in-sample score.
+                        honest_mape = None
+                        if in_sample is not None:
+                            forecast_output.fit_metrics["in_sample_mape"] = in_sample
+                            all_warnings.append(
+                                f"{li.name}: CV MAPE unavailable; confidence uses "
+                                "non-MAPE signals only (in-sample MAPE withheld)"
+                            )
 
                     # EC9: Clamp negative values
                     point_forecast = forecast_output.point_forecast.copy()

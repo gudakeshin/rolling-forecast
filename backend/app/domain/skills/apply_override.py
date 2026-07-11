@@ -127,13 +127,16 @@ class ApplyOverrideSkill(BaseSkill):
         # Acquire edit locks for concurrent safety
         from app.services.locks import acquire_lock, release_lock, LockConflictError
 
-        # Find the line item
+        # Find the line item (BU-scoped)
+        from app.services.permissions import resolve_skill_user, scoped_line_items, user_can_view_line_item
+
         line_item_name = params.get("line_item_name", "")
         if not line_item_name:
             return SkillResult.fail("Please specify which line item to override.")
 
+        actor = resolve_skill_user(context)
         line_item = (
-            db.query(LineItem)
+            scoped_line_items(db, actor)
             .filter(
                 (LineItem.name.ilike(f"%{line_item_name}%"))
                 | (LineItem.account_code.ilike(f"%{line_item_name}%"))
@@ -143,6 +146,10 @@ class ApplyOverrideSkill(BaseSkill):
         if not line_item:
             return SkillResult.fail(
                 f"Line item '{line_item_name}' not found. Use the query skill to list available line items."
+            )
+        if not user_can_view_line_item(actor, line_item):
+            return SkillResult.fail(
+                f"You do not have access to line item '{line_item_name}'."
             )
 
         period = params.get("period")
@@ -372,10 +379,13 @@ class ApplyOverrideSkill(BaseSkill):
                 return SkillResult.fail(f"Override '{override_id}' not found.")
             overrides_to_revert.append(override)
         else:
-            # Find by line item
+            # Find by line item (BU-scoped)
+            from app.services.permissions import resolve_skill_user, scoped_line_items
+
             line_item_name = params.get("line_item_name", "")
+            actor = resolve_skill_user(context)
             line_item = (
-                db.query(LineItem)
+                scoped_line_items(db, actor)
                 .filter(
                     (LineItem.name.ilike(f"%{line_item_name}%"))
                     | (LineItem.account_code.ilike(f"%{line_item_name}%"))

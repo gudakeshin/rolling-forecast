@@ -25,6 +25,8 @@ interface ChatState {
   setToolInProgress: (toolName: string | null) => void;
   finishStreaming: (finalMessage: ChatMessage) => void;
   cancelStreaming: () => void;
+  /** Drop trailing assistant (+ optional user) so a message can be regenerated. */
+  truncateForRegenerate: () => string | null;
 }
 
 const SIDEBAR_KEY = 'rf_chat_sidebar_expanded';
@@ -139,4 +141,22 @@ export const useChatStore = create<ChatState>((set) => ({
       streamingMessage: null,
       currentToolName: null,
     }),
+
+  truncateForRegenerate: () => {
+    let prompt: string | null = null;
+    set((state) => {
+      const msgs = [...state.messages];
+      // Remove trailing assistant message(s)
+      while (msgs.length && msgs[msgs.length - 1].role === 'assistant') {
+        msgs.pop();
+      }
+      // Capture and remove the user prompt that produced them
+      if (msgs.length && msgs[msgs.length - 1].role === 'user') {
+        prompt = msgs[msgs.length - 1].content;
+        msgs.pop();
+      }
+      return { messages: msgs };
+    });
+    return prompt;
+  },
 }));

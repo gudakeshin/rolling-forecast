@@ -81,6 +81,28 @@ def scoped_line_items(db: Session, user: User | None, *filters) -> Query:
     return line_item_scope_filter(q, user, LineItem)
 
 
+def allowed_line_item_ids(db: Session, user: User | None) -> set[int] | None:
+    """Return allowed LineItem IDs, or None when the user may view all BUs.
+
+    Use with ``.filter(col.in_(ids))`` when ``ids is not None``.
+    """
+    if user is None or can_view_all_bus(user):
+        return None
+    return {li.id for li in scoped_line_items(db, user).all()}
+
+
+def user_can_view_line_item(user: User | None, line_item) -> bool:
+    """True if the user may read this line item under BU scope."""
+    if user is None or line_item is None:
+        return True
+    if can_view_all_bus(user):
+        return True
+    li_bu = getattr(line_item, "business_unit", None)
+    if li_bu is None:
+        return True  # shared
+    return li_bu == user.business_unit
+
+
 def require_permission(permission: str):
     """FastAPI dependency factory that enforces a Role.can_* flag."""
     # Lazy import to avoid circular dependency with app.api.auth

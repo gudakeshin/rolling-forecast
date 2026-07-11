@@ -72,6 +72,8 @@ class Settings(BaseSettings):
     confidence_threshold_low: int = 50
     confidence_threshold_medium: int = 70
     max_forecast_generation_minutes: int = 30
+    # Soft per-conversation LLM token budget (approx chars/4). Soft-warn then hard-stop.
+    conversation_token_budget: int = 200_000
     min_history_months: int = 12
     ideal_history_months: int = 24
     panel_page_size: int = 100

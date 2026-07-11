@@ -17,7 +17,12 @@ from app.models.line_item import LineItem
 from app.models.budget import BudgetVersion, BudgetLineItem
 from app.models.actuals import ActualsRecord
 from app.models.override import Override
-from app.services.permissions import require_permission
+from app.services.permissions import (
+    allowed_line_item_ids,
+    require_permission,
+    scoped_line_items,
+    user_can_view_line_item,
+)
 from app.services.board_pack import build_board_pack_pptx, build_board_pack_pdf
 from app.services.audit import record_audit
 
@@ -47,13 +52,16 @@ async def latest_published(
     if not version:
         return {"version": None, "message": "No published forecast available"}
 
-    # Category rollups
-    rows = (
+    # Category rollups (BU-scoped)
+    rows_q = (
         db.query(ForecastLineResult, LineItem)
         .join(LineItem, LineItem.id == ForecastLineResult.line_item_id)
         .filter(ForecastLineResult.version_id == version.id)
-        .all()
     )
+    from app.services.permissions import line_item_scope_filter
+
+    rows_q = line_item_scope_filter(rows_q, current_user, LineItem)
+    rows = rows_q.all()
     by_cat: dict[str, float] = {}
     for r, li in rows:
         val = r.override_value if r.is_overridden else r.p50
@@ -161,7 +169,11 @@ async def budget_bridge(
             .first()
         )
 
-    line_items = db.query(LineItem).order_by(LineItem.display_order, LineItem.name).all()
+    line_items = (
+        scoped_line_items(db, current_user)
+        .order_by(LineItem.display_order, LineItem.name)
+        .all()
+    )
     rows_out = []
     for li in line_items:
         fc_rows = (
@@ -253,18 +265,29 @@ async def driver_drilldown(
     if not version:
         raise HTTPException(404, "Forecast version not found")
 
+    allowed_ids = allowed_line_item_ids(db, current_user)
     overrides = db.query(Override).filter(
         Override.version_id == version_id, Override.status == "active"
     )
     if line_item_id:
         overrides = overrides.filter(Override.line_item_id == line_item_id)
+    if allowed_ids is not None:
+        overrides = overrides.filter(Override.line_item_id.in_(allowed_ids))
     overrides = overrides.all()
 
     drivers = db.query(DriverInput).filter(DriverInput.version_id == version_id).all()
+    # Driver forms are BU-tagged; restrict to caller's BU when scoped
+    if not getattr(current_user.role, "can_view_all_bus", False) and not (
+        current_user.role and current_user.role.can_admin
+    ):
+        bu = current_user.business_unit
+        drivers = [d for d in drivers if not d.business_unit or d.business_unit == bu]
 
     breakdown = []
     for o in overrides:
         li = db.query(LineItem).filter(LineItem.id == o.line_item_id).first()
+        if not user_can_view_line_item(current_user, li):
+            continue
         delta = o.override_value - o.original_model_value
         reason_l = (o.reason or "").lower()
         # Heuristic attribution from reason text

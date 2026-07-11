@@ -159,6 +159,35 @@ class MasterAgent:
         """
         self._pending_query = user_message
         ctx_token = push_skill_context(self._build_skill_context())
+
+        # Per-conversation token budget — refuse before burning more LLM spend
+        upcoming = self.context_manager.estimate_message_tokens(user_message)
+        allowed, used, budget = self.context_manager.check_token_budget(upcoming)
+        if not allowed:
+            yield {
+                "event": "error",
+                "data": {
+                    "error": (
+                        f"Conversation token budget exceeded "
+                        f"({used:,}/{budget:,} tokens). Start a new conversation."
+                    )
+                },
+            }
+            yield {
+                "event": "message_end",
+                "data": {
+                    "content": (
+                        f"This conversation has reached its token budget "
+                        f"({used:,}/{budget:,}). Please start a new chat to continue."
+                    ),
+                    "content_blocks": [],
+                    "tool_calls": [],
+                    "panel_payload": None,
+                },
+            }
+            reset_skill_context(ctx_token)
+            return
+
         agent = self._get_agent()
 
         # Per-turn dynamic context (not baked into the cached graph prompt)
@@ -400,6 +429,22 @@ class MasterAgent:
                     "event": "content_block",
                     "data": text_block,
                 }
+
+            # Record approximate token spend against the conversation budget
+            try:
+                spent = self.context_manager.estimate_message_tokens(
+                    user_message,
+                    final_text,
+                    *(tc.get("tool", "") for tc in all_tool_calls),
+                )
+                # Also count history that was sent into the model this turn
+                for m in messages:
+                    content = getattr(m, "content", "") or ""
+                    if isinstance(content, str):
+                        spent += self.context_manager.estimate_message_tokens(content)
+                self.context_manager.record_token_usage(spent)
+            except Exception:
+                logger.debug("Failed to record conversation token usage", exc_info=True)
 
             # Send final message_end
             yield {

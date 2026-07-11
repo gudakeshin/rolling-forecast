@@ -60,6 +60,30 @@ class ContextManager:
         """Set the active forecast version."""
         self.set_memory("active_version_id", version_id)
 
+    # ---------- Token budget (per conversation) ----------
+
+    def get_token_usage(self) -> int:
+        """Approximate cumulative tokens consumed in this conversation."""
+        return int(self.get_memory("token_usage") or 0)
+
+    def record_token_usage(self, tokens: int) -> int:
+        """Add estimated tokens to the conversation budget; return new total."""
+        total = self.get_token_usage() + max(0, int(tokens))
+        self.set_memory("token_usage", total)
+        return total
+
+    def estimate_message_tokens(self, *texts: str) -> int:
+        """Rough token estimate (~4 chars/token)."""
+        return sum(max(1, len(t or "") // 4) for t in texts)
+
+    def check_token_budget(self, upcoming: int = 0) -> tuple[bool, int, int]:
+        """Return (allowed, used, budget). Soft-fail when used+upcoming exceeds budget."""
+        from app.config import settings
+
+        budget = int(getattr(settings, "conversation_token_budget", 200_000) or 200_000)
+        used = self.get_token_usage()
+        return (used + upcoming) < budget, used, budget
+
     # ---------- Conversation History ----------
 
     def get_chat_history(self, max_messages: int = 50, max_tokens: int = 8000) -> list[dict[str, str]]:

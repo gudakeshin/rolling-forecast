@@ -19,7 +19,7 @@ from app.models.line_item import LineItem, LineItemDependency
 from app.models.actuals import ActualsRecord
 from app.models.override import Override
 from app.schemas.forecast import PanelDataResponse
-from app.services.permissions import require_permission
+from app.services.permissions import line_item_scope_filter, require_permission, scoped_line_items
 
 # Import inline scoring utilities from generate_baseline
 from app.domain.skills.generate_baseline import (
@@ -31,6 +31,16 @@ from app.domain.skills.generate_baseline import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/panel", tags=["dashboard"])
+
+
+def _scoped_results_query(db: Session, user: User, version_id: str):
+    """ForecastLineResult query joined to LineItem, restricted by BU scope."""
+    q = (
+        db.query(ForecastLineResult)
+        .join(LineItem)
+        .filter(ForecastLineResult.version_id == version_id)
+    )
+    return line_item_scope_filter(q, user, LineItem)
 
 
 def formatCurrency(value: float) -> str:
@@ -322,9 +332,7 @@ async def get_executive_dashboard(
 
     # ─── 1. Load all results and build lookups ────────
     all_results = (
-        db.query(ForecastLineResult)
-        .join(LineItem)
-        .filter(ForecastLineResult.version_id == version_id)
+        _scoped_results_query(db, current_user, version_id)
         .order_by(LineItem.category, LineItem.display_order, ForecastLineResult.period)
         .all()
     )
@@ -1035,9 +1043,7 @@ async def get_review_dashboard(
         raise HTTPException(status_code=404, detail="Forecast version not found")
 
     results = (
-        db.query(ForecastLineResult)
-        .join(LineItem)
-        .filter(ForecastLineResult.version_id == version_id)
+        _scoped_results_query(db, current_user, version_id)
         .order_by(ForecastLineResult.confidence_score.asc())
         .all()
     )
@@ -1415,12 +1421,13 @@ async def get_accuracy_tracking(
     if not version:
         raise HTTPException(status_code=404, detail="Forecast version not found")
 
-    vintage_rows = (
+    vintage_q = (
         db.query(ForecastAccuracyRecord, LineItem)
         .join(LineItem, LineItem.id == ForecastAccuracyRecord.line_item_id)
         .filter(ForecastAccuracyRecord.version_id == version_id)
-        .all()
     )
+    vintage_q = line_item_scope_filter(vintage_q, current_user, LineItem)
+    vintage_rows = vintage_q.all()
 
     accuracy_items = []
     model_mapes: dict[str, list[float]] = {}
@@ -1686,8 +1693,7 @@ async def get_driver_inputs(
 
     # Get line items available for driver input
     line_items = (
-        db.query(LineItem)
-        .filter(LineItem.is_calculated == False)
+        scoped_line_items(db, current_user, LineItem.is_calculated == False)  # noqa: E712
         .order_by(LineItem.category, LineItem.display_order)
         .all()
     )
@@ -2121,9 +2127,7 @@ async def get_anomaly_dashboard(
 
     # ── Gather data ───────────────────────────────────
     results = (
-        db.query(ForecastLineResult)
-        .join(LineItem)
-        .filter(ForecastLineResult.version_id == version_id)
+        _scoped_results_query(db, current_user, version_id)
         .order_by(LineItem.category, LineItem.display_order, ForecastLineResult.period)
         .all()
     )
