@@ -526,6 +526,7 @@ class GenerateBaselineSkill(BaseSkill):
                                 "best_mape": selection_mape,
                                 "selection_method": "rolling_origin_cv",
                                 "comparisons": [{
+                                    "model": selected_model,
                                     "model_name": selected_model,
                                     "mape": selection_mape,
                                     "fold_mapes": cv.get("fold_mapes") or [],
@@ -851,6 +852,9 @@ class GenerateBaselineSkill(BaseSkill):
             for li_name, comp_data in sorted(summary["model_comparisons"].items()):
                 row = {"line_item": li_name, "selected": comp_data["best_model"]}
                 for c in comp_data.get("comparisons", []):
+                    model_key = c.get("model") or c.get("model_name")
+                    if not model_key:
+                        continue
                     mape_val = c.get("mape")
                     if mape_val is not None:
                         label = f"{mape_val:.1f}%"
@@ -860,7 +864,7 @@ class GenerateBaselineSkill(BaseSkill):
                         label = "N/A"
                     else:
                         label = "-"
-                    row[c["model"]] = label
+                    row[model_key] = label
                 comparison_rows.append(row)
 
             if comparison_rows:

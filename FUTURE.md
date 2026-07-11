@@ -10,6 +10,6 @@ deferral list:
 | Light theme | Shipped | `themeStore` + CSS tokens; originally deferred |
 | i18n (en/es) | Shipped | `frontend/src/i18n`; originally deferred |
 | Full MinT hierarchical reconciliation | Deferred | Leaf-scale + topo recompute + `linear_aggregation` bounds ship today |
-| Raise CI coverage gate above 25% | Open | Incrementally raise `--cov-fail-under` as suites grow |
-| WCAG AA automated contrast audit | Open | Manual token review done; add contrast CI later |
-| Remaining clickable-div → button sweep | Open | Core primitives use `Button`/`Pressable`; some panel rows still use `role="button"` |
+| Raise CI coverage gate above 25% | Shipped | `--cov-fail-under=40` (measured suite ~47%) |
+| WCAG AA automated contrast audit | Shipped | `frontend/src/theme/contrast.test.ts` — dark + light token pairs |
+| Remaining clickable-div → button sweep | Shipped | No `role="button"` left in `frontend/src`; panels use real `<button>` |

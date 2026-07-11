@@ -331,6 +331,7 @@ function FilterBar({
 function FilterChip({ label, active, onClick, color }: { label: string; active: boolean; onClick: () => void; color?: string }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       className={`text-xs px-2 py-1 rounded-full border transition-colors font-medium ${active
         ? 'bg-deloitte-green/15 border-deloitte-green/40 text-deloitte-green'

@@ -450,45 +450,49 @@ function ReviewItemRow({
 
   return (
     <div className="border-b border-surface-700/20 last:border-0">
-      {/* Main row */}
-      <div
-        className="flex items-center gap-2 px-3 py-2 hover:bg-deloitte-green/5 transition-colors cursor-pointer"
-        onClick={() => setExpanded(!expanded)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            setExpanded(!expanded);
-          }
-        }}
-        role="button"
-        tabIndex={0}
-        aria-expanded={expanded}
-      >
-        <span className="flex-shrink-0 text-surface-500" aria-hidden="true">
-          {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-        </span>
-
-        {/* AI recommendation */}
-        <div className="flex-shrink-0 w-16">
-          <AIBadge recommendation={item.ai_recommendation} />
-        </div>
-
-        {/* Name + business context */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5">
-            <MaterialityDot level={item.materiality} />
-            <span className="text-xs text-surface-200 truncate">{item.line_item_name}</span>
-          </div>
-          <span className="text-xs text-surface-500">
-            {item.category}
-            {item.business_unit ? ` · ${item.business_unit}` : ''}
-            {' · '}{item.period_count} periods
+      {/* Main row — expand control is a button; actions sit beside it (no nesting) */}
+      <div className="flex items-center gap-2 px-3 py-2 hover:bg-deloitte-green/5 transition-colors">
+        <button
+          type="button"
+          className="flex items-center gap-2 flex-1 min-w-0 text-left"
+          onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
+        >
+          <span className="flex-shrink-0 text-surface-500" aria-hidden="true">
+            {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
           </span>
-        </div>
 
-        {/* Forecast value (editable) */}
-        {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- event barrier only */}
-        <div className="flex-shrink-0 w-20 text-right" onMouseDown={(e) => e.stopPropagation()}>
+          {/* AI recommendation */}
+          <div className="flex-shrink-0 w-16">
+            <AIBadge recommendation={item.ai_recommendation} />
+          </div>
+
+          {/* Name + business context */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5">
+              <MaterialityDot level={item.materiality} />
+              <span className="text-xs text-surface-200 truncate">{item.line_item_name}</span>
+            </div>
+            <span className="text-xs text-surface-500">
+              {item.category}
+              {item.business_unit ? ` · ${item.business_unit}` : ''}
+              {' · '}{item.period_count} periods
+            </span>
+          </div>
+
+          {/* Risk score */}
+          <div className="flex-shrink-0 w-20">
+            <RiskBar score={item.ai_risk_score} />
+          </div>
+
+          {/* Confidence */}
+          <div className="flex-shrink-0 w-10 text-center">
+            <ConfBadge score={item.avg_confidence} />
+          </div>
+        </button>
+
+        {/* Forecast value (editable) — outside expand button */}
+        <div className="flex-shrink-0 w-20 text-right">
           {isEditing ? (
             <div className="space-y-1">
               <input
@@ -547,19 +551,8 @@ function ReviewItemRow({
           )}
         </div>
 
-        {/* Risk score */}
-        <div className="flex-shrink-0 w-20">
-          <RiskBar score={item.ai_risk_score} />
-        </div>
-
-        {/* Confidence */}
-        <div className="flex-shrink-0 w-10 text-center">
-          <ConfBadge score={item.avg_confidence} />
-        </div>
-
         {/* Actions */}
-        {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- event barrier only */}
-        <div className="flex-shrink-0 flex items-center gap-1" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="flex-shrink-0 flex items-center gap-1">
           {item.review_status ? (
             <span className={`text-xs font-semibold px-2 py-0.5 rounded ${
               item.review_status === 'approved'
@@ -573,6 +566,7 @@ function ReviewItemRow({
           ) : (
             <>
               <button
+                type="button"
                 onClick={() => onAction(item.id, 'approve')}
                 className="p-1 hover:bg-deloitte-green/20 rounded text-deloitte-green/60 hover:text-deloitte-green transition-colors"
                 title="Approve"
@@ -580,6 +574,7 @@ function ReviewItemRow({
                 <ThumbsUp className="w-3.5 h-3.5" />
               </button>
               <button
+                type="button"
                 onClick={() => setCommenting(true)}
                 className="p-1 hover:bg-amber-500/20 rounded text-amber-500/60 hover:text-amber-400 transition-colors"
                 title="Comment & Reject"

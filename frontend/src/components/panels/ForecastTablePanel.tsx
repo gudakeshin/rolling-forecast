@@ -552,31 +552,31 @@ function ForecastRowItem({
   return (
     <>
       <tr
-        className={`border-b border-surface-700/20 transition-colors cursor-pointer ${
+        className={`border-b border-surface-700/20 transition-colors ${
           hasIssue
             ? recommendation === 'override' || recommendation === 'manual_input'
               ? 'bg-red-500/5 hover:bg-red-500/10'
               : 'bg-amber-500/5 hover:bg-amber-500/8'
             : 'hover:bg-deloitte-green/5'
         } ${row.is_subtotal ? 'bg-surface-800/50' : ''}`}
-        onClick={onToggle}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            onToggle();
-          }
-        }}
-        tabIndex={0}
-        role="button"
-        aria-expanded={isExpanded}
       >
         {/* Line Item Name */}
         <td className="px-3 py-2 text-surface-300">
           <div className="flex items-center gap-1.5" style={{ paddingLeft: `${(row.indent_level || 0) * 12}px` }}>
-            {reasoning && (
-              isExpanded
-                ? <ChevronDown className="w-3 h-3 text-surface-500 flex-shrink-0" />
-                : <ChevronRight className="w-3 h-3 text-surface-500 flex-shrink-0" />
+            {reasoning ? (
+              <button
+                type="button"
+                onClick={onToggle}
+                aria-expanded={isExpanded}
+                aria-label={isExpanded ? 'Collapse row details' : 'Expand row details'}
+                className="p-0.5 rounded text-surface-500 hover:text-surface-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deloitte-green"
+              >
+                {isExpanded
+                  ? <ChevronDown className="w-3 h-3 flex-shrink-0" />
+                  : <ChevronRight className="w-3 h-3 flex-shrink-0" />}
+              </button>
+            ) : (
+              <span className="w-4" aria-hidden="true" />
             )}
             <span className={`truncate ${row.is_subtotal ? 'font-bold text-white' : ''}`}>
               {row.line_item_name}

@@ -236,20 +236,13 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
       {activeTab === 'upload' && (
         <div className="space-y-3">
           {/* File Upload Zone */}
-          <div
-            role="button"
-            tabIndex={0}
+          <button
+            type="button"
             onDrop={handleDrop}
             onDragOver={e => e.preventDefault()}
             onClick={() => fileInputRef.current?.click()}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                fileInputRef.current?.click();
-              }
-            }}
             aria-label="Upload documents"
-            className="border-2 border-dashed border-surface-600 hover:border-deloitte-green/50 rounded-xl p-6 text-center cursor-pointer transition-colors"
+            className="w-full border-2 border-dashed border-surface-600 hover:border-deloitte-green/50 rounded-xl p-6 text-center cursor-pointer transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deloitte-green"
           >
             <input
               ref={fileInputRef}
@@ -258,6 +251,7 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
               accept=".pdf,.docx,.doc,.pptx,.xlsx,.xls,.csv,.txt,.md,.html,.htm"
               className="hidden"
               onChange={e => handleFileUpload(e.target.files)}
+              tabIndex={-1}
             />
             {isUploading ? (
               <Loader2 className="w-8 h-8 mx-auto mb-2 text-deloitte-green animate-spin" />
@@ -270,7 +264,7 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
             <p className="text-xs text-surface-600">
               PDF, DOCX, PPTX, XLSX, CSV, TXT, HTML
             </p>
-          </div>
+          </button>
 
           {/* URL Ingestion */}
           <div className="bg-surface-800/40 border border-surface-700/50 rounded-lg p-3">
@@ -363,17 +357,10 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
                     key={doc.id}
                     className="bg-surface-800/40 border border-surface-700/50 rounded-lg overflow-hidden"
                   >
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      className="flex items-center gap-2 p-2.5 w-full text-left cursor-pointer hover:bg-surface-700/30 transition-colors"
+                    <button
+                      type="button"
+                      className="flex items-center gap-2 p-2.5 w-full text-left cursor-pointer hover:bg-surface-700/30 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deloitte-green"
                       onClick={() => setExpandedDoc(isExpanded ? null : doc.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          setExpandedDoc(isExpanded ? null : doc.id);
-                        }
-                      }}
                       aria-expanded={isExpanded}
                     >
                       <Icon className="w-4 h-4 text-surface-400 shrink-0" />
@@ -407,7 +394,7 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
                       ) : (
                         <ChevronDown className="w-3 h-3 text-surface-500" />
                       )}
-                    </div>
+                    </button>
                     {isExpanded && (
                       <div className="px-3 pb-2.5 border-t border-surface-700/30 pt-2 space-y-1.5">
                         {doc.description && (
