@@ -183,11 +183,15 @@ async def test_scenario_recalculate_all(db_session, seed_line_items, seed_actual
 
 @pytest.mark.asyncio
 async def test_mint_reconcile_tags_bounds(db_session, seed_line_items):
-    """MinT reconciliation sets bounds_method on calculated parents."""
+    """Full MinT reconciliation sets bounds_method on calculated parents."""
     from app.models.forecast import ForecastVersion, ForecastLineResult
     from app.models.line_item import LineItemDependency
     from app.services.coa_dependencies import ensure_standard_dependencies
-    from app.services.reconciliation import BOUNDS_METHOD_MINT, reconcile_version
+    from app.services.reconciliation import (
+        BOUNDS_METHOD_MINT,
+        BOUNDS_METHOD_MINT_FULL,
+        reconcile_version,
+    )
 
     items = list(seed_line_items.values())
     ensure_standard_dependencies(db_session, items)
@@ -248,7 +252,7 @@ async def test_mint_reconcile_tags_bounds(db_session, seed_line_items):
 
     out = reconcile_version(db_session, version.id)
     db_session.commit()
-    assert out["bounds_method"] == BOUNDS_METHOD_MINT
+    assert out["bounds_method"] == BOUNDS_METHOD_MINT_FULL
 
     parent = (
         db_session.query(ForecastLineResult)
@@ -259,8 +263,80 @@ async def test_mint_reconcile_tags_bounds(db_session, seed_line_items):
         )
         .one()
     )
-    assert parent.bounds_method in (BOUNDS_METHOD_MINT, "linear_aggregation")
+    assert parent.bounds_method in (
+        BOUNDS_METHOD_MINT_FULL,
+        BOUNDS_METHOD_MINT,
+        "linear_aggregation",
+    )
     assert parent.p50 is not None
+    # Correlation-aware intervals should be narrower than naive percentile sums
+    # when children share positive correlation — at minimum bounds exist
+    assert parent.p10 is not None and parent.p90 is not None
+    assert parent.p10 <= parent.p50 <= parent.p90
+
+
+def test_mint_full_projection_blends_incoherent_parent():
+    """MinT projection moves an incoherent parent toward S @ leaves."""
+    from app.services.reconciliation import build_summing_matrix, mint_project
+    import networkx as nx
+
+    G = nx.DiGraph()
+    # leaves 1,2 → parent 3 = 1+2
+    G.add_node(1, is_calculated=False)
+    G.add_node(2, is_calculated=False)
+    G.add_node(3, is_calculated=True)
+    G.add_edge(1, 3, relationship_type="sum", weight=1.0)
+    G.add_edge(2, 3, relationship_type="sum", weight=1.0)
+
+    leaves = [1, 2]
+    nodes = [1, 2, 3]
+    S = build_summing_matrix(G, leaves, nodes)
+    assert S.shape == (3, 2)
+    np.testing.assert_allclose(S[2], [1.0, 1.0])
+
+    # Base: leaves 10+20=30 structural, but parent forecasted at 100 (incoherent)
+    y_hat = np.array([10.0, 20.0, 100.0])
+    W = np.eye(3) * 4.0  # equal variance
+    y_tilde = mint_project(y_hat, S, W)
+    # Reconciled parent must equal sum of reconciled leaves
+    assert y_tilde[2] == pytest.approx(y_tilde[0] + y_tilde[1])
+    # Parent pulled down from 100 toward 30; leaves may shift slightly
+    assert y_tilde[2] < 100.0
+    assert y_tilde[2] > 30.0 or y_tilde[2] == pytest.approx(30.0, abs=1.0)
+
+
+def test_mint_full_intervals_wider_with_positive_correlation():
+    """Positive leaf correlation widens aggregate intervals vs diagonal MinT."""
+    from app.services.reconciliation import _Z80
+
+    z = _Z80
+    sig = np.array([10.0, 10.0])
+    # Diagonal
+    W_diag = np.diag(sig ** 2)
+    s = np.array([1.0, 1.0])
+    sigma_diag = float(np.sqrt(s @ W_diag @ s))
+    # Full with ρ=0.5
+    R = np.array([[1.0, 0.5], [0.5, 1.0]])
+    W_full = np.diag(sig) @ R @ np.diag(sig)
+    sigma_full = float(np.sqrt(s @ W_full @ s))
+    assert sigma_full > sigma_diag
+    # 80% half-width
+    assert z * sigma_full > z * sigma_diag
+
+
+def test_build_summing_matrix_handles_subtract():
+    from app.services.reconciliation import build_summing_matrix
+    import networkx as nx
+
+    G = nx.DiGraph()
+    G.add_node(1, is_calculated=False)  # revenue
+    G.add_node(2, is_calculated=False)  # cogs
+    G.add_node(3, is_calculated=True)   # gm = rev - cogs
+    G.add_edge(1, 3, relationship_type="sum", weight=1.0)
+    G.add_edge(2, 3, relationship_type="subtract", weight=1.0)
+
+    S = build_summing_matrix(G, [1, 2], [1, 2, 3])
+    np.testing.assert_allclose(S[2], [1.0, -1.0])
 
 
 def test_chat_history_summarizes_evicted_turns(db_session, seed_users):

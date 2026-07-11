@@ -110,7 +110,7 @@ class ForecastLineResult(Base):
     p50: Mapped[float] = mapped_column(Float, nullable=False)  # Point forecast (median)
     p90: Mapped[float | None] = mapped_column(Float, nullable=True)  # 90th percentile
 
-    # How interval bounds were produced (model | linear_aggregation | mint_diagonal)
+    # How interval bounds were produced (model | linear_aggregation | mint_diagonal | mint_full)
     bounds_method: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
     # Confidence

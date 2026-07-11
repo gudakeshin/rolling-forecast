@@ -640,7 +640,7 @@ class GenerateBaselineSkill(BaseSkill):
         finally:
             reset_calendar(cal_token)
 
-        # Reconcile CoA parents (p50 identities + MinT-diagonal bounds)
+        # Reconcile CoA parents (p50 identities + full MinT correlation-aware bounds)
         try:
             recon = reconcile_version(db, version.id)
             logger.info("MinT reconciliation: %s", recon)

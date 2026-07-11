@@ -162,7 +162,7 @@ class BranchForecastSkill(BaseSkill):
 
         db.flush()
 
-        # Recompute calculated lines + MinT-diagonal interval bounds
+        # Recompute calculated lines + full MinT interval bounds
         from app.services.reconciliation import reconcile_version
         reconcile_version(db, branch.id)
         db.commit()
