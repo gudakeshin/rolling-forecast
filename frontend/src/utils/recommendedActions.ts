@@ -1,4 +1,3 @@
-import { apiPost } from '../api/client';
 import { usePanelStore } from '../store/panelStore';
 
 export interface RecommendedAction {
@@ -83,20 +82,12 @@ export async function dispatchRecommendedAction(
   }
 
   if ((key.includes('approve') || key === 'confirm_zero') && versionId) {
-    try {
-      await apiPost('/approvals/submit', { version_id: versionId });
-    } catch (e) {
-      console.error('Approve/submit action failed', e);
-    }
+    openPanel('approvals', { version_id: versionId });
     return true;
   }
 
   if (key.includes('submit') && versionId) {
-    try {
-      await apiPost('/approvals/submit', { version_id: versionId });
-    } catch (e) {
-      console.error('Submit-for-review action failed', e);
-    }
+    openPanel('approvals', { version_id: versionId });
     return true;
   }
 

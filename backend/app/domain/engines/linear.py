@@ -20,28 +20,34 @@ class LinearTrendModel(IForecastModel):
         return 6  # Needs very little data
 
     def fit(self, series: pd.Series, dates: pd.DatetimeIndex) -> dict[str, Any]:
-        X = np.arange(len(series)).reshape(-1, 1)
-        y = series.values
+        X = np.arange(len(series), dtype=float)
+        y = series.values.astype(float)
 
         model = LinearRegression()
-        model.fit(X, y)
+        model.fit(X.reshape(-1, 1), y)
 
-        # Compute residual std for confidence intervals
-        predictions = model.predict(X)
+        predictions = model.predict(X.reshape(-1, 1))
         residuals = y - predictions
-        residual_std = float(np.std(residuals))
+        n = len(series)
+        # Unbiased residual std (ddof=2 for intercept+slope)
+        dof = max(n - 2, 1)
+        residual_std = float(np.sqrt(np.sum(residuals ** 2) / dof))
 
-        # R-squared
-        ss_res = np.sum(residuals ** 2)
-        ss_tot = np.sum((y - np.mean(y)) ** 2)
-        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+        ss_res = float(np.sum(residuals ** 2))
+        ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+
+        x_bar = float(np.mean(X))
+        sxx = float(np.sum((X - x_bar) ** 2))
 
         return {
             "slope": float(model.coef_[0]),
             "intercept": float(model.intercept_),
             "residual_std": residual_std,
             "r_squared": float(r_squared),
-            "n_points": len(series),
+            "n_points": n,
+            "x_bar": x_bar,
+            "sxx": sxx,
         }
 
     def predict(
@@ -54,17 +60,30 @@ class LinearTrendModel(IForecastModel):
         slope = params["slope"]
         intercept = params["intercept"]
         residual_std = params["residual_std"]
-        n_points = params["n_points"]
+        n_points = int(params["n_points"])
+        x_bar = float(params.get("x_bar", (n_points - 1) / 2.0))
+        sxx = float(params.get("sxx", 0.0))
+        if sxx <= 0:
+            sxx = float(np.sum((np.arange(n_points) - x_bar) ** 2)) + 1e-12
 
-        # Generate future indices
-        future_indices = np.arange(n_points, n_points + horizon)
+        future_indices = np.arange(n_points, n_points + horizon, dtype=float)
         point_forecast = slope * future_indices + intercept
 
-        # Confidence intervals (widen with distance from training data)
-        z = 1.28  # ~P10/P90 for 80% CI
-        interval_widths = z * residual_std * np.sqrt(1 + (future_indices - n_points / 2) ** 2 / (n_points * np.var(np.arange(n_points)) + 1e-10))
-        # Simplified: use constant width
-        interval_widths = z * residual_std * (1 + 0.1 * np.arange(horizon))
+        # OLS prediction interval: ŷ ± t·s·sqrt(1 + 1/n + (x−x̄)²/Sxx)
+        alpha = 1.0 - confidence_level
+        dof = max(n_points - 2, 1)
+        try:
+            from scipy import stats as scipy_stats
+
+            t_crit = float(scipy_stats.t.ppf(1.0 - alpha / 2.0, dof))
+        except Exception:
+            # Fallback ~N(0,1) quantile for 80% → 1.28
+            t_crit = 1.2815515655446004 if abs(confidence_level - 0.80) < 1e-6 else 1.96
+
+        se = residual_std * np.sqrt(
+            1.0 + 1.0 / n_points + (future_indices - x_bar) ** 2 / sxx
+        )
+        interval_widths = t_crit * se
 
         lower = point_forecast - interval_widths
         upper = point_forecast + interval_widths
@@ -81,5 +100,5 @@ class LinearTrendModel(IForecastModel):
             model_type="linear",
             parameters=params,
             fit_metrics={"r_squared": params["r_squared"]},
-            diagnostics={"seasonality_detected": False},
+            diagnostics={"seasonality_detected": False, "pi_method": "ols_prediction"},
         )

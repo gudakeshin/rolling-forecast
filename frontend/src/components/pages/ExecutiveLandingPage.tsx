@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  TrendingUp, Download, ArrowLeft, Shield, AlertTriangle, BarChart3,
+  TrendingUp, Download, ArrowLeft, Shield, AlertTriangle, BarChart3, CheckSquare,
 } from 'lucide-react';
 import { apiGet } from '../../api/client';
 import { useAuthStore } from '../../store/authStore';
+import { usePanelStore } from '../../store/panelStore';
+import { toast } from '../../store/toastStore';
+import { PanelContainer } from '../panels/PanelContainer';
+import { DataTable, type DataTableColumn } from '../ui/DataTable';
 
 interface LatestResponse {
   version: {
@@ -33,6 +37,8 @@ function formatCurrency(val: number): string {
 
 export function ExecutiveLandingPage() {
   const token = useAuthStore((s) => s.token);
+  const openPanel = usePanelStore((s) => s.openPanel);
+  const isPanelOpen = usePanelStore((s) => s.isOpen);
   const [data, setData] = useState<LatestResponse | null>(null);
   const [bridge, setBridge] = useState<any>(null);
   const [error, setError] = useState('');
@@ -46,14 +52,16 @@ export function ExecutiveLandingPage() {
         setData(latest);
         if (latest.version?.id) {
           try {
-            const b = await apiGet<any>(`/executive/budget-bridge/${latest.version.id}?page_size=20`);
+            const b = await apiGet<any>(`/executive/budget-bridge/${latest.version.id}?page_size=100`);
             setBridge(b);
           } catch {
-            /* budget optional */
+            toast.error('Budget bridge unavailable');
           }
         }
       } catch (e: any) {
-        setError(e.message || 'Failed to load executive view');
+        const message = e.message || 'Failed to load executive view';
+        setError(message);
+        toast.error(message);
       } finally {
         setLoading(false);
       }
@@ -75,8 +83,11 @@ export function ExecutiveLandingPage() {
       a.download = `${data.version.name}_board_pack.${format}`;
       a.click();
       URL.revokeObjectURL(url);
+      toast.success(`Board pack downloaded (${format.toUpperCase()})`);
     } catch (e: any) {
-      setError(e.message || 'Export failed');
+      const message = e.message || 'Export failed';
+      setError(message);
+      toast.error(message);
     } finally {
       setExporting(false);
     }
@@ -103,6 +114,18 @@ export function ExecutiveLandingPage() {
         {data?.version && (
           <div className="flex gap-2">
             <button
+              onClick={() => openPanel('review_dashboard', { version_id: data.version!.id })}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-surface-800 text-surface-300 border border-surface-700 rounded-lg hover:text-white"
+            >
+              <Shield className="w-3.5 h-3.5" /> Review dashboard
+            </button>
+            <button
+              onClick={() => openPanel('approvals', { version_id: data.version!.id })}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-surface-800 text-surface-300 border border-surface-700 rounded-lg hover:text-white"
+            >
+              <CheckSquare className="w-3.5 h-3.5" /> Approvals
+            </button>
+            <button
               onClick={() => downloadPack('pptx')}
               disabled={exporting}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-deloitte-green/20 text-deloitte-green border border-deloitte-green/30 rounded-lg"
@@ -119,6 +142,8 @@ export function ExecutiveLandingPage() {
           </div>
         )}
       </header>
+
+      {isPanelOpen && <PanelContainer />}
 
       <main className="max-w-5xl mx-auto px-6 py-8 space-y-8">
         {error && (
@@ -182,37 +207,59 @@ export function ExecutiveLandingPage() {
                     <span className="text-surface-500 font-normal"> · materiality ≥ {bridge.materiality_pct}%</span>
                   )}
                 </h2>
-                <div className="overflow-x-auto border border-surface-700/40 rounded-xl">
-                  <table className="w-full text-xs">
-                    <thead className="bg-surface-900 text-surface-500 text-left">
-                      <tr>
-                        <th className="px-3 py-2">Line</th>
-                        <th className="px-3 py-2 text-right">Forecast</th>
-                        <th className="px-3 py-2 text-right">Budget</th>
-                        <th className="px-3 py-2 text-right">Prior</th>
-                        <th className="px-3 py-2 text-right">Var vs Budget</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {bridge.rows.slice(0, 15).map((r: any) => (
-                        <tr key={r.line_item_id} className="border-t border-surface-800">
-                          <td className="px-3 py-2 text-surface-300">
-                            {r.line_item}
-                            {r.material && (
+                <DataTable
+                  title="Bridge lines"
+                  maxHeight={420}
+                  exportFilename="budget_bridge"
+                  columns={
+                    [
+                      {
+                        key: 'line_item',
+                        label: 'Line',
+                        render: (v, row) => (
+                          <span>
+                            {String(v)}
+                            {row.material ? (
                               <span className="ml-2 text-xs text-amber-400">material</span>
-                            )}
-                          </td>
-                          <td className="px-3 py-2 text-right">{formatCurrency(r.current_forecast)}</td>
-                          <td className="px-3 py-2 text-right">{formatCurrency(r.budget)}</td>
-                          <td className="px-3 py-2 text-right">{formatCurrency(r.prior_forecast)}</td>
-                          <td className={`px-3 py-2 text-right ${r.variance_vs_budget < 0 ? 'text-red-400' : 'text-green-400'}`}>
-                            {formatCurrency(r.variance_vs_budget)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                            ) : null}
+                          </span>
+                        ),
+                      },
+                      {
+                        key: 'current_forecast',
+                        label: 'Forecast',
+                        align: 'right',
+                        render: (v) => formatCurrency(Number(v) || 0),
+                      },
+                      {
+                        key: 'budget',
+                        label: 'Budget',
+                        align: 'right',
+                        render: (v) => formatCurrency(Number(v) || 0),
+                      },
+                      {
+                        key: 'prior_forecast',
+                        label: 'Prior',
+                        align: 'right',
+                        render: (v) => formatCurrency(Number(v) || 0),
+                      },
+                      {
+                        key: 'variance_vs_budget',
+                        label: 'Var vs Budget',
+                        align: 'right',
+                        render: (v) => {
+                          const n = Number(v) || 0;
+                          return (
+                            <span className={n < 0 ? 'text-red-400' : 'text-green-400'}>
+                              {formatCurrency(n)}
+                            </span>
+                          );
+                        },
+                      },
+                    ] as DataTableColumn<Record<string, unknown>>[]
+                  }
+                  rows={(bridge.rows || []) as Record<string, unknown>[]}
+                />
               </section>
             )}
           </>

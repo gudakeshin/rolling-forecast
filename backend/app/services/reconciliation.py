@@ -341,6 +341,11 @@ def mint_project(y_hat: np.ndarray, S: np.ndarray, W: np.ndarray) -> np.ndarray:
     ``y_hat`` and rows of ``S`` are aligned (n_nodes,). ``W`` is n_nodes×n_nodes
     base-forecast error covariance. Falls back to bottom-up ``S @ y_hat[leaves]``
     when W is singular beyond repair.
+
+    Honesty note: when all non-leaf nodes are structurally calculated from leaves
+    (parents already equal ``S @ y_leaf``), this projection is bottom-up-equivalent
+    (``y_tilde ≈ S @ y_leaf``). Divergence only appears when incoherent parent
+    base forecasts are present in ``y_hat``.
     """
     y_hat = np.asarray(y_hat, dtype=float).reshape(-1)
     n = y_hat.shape[0]
@@ -382,7 +387,7 @@ def _leaf_sigma_from_intervals(
         if r is not None and r.p10 is not None and r.p90 is not None:
             sig[i] = max((r.p90 - r.p10) / (2 * z), 0.0)
         elif r is not None and r.p50:
-            # 10% relative fallback
+            # 5% relative fallback when interval bounds are missing
             sig[i] = abs(float(r.p50)) * 0.05
     return sig
 

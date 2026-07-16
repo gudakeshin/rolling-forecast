@@ -15,7 +15,6 @@ from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.models.forecast import ForecastVersion, ForecastLineResult
 from app.models.line_item import LineItem
 from app.models.override import Override
-from app.services.dependency_graph import DependencyGraphManager
 from app.services.error_handlers import OverrideValidator, check_concurrent_override
 
 logger = logging.getLogger(__name__)
@@ -232,9 +231,11 @@ class ApplyOverrideSkill(BaseSkill):
             return SkillResult.fail(str(e))
 
         # Apply overrides on the (possibly cloned) draft version
-        dag = DependencyGraphManager(db)
+        from app.services.overrides import recalculate_and_reconcile
+
         overrides_created = []
         total_recalc = 0
+        touched_periods: list[str] = []
 
         try:
             for line_result in results:
@@ -259,19 +260,23 @@ class ApplyOverrideSkill(BaseSkill):
 
                 line_result.is_overridden = True
                 line_result.override_value = new_value
-
-                recalc_count = dag.recalculate_dependents(
-                    version_id, line_item.id, [line_result.period]
-                )
-                override.downstream_recalc_count = recalc_count
-                total_recalc += recalc_count
+                touched_periods.append(line_result.period)
 
                 overrides_created.append({
                     "period": line_result.period,
                     "original": original_value,
                     "new": new_value,
-                    "recalculated": recalc_count,
+                    "override": override,
                 })
+
+            # One batched recalc + MinT pass for all touched periods
+            total_recalc = recalculate_and_reconcile(
+                db, version_id, [line_item.id], touched_periods or None
+            )
+            for row in overrides_created:
+                row["override"].downstream_recalc_count = total_recalc
+                row["recalculated"] = total_recalc
+                del row["override"]
 
             version.override_count = (
                 db.query(Override)
@@ -365,6 +370,9 @@ class ApplyOverrideSkill(BaseSkill):
         self, db: Session, params: dict[str, Any], context: SkillContext
     ) -> SkillResult:
         """Revert an existing override."""
+        from app.services.overrides import revert_override
+        from app.services.permissions import resolve_skill_user, scoped_line_items
+
         override_id = params.get("override_id")
         version_id = params.get("version_id") or context.context_manager.get_active_version_id()
 
@@ -379,9 +387,6 @@ class ApplyOverrideSkill(BaseSkill):
                 return SkillResult.fail(f"Override '{override_id}' not found.")
             overrides_to_revert.append(override)
         else:
-            # Find by line item (BU-scoped)
-            from app.services.permissions import resolve_skill_user, scoped_line_items
-
             line_item_name = params.get("line_item_name", "")
             actor = resolve_skill_user(context)
             line_item = (
@@ -408,41 +413,24 @@ class ApplyOverrideSkill(BaseSkill):
         if not overrides_to_revert:
             return SkillResult.fail("No active overrides found to revert.")
 
-        from datetime import datetime, timezone
+        actor = resolve_skill_user(context)
+        # Minimal user-like object for service (id + username)
+        class _Actor:
+            def __init__(self, u):
+                self.id = u.id if u else context.user_id
+                self.username = getattr(u, "username", None) or context.user_id or "system"
 
-        dag = DependencyGraphManager(db)
+        user = _Actor(actor)
         reverted_periods = []
         total_recalc = 0
 
         for override in overrides_to_revert:
-            # Revert the forecast result
-            line_result = (
-                db.query(ForecastLineResult)
-                .filter(
-                    ForecastLineResult.version_id == override.version_id,
-                    ForecastLineResult.line_item_id == override.line_item_id,
-                    ForecastLineResult.period == override.period,
-                )
-                .first()
-            )
-
-            if line_result:
-                line_result.is_overridden = False
-                line_result.override_value = None
-                line_result.p50 = override.original_model_value
-
-                # Recalculate downstream
-                recalc_count = dag.recalculate_dependents(
-                    override.version_id, override.line_item_id, [override.period]
-                )
-                total_recalc += recalc_count
-
-            override.status = "reverted"
-            override.reverted_at = datetime.now(timezone.utc)
-            override.reverted_by = context.user_id
-            reverted_periods.append(override.period)
-
-        db.commit()
+            try:
+                result = revert_override(db, override.id, user)
+                total_recalc += result.get("downstream_recalc", 0)
+                reverted_periods.append(override.period)
+            except Exception as e:
+                return SkillResult.fail(str(getattr(e, "detail", None) or e))
 
         line_item = db.query(LineItem).filter(LineItem.id == overrides_to_revert[0].line_item_id).first()
 

@@ -420,6 +420,49 @@ class MasterAgent:
                         # Handle other node types (custom nodes, checkpoints, etc.)
                         logger.debug(f"Unhandled node in stream: {node_name}")
 
+            # Numeric grounding (non-blocking): flag free-text figures not seen in tool results
+            grounding_note = None
+            if final_text and all_tool_calls:
+                try:
+                    from app.services.numeric_grounding import (
+                        _NUMBER_RE,
+                        validate_numeric_claims,
+                    )
+
+                    allowed_figures: set[str] = set()
+                    for tc in all_tool_calls:
+                        blob = json.dumps(tc, default=str)
+                        for m in _NUMBER_RE.finditer(blob):
+                            raw = m.group(0)
+                            allowed_figures.add(raw)
+                            allowed_figures.add(raw.replace(",", "").rstrip("%"))
+                    for block in all_content_blocks:
+                        blob = json.dumps(block, default=str)
+                        for m in _NUMBER_RE.finditer(blob):
+                            raw = m.group(0)
+                            allowed_figures.add(raw)
+                            allowed_figures.add(raw.replace(",", "").rstrip("%"))
+
+                    cleaned, verified, total = validate_numeric_claims(
+                        final_text, allowed_figures
+                    )
+                    if total > 0 and verified < total:
+                        grounding_note = {
+                            "type": "status",
+                            "data": {
+                                "step": "numeric_grounding",
+                                "verified": verified,
+                                "total": total,
+                                "message": (
+                                    f"{total - verified} figure(s) not found in tool "
+                                    "results — marked as [unverified]."
+                                ),
+                            },
+                        }
+                        final_text = cleaned
+                except Exception:
+                    logger.debug("Numeric grounding skipped", exc_info=True)
+
             # Add final text as content block
             if final_text:
                 text_block = {"type": "text", "data": {"text": final_text}}
@@ -429,6 +472,9 @@ class MasterAgent:
                     "event": "content_block",
                     "data": text_block,
                 }
+            if grounding_note:
+                all_content_blocks.append(grounding_note)
+                yield {"event": "content_block", "data": grounding_note}
 
             # Record approximate token spend against the conversation budget
             try:

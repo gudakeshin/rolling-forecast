@@ -4,7 +4,16 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, Float, Integer, ForeignKey, Text
+from sqlalchemy import (
+    String,
+    DateTime,
+    Float,
+    Integer,
+    ForeignKey,
+    Text,
+    UniqueConstraint,
+    Index,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -53,6 +62,15 @@ class ActualsRecord(Base):
     """Individual GL-level actual value for a line item in a period."""
 
     __tablename__ = "actuals_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "dataset_id",
+            "line_item_id",
+            "period",
+            name="uq_actuals_dataset_line_period",
+        ),
+        Index("ix_actuals_line_item_period", "line_item_id", "period"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     dataset_id: Mapped[str] = mapped_column(

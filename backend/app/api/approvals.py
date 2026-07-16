@@ -30,12 +30,55 @@ class DecideRequest(BaseModel):
     comments: str | None = None
 
 
+def _can_decide(
+    db: Session,
+    step: ApprovalStep,
+    version: ForecastVersion | None,
+    wf: ApprovalWorkflow | None,
+    user: User,
+) -> tuple[bool, str | None]:
+    """Role-gate + SoD + level-ordering eligibility for a pending step."""
+    if step.status != "pending":
+        return False, f"Step already {step.status}"
+
+    if wf and wf.require_sod and version and version.created_by == user.id:
+        return False, "Segregation of duties: the forecast creator cannot approve their own submission"
+
+    role_name = user.role.name if user.role else ""
+    if role_name not in (step.required_role, "admin") and not (
+        step.required_role == "reviewer" and user.role and user.role.can_review
+    ):
+        if not (user.role and user.role.can_admin):
+            return False, f"Step requires role '{step.required_role}', you are '{role_name}'"
+
+    prior_pending = (
+        db.query(ApprovalStep)
+        .filter(
+            ApprovalStep.version_id == step.version_id,
+            ApprovalStep.level < step.level,
+            ApprovalStep.status != "approved",
+        )
+        .count()
+    )
+    if prior_pending:
+        return False, "Previous approval levels must be completed first"
+
+    return True, None
+
+
+def _actor_username(db: Session, actor_id: str | None) -> str | None:
+    if not actor_id:
+        return None
+    actor = db.query(User).filter(User.id == actor_id).first()
+    return actor.username if actor else None
+
+
 @router.get("/workflows")
 async def list_workflows(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    wfs = db.query(ApprovalWorkflow).filter(ApprovalWorkflow.is_active == True).all()
+    wfs = db.query(ApprovalWorkflow).filter(ApprovalWorkflow.is_active == True).all()  # noqa: E712
     return [
         {
             "id": w.id,
@@ -66,7 +109,7 @@ async def submit_for_approval(
     if not wf:
         wf = (
             db.query(ApprovalWorkflow)
-            .filter(ApprovalWorkflow.is_active == True)
+            .filter(ApprovalWorkflow.is_active == True)  # noqa: E712
             .order_by(ApprovalWorkflow.created_at.asc())
             .first()
         )
@@ -85,7 +128,7 @@ async def submit_for_approval(
             workflow_id=wf.id,
             level=int(level["level"]),
             required_role=level["role"],
-            status="pending" if int(level["level"]) == 1 else "pending",
+            status="pending",
         ))
 
     version.status = "in_review"
@@ -108,26 +151,57 @@ async def approval_status(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
+    if not version:
+        raise HTTPException(404, "Version not found")
+
     steps = (
         db.query(ApprovalStep)
         .filter(ApprovalStep.version_id == version_id)
         .order_by(ApprovalStep.level)
         .all()
     )
+
+    wf_ids = {s.workflow_id for s in steps if s.workflow_id}
+    workflows = {
+        w.id: w
+        for w in db.query(ApprovalWorkflow).filter(ApprovalWorkflow.id.in_(wf_ids)).all()
+    } if wf_ids else {}
+
+    step_payloads = []
+    for s in steps:
+        wf = workflows.get(s.workflow_id)
+        can_decide, blocked_reason = _can_decide(db, s, version, wf, current_user)
+        step_payloads.append({
+            "id": s.id,
+            "level": s.level,
+            "required_role": s.required_role,
+            "status": s.status,
+            "actor_id": s.actor_id,
+            "actor_username": _actor_username(db, s.actor_id),
+            "comments": s.comments,
+            "decided_at": s.decided_at.isoformat() if s.decided_at else None,
+            "can_decide": can_decide,
+            "blocked_reason": blocked_reason,
+        })
+
+    is_creator = version.created_by == current_user.id
+    can_submit = (
+        version.status == "draft"
+        and bool(current_user.role and current_user.role.can_generate)
+    )
+
     return {
         "version_id": version_id,
-        "steps": [
-            {
-                "id": s.id,
-                "level": s.level,
-                "required_role": s.required_role,
-                "status": s.status,
-                "actor_id": s.actor_id,
-                "comments": s.comments,
-                "decided_at": s.decided_at.isoformat() if s.decided_at else None,
-            }
-            for s in steps
-        ],
+        "version": {
+            "id": version.id,
+            "name": version.name,
+            "status": version.status,
+            "created_by": version.created_by,
+        },
+        "steps": step_payloads,
+        "can_submit": can_submit,
+        "is_creator": is_creator,
     }
 
 
@@ -146,36 +220,12 @@ async def decide_step(
     version = db.query(ForecastVersion).filter(ForecastVersion.id == step.version_id).first()
     wf = db.query(ApprovalWorkflow).filter(ApprovalWorkflow.id == step.workflow_id).first()
 
-    # SoD: submitter cannot approve
-    if wf and wf.require_sod and version and version.created_by == current_user.id:
-        raise HTTPException(
-            403,
-            "Segregation of duties: the forecast creator cannot approve their own submission",
-        )
-
-    # Role gate for this level
-    role_name = current_user.role.name if current_user.role else ""
-    if role_name not in (step.required_role, "admin") and not (
-        step.required_role == "reviewer" and current_user.role and current_user.role.can_review
-    ):
-        if not (current_user.role and current_user.role.can_admin):
-            raise HTTPException(
-                403,
-                f"Step requires role '{step.required_role}', you are '{role_name}'",
-            )
-
-    # Ensure prior levels approved
-    prior_pending = (
-        db.query(ApprovalStep)
-        .filter(
-            ApprovalStep.version_id == step.version_id,
-            ApprovalStep.level < step.level,
-            ApprovalStep.status != "approved",
-        )
-        .count()
-    )
-    if prior_pending:
-        raise HTTPException(400, "Previous approval levels must be completed first")
+    can_decide, reason = _can_decide(db, step, version, wf, current_user)
+    if not can_decide:
+        status = 403 if reason and (
+            "segregation" in reason.lower() or "requires role" in reason.lower()
+        ) else 400
+        raise HTTPException(status, reason or "Cannot decide this step")
 
     if body.action not in ("approve", "reject"):
         raise HTTPException(400, "action must be approve or reject")
@@ -188,7 +238,8 @@ async def decide_step(
     if body.action == "reject":
         if not body.comments:
             raise HTTPException(400, "Comments required when rejecting")
-        version.status = "draft"
+        if version:
+            version.status = "draft"
         # Cancel remaining pending
         db.query(ApprovalStep).filter(
             ApprovalStep.version_id == step.version_id,
@@ -203,7 +254,7 @@ async def decide_step(
             )
             .count()
         )
-        if remaining == 0:
+        if remaining == 0 and version:
             version.status = "approved"
             version.approved_at = datetime.now(timezone.utc)
             version.approved_by = current_user.id

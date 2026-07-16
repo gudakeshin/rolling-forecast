@@ -3,9 +3,10 @@ import {
   Upload, Link2, Search, Trash2, FileText, FileSpreadsheet,
   Image, Globe, File, Loader2, CheckCircle, XCircle,
   ChevronDown, ChevronUp, Filter, FolderOpen, Plus,
-  ExternalLink, Tag, Clock, Database, AlertCircle,
+  ExternalLink, Tag, Clock, Database, AlertCircle, Download,
 } from 'lucide-react';
 import { apiPost, apiDelete, apiGet } from '../../api/client';
+import { downloadCsv } from '../ui/DataTable';
 
 const FILE_ICONS: Record<string, typeof FileText> = {
   pdf: FileText,
@@ -191,6 +192,32 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
     handleFileUpload(e.dataTransfer.files);
   }, [handleFileUpload]);
 
+  const documentColumns = [
+    { key: 'original_name', label: 'Name' },
+    { key: 'file_type', label: 'Type' },
+    { key: 'scope', label: 'Scope' },
+    { key: 'status', label: 'Status' },
+    { key: 'chunk_count', label: 'Chunk Count' },
+    { key: 'file_size_bytes', label: 'File Size (bytes)' },
+    { key: 'created_at', label: 'Created At' },
+  ];
+
+  const handleExportDocuments = () => {
+    downloadCsv(
+      'documents_export',
+      documentColumns,
+      filteredDocs.map((doc) => ({
+        original_name: doc.original_name,
+        file_type: doc.file_type,
+        scope: doc.scope,
+        status: doc.status,
+        chunk_count: doc.chunk_count,
+        file_size_bytes: doc.file_size_bytes,
+        created_at: doc.created_at || '',
+      })) as Record<string, unknown>[],
+    );
+  };
+
   return (
     <div className="space-y-3">
       {/* Header Stats */}
@@ -310,7 +337,8 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
       {activeTab === 'documents' && (
         <div className="space-y-2">
           {/* Filters */}
-          <div className="flex gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex gap-2">
             <select
               value={scopeFilter}
               onChange={e => setScopeFilter(e.target.value)}
@@ -332,6 +360,18 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
                   <option key={t} value={t}>{t.toUpperCase()}</option>
                 ))}
               </select>
+            )}
+            </div>
+            {filteredDocs.length > 0 && (
+              <button
+                type="button"
+                onClick={handleExportDocuments}
+                className="inline-flex items-center gap-1.5 text-xs text-surface-300 hover:text-white px-2 py-1 rounded-md border border-surface-600 hover:border-deloitte-green/40 shrink-0"
+                title="Export documents CSV"
+              >
+                <Download className="w-3.5 h-3.5" />
+                CSV
+              </button>
             )}
           </div>
 

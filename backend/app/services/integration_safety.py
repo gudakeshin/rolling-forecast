@@ -7,6 +7,7 @@ import re
 import socket
 from urllib.parse import urljoin, urlparse
 
+import httpx
 import sqlparse
 from sqlparse.sql import Statement
 from sqlparse.tokens import DML, Keyword
@@ -106,10 +107,84 @@ def assert_safe_integration_url(url: str, kind: str) -> None:
     host = parsed.hostname
     if not host:
         raise ValueError("URL must include a hostname")
-    if kind == "erp" and parsed.scheme not in ("http", "https"):
-        raise ValueError("ERP URLs must use http or https")
+    if kind in ("erp", "web", "url") and parsed.scheme not in ("http", "https"):
+        raise ValueError("URLs must use http or https")
     if is_private_host(host):
         raise ValueError("URL host is not allowed (private/loopback)")
+
+
+def _resolve_public_ip(hostname: str) -> str:
+    """Resolve hostname and return a public IP; raise if only private addresses."""
+    host = hostname.strip("[]").lower()
+    try:
+        direct = ipaddress.ip_address(host)
+        if _ip_is_private(direct):
+            raise ValueError("URL host is not allowed (private/loopback)")
+        return str(direct)
+    except ValueError as exc:
+        if "not allowed" in str(exc):
+            raise
+
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror as exc:
+        raise ValueError("URL host could not be resolved") from exc
+
+    for info in infos:
+        addr = info[4][0]
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            continue
+        if not _ip_is_private(ip):
+            return str(ip)
+    raise ValueError("URL host is not allowed (private/loopback)")
+
+
+def safe_fetch_url(
+    url: str,
+    *,
+    kind: str = "web",
+    timeout: float = 30.0,
+    max_redirects: int = 5,
+) -> httpx.Response:
+    """Fetch a URL with SSRF controls: deny-list, per-hop redirects, resolved-IP pin.
+
+    Does **not** use ``follow_redirects=True``. Each Location is re-validated.
+    Before every connect we resolve the hostname and require a public IP
+    (closes DNS-rebinding TOCTOU between check and request).
+    """
+    current = url.strip()
+    if not current.startswith(("http://", "https://")):
+        current = "https://" + current
+
+    seen: set[str] = set()
+    for _ in range(max_redirects + 1):
+        if current in seen:
+            raise ValueError("Redirect loop detected")
+        seen.add(current)
+
+        parsed = urlparse(current)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("URLs must use http or https")
+        assert_safe_integration_url(current, kind)
+        # Pin: force a public resolved IP immediately before connect
+        _resolve_public_ip(parsed.hostname or "")
+
+        with httpx.Client(follow_redirects=False, timeout=timeout) as client:
+            resp = client.get(current)
+
+        if resp.status_code in (301, 302, 303, 307, 308):
+            loc = resp.headers.get("Location") or resp.headers.get("location")
+            if not loc:
+                raise ValueError("Redirect missing Location header")
+            current = urljoin(current, loc)
+            continue
+
+        resp.raise_for_status()
+        return resp
+
+    raise ValueError(f"Exceeded {max_redirects} redirects")
 
 
 def resolve_erp_url(base_url: str, relative_path: str) -> str:

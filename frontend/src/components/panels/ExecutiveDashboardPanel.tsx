@@ -12,6 +12,9 @@ import {
   AlertOctagon, Lightbulb, ChevronRight,
 } from 'lucide-react';
 import { usePanelStore } from '../../store/panelStore';
+import { useCan } from '../../store/authStore';
+import { toast } from '../../store/toastStore';
+import { downloadCsv } from '../ui/DataTable';
 
 const COLORS = {
   green: '#86BC25',
@@ -160,7 +163,13 @@ function ForecastHero({ position, version }: { position: ExecData['position']; v
 }
 
 // ─── Review Progress Bar ───────────────────────────
-function ReviewProgress({ progress }: { progress: ExecData['review_progress'] }) {
+function ReviewProgress({
+  progress,
+  versionId,
+}: {
+  progress: ExecData['review_progress'];
+  versionId: string;
+}) {
   const openPanel = usePanelStore((s) => s.openPanel);
 
   return (
@@ -205,9 +214,9 @@ function ReviewProgress({ progress }: { progress: ExecData['review_progress'] })
         </div>
       </div>
 
-      {progress.pending > 0 && (
+      {progress.pending > 0 && versionId && (
         <button
-          onClick={() => openPanel('review_dashboard', { version_id: '' })}
+          onClick={() => openPanel('review_dashboard', { version_id: versionId })}
           className="mt-2 w-full text-xs text-deloitte-green hover:text-white flex items-center justify-center gap-1 py-1 rounded border border-deloitte-green/20 hover:bg-deloitte-green/10 transition-colors"
         >
           Open Review Dashboard <ChevronRight className="w-3 h-3" />
@@ -218,8 +227,15 @@ function ReviewProgress({ progress }: { progress: ExecData['review_progress'] })
 }
 
 // ─── Priority Items ────────────────────────────────
-function PriorityActions({ items }: { items: PriorityItem[] }) {
+function PriorityActions({
+  items,
+  versionId,
+}: {
+  items: PriorityItem[];
+  versionId: string;
+}) {
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const openPanel = usePanelStore((s) => s.openPanel);
 
   if (items.length === 0) {
     return (
@@ -297,6 +313,20 @@ function PriorityActions({ items }: { items: PriorityItem[] }) {
                     {item.business_unit && <span>• BU: {item.business_unit}</span>}
                     {item.is_overridden && <span className="text-cyan-400">• Overridden</span>}
                   </div>
+                  {versionId && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        openPanel('review_dashboard', {
+                          version_id: versionId,
+                          focus_line_item_id: item.line_item_id,
+                        })
+                      }
+                      className="w-full mt-1 flex items-center justify-center gap-1 py-1.5 text-xs text-deloitte-green border border-deloitte-green/25 rounded-lg hover:bg-deloitte-green/10"
+                    >
+                      Review <ChevronRight className="w-3 h-3" />
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -434,10 +464,12 @@ function OverrideSummary({ overrides }: { overrides: OverrideItem[] }) {
 }
 
 // ─── Main Executive Dashboard ──────────────────────
-export function ExecutiveDashboardPanel({ data }: { data: any }) {
+export function ExecutiveDashboardPanel({ data, onRefresh: _onRefresh }: { data: any; onRefresh?: () => void }) {
   const d: ExecData = data?.data || data;
   const [showBridge, setShowBridge] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const openPanel = usePanelStore((s) => s.openPanel);
+  const canGenerate = useCan('can_generate');
 
   if (d.empty) {
     return (
@@ -464,12 +496,34 @@ export function ExecutiveDashboardPanel({ data }: { data: any }) {
 
   return (
     <div className="space-y-3">
+      {/* Header actions */}
+      {d.version?.id && (
+        <div className="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => openPanel('approvals', { version_id: d.version.id })}
+            className="flex items-center gap-1 px-2 py-1 bg-surface-800/60 border border-surface-700/50 rounded-lg text-xs text-surface-300 hover:text-white"
+          >
+            <Shield className="w-3 h-3" /> Approvals
+          </button>
+          {d.version.status === 'draft' && canGenerate && (
+            <button
+              type="button"
+              onClick={() => openPanel('approvals', { version_id: d.version.id })}
+              className="flex items-center gap-1 px-2.5 py-1 bg-deloitte-green text-black rounded-lg text-xs font-semibold"
+            >
+              Submit for approval
+            </button>
+          )}
+        </div>
+      )}
+
       {/* 1. Forecast Position Hero */}
       <ForecastHero position={d.position} version={d.version} />
 
       {/* 2. Review Progress + Accuracy row */}
       <div className="grid grid-cols-2 gap-2">
-        <ReviewProgress progress={d.review_progress} />
+        <ReviewProgress progress={d.review_progress} versionId={d.version?.id || ''} />
 
         {/* Accuracy capsule */}
         <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl p-3">
@@ -506,7 +560,7 @@ export function ExecutiveDashboardPanel({ data }: { data: any }) {
       </div>
 
       {/* 3. Priority Actions */}
-      <PriorityActions items={d.priority_items} />
+      <PriorityActions items={d.priority_items} versionId={d.version?.id || ''} />
 
       {/* 4. Forward-Looking Insights */}
       <InsightsSection insights={d.insights} />
@@ -519,19 +573,43 @@ export function ExecutiveDashboardPanel({ data }: { data: any }) {
 
       {/* 7. Bridge + Trend toggle */}
       <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl p-3">
-        <div className="flex items-center gap-1 mb-2">
-          <button
-            onClick={() => setShowBridge(false)}
-            className={`text-xs px-2 py-1 rounded-full transition-colors ${!showBridge ? 'bg-deloitte-green/15 text-deloitte-green border border-deloitte-green/30' : 'text-surface-400 hover:text-white'}`}
-          >
-            Monthly Trend
-          </button>
-          <button
-            onClick={() => setShowBridge(true)}
-            className={`text-xs px-2 py-1 rounded-full transition-colors ${showBridge ? 'bg-deloitte-green/15 text-deloitte-green border border-deloitte-green/30' : 'text-surface-400 hover:text-white'}`}
-          >
-            Variance Bridge
-          </button>
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setShowBridge(false)}
+              className={`text-xs px-2 py-1 rounded-full transition-colors ${!showBridge ? 'bg-deloitte-green/15 text-deloitte-green border border-deloitte-green/30' : 'text-surface-400 hover:text-white'}`}
+            >
+              Monthly Trend
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowBridge(true)}
+              className={`text-xs px-2 py-1 rounded-full transition-colors ${showBridge ? 'bg-deloitte-green/15 text-deloitte-green border border-deloitte-green/30' : 'text-surface-400 hover:text-white'}`}
+            >
+              Variance Bridge
+            </button>
+          </div>
+          {showBridge && d.bridge_data.length > 0 && (
+            <button
+              type="button"
+              onClick={() =>
+                downloadCsv(
+                  'variance_bridge',
+                  [
+                    { key: 'name', label: 'Step' },
+                    { key: 'value', label: 'Value' },
+                    { key: 'invisible', label: 'Base' },
+                  ],
+                  d.bridge_data as Record<string, unknown>[],
+                )
+              }
+              className="inline-flex items-center gap-1 text-xs text-surface-400 hover:text-deloitte-green"
+              title="Export bridge CSV"
+            >
+              <Download className="w-3 h-3" /> CSV
+            </button>
+          )}
         </div>
 
         {!showBridge ? (
@@ -636,7 +714,7 @@ export function ExecutiveDashboardPanel({ data }: { data: any }) {
         <button
           onClick={async () => {
             if (!d.version?.id) {
-              alert('No version id available for export');
+              toast.error('No version id available for export');
               return;
             }
             setIsExporting(true);
@@ -658,8 +736,9 @@ export function ExecutiveDashboardPanel({ data }: { data: any }) {
               a.download = `${d.version.name || 'forecast'}_board_pack.pptx`;
               a.click();
               URL.revokeObjectURL(url);
+              toast.success('Board pack downloaded');
             } catch (e: any) {
-              alert(e.message || 'Board pack export failed');
+              toast.error(e.message || 'Board pack export failed');
             } finally {
               setIsExporting(false);
             }

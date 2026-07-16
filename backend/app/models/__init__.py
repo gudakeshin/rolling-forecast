@@ -13,6 +13,7 @@ from app.models.budget import BudgetVersion, BudgetLineItem
 from app.models.approval import ApprovalWorkflow, ApprovalStep
 from app.models.integration import IntegrationConnection
 from app.models.fx import FxRate, SystemSetting, ForecastAccuracyRecord
+from app.models.auth_tokens import RefreshToken, TokenDenylist
 
 __all__ = [
     "User",
@@ -40,4 +41,6 @@ __all__ = [
     "FxRate",
     "SystemSetting",
     "ForecastAccuracyRecord",
+    "RefreshToken",
+    "TokenDenylist",
 ]

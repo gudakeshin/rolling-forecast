@@ -1282,7 +1282,12 @@ async def review_item(
     current_user: User = Depends(require_permission("review")),
     db: Session = Depends(get_db),
 ):
-    """Approve, reject, or flag a single line item (applies to all its periods)."""
+    """Approve, reject, or flag a single line item (applies to all its periods).
+
+    Note: Line-level review SoD is deliberately not hard-blocked here.
+    Segregation of duties is enforced where it matters — approvals.decide —
+    so creators can still triage AI recommendations on their own draft.
+    """
     from app.services.audit import record_audit
 
     result = db.query(ForecastLineResult).filter(
@@ -1333,6 +1338,8 @@ async def batch_review(
     db: Session = Depends(get_db),
 ):
     """Batch approve/reject multiple line items at once."""
+    from app.services.audit import record_audit
+
     now = datetime.now(timezone.utc)
     total_affected = 0
 
@@ -1360,6 +1367,19 @@ async def batch_review(
 
         total_affected += len(all_periods)
 
+    record_audit(
+        db,
+        action=f"review.batch_{request.action}",
+        entity_type="forecast_version",
+        entity_id=request.version_id,
+        actor_id=current_user.id,
+        actor_username=current_user.username,
+        details={
+            "item_ids": request.item_ids,
+            "action": request.action,
+            "periods_affected": total_affected,
+        },
+    )
     db.commit()
 
     return {
@@ -1377,6 +1397,8 @@ async def accept_ai_recommendations(
     db: Session = Depends(get_db),
 ):
     """Accept all AI-approved items in one click."""
+    from app.services.audit import record_audit
+
     now = datetime.now(timezone.utc)
 
     ai_approved = (
@@ -1395,6 +1417,15 @@ async def accept_ai_recommendations(
         r.reviewed_by = current_user.id
         r.reviewed_at = now
 
+    record_audit(
+        db,
+        action="review.accept_ai",
+        entity_type="forecast_version",
+        entity_id=request.version_id,
+        actor_id=current_user.id,
+        actor_username=current_user.username,
+        details={"approved_count": len(ai_approved)},
+    )
     db.commit()
 
     return {
@@ -1441,11 +1472,20 @@ async def get_accuracy_tracking(
             if rec.actual != 0:
                 bias = (rec.predicted_p50 - rec.actual) / abs(rec.actual) * 100
             item = {
+                "line_item_id": li.id,
                 "line_item_name": li.name,
                 "category": li.category,
                 "period": rec.period,
                 "horizon_offset": rec.horizon_offset,
                 "forecast": round(rec.predicted_p50, 2),
+                "published": round(rec.predicted_p50, 2),
+                "model_forecast": round(rec.model_p50, 2) if rec.model_p50 is not None else None,
+                "naive": round(rec.naive_p50, 2) if rec.naive_p50 is not None else None,
+                "seasonal_naive": (
+                    round(rec.seasonal_naive_p50, 2)
+                    if rec.seasonal_naive_p50 is not None
+                    else None
+                ),
                 "actual": round(rec.actual, 2),
                 "mape": round(mape, 2) if mape is not None else None,
                 "bias": round(bias, 2) if bias is not None else None,
@@ -1493,6 +1533,7 @@ async def get_accuracy_tracking(
                     and r.p10 <= actual.value <= r.p90
                 )
                 item = {
+                    "line_item_id": r.line_item_id,
                     "line_item_name": r.line_item.name,
                     "category": r.line_item.category,
                     "period": r.period,
@@ -1572,16 +1613,19 @@ async def get_accuracy_tracking(
             mapes_for_version = []
             v_sum_forecast = 0.0
             v_sum_actual = 0.0
-            for vr in db.query(ForecastLineResult).filter(ForecastLineResult.version_id == v.id).all():
-                act = (
-                    db.query(ActualsRecord)
-                    .filter(
-                        ActualsRecord.line_item_id == vr.line_item_id,
-                        ActualsRecord.period == vr.period,
-                    )
-                    .first()
+            # Single join instead of per-row ActualsRecord lookups
+            joined = (
+                db.query(ForecastLineResult, ActualsRecord)
+                .join(
+                    ActualsRecord,
+                    (ActualsRecord.line_item_id == ForecastLineResult.line_item_id)
+                    & (ActualsRecord.period == ForecastLineResult.period),
                 )
-                if act and act.value != 0:
+                .filter(ForecastLineResult.version_id == v.id)
+                .all()
+            )
+            for vr, act in joined:
+                if act.value != 0:
                     mapes_for_version.append(abs(vr.p50 - act.value) / abs(act.value) * 100)
                     v_sum_forecast += float(vr.p50)
                     v_sum_actual += float(act.value)
@@ -1611,11 +1655,53 @@ async def get_accuracy_tracking(
         if abs(total_actual_sum) > 1e-10 else 0
     )
 
+    # WAPE / FVA from vintage fields when present
+    from app.services.accuracy_snapshot import _wape, compute_fva
+
+    pub_vals = [float(i["forecast"]) for i in accuracy_items]
+    act_vals = [float(i["actual"]) for i in accuracy_items]
+    model_vals = [
+        float(i["model_forecast"]) if i.get("model_forecast") is not None else float(i["forecast"])
+        for i in accuracy_items
+    ]
+    naive_pairs = [
+        (float(i["naive"]), float(i["actual"]))
+        for i in accuracy_items
+        if i.get("naive") is not None
+    ]
+    snaive_pairs = [
+        (float(i["seasonal_naive"]), float(i["actual"]))
+        for i in accuracy_items
+        if i.get("seasonal_naive") is not None
+    ]
+    published_wape = _wape(pub_vals, act_vals)
+    model_wape = _wape(model_vals, act_vals)
+    naive_wape = _wape([p for p, _ in naive_pairs], [a for _, a in naive_pairs]) if naive_pairs else None
+    seasonal_naive_wape = (
+        _wape([p for p, _ in snaive_pairs], [a for _, a in snaive_pairs]) if snaive_pairs else None
+    )
+    fva_vs_naive = (
+        compute_fva(pub_vals, act_vals, [p for p, _ in naive_pairs])
+        if naive_pairs and len(naive_pairs) == len(pub_vals)
+        else (None if naive_wape is None or published_wape is None else naive_wape - published_wape)
+    )
+    fva_vs_seasonal = (
+        None
+        if seasonal_naive_wape is None or published_wape is None
+        else seasonal_naive_wape - published_wape
+    )
+
     overall = {
         "avg_mape": round(sum(all_mapes) / len(all_mapes), 2) if all_mapes else 0,
         "median_mape": round(sorted(all_mapes)[len(all_mapes) // 2], 2) if all_mapes else 0,
         "avg_bias": round(aggregate_bias_pct, 2),
         "bias_dollar": round(total_forecast_sum - total_actual_sum, 2),
+        "published_wape": round(published_wape, 2) if published_wape is not None else None,
+        "model_wape": round(model_wape, 2) if model_wape is not None else None,
+        "naive_wape": round(naive_wape, 2) if naive_wape is not None else None,
+        "seasonal_naive_wape": round(seasonal_naive_wape, 2) if seasonal_naive_wape is not None else None,
+        "fva_vs_naive": round(fva_vs_naive, 2) if fva_vs_naive is not None else None,
+        "fva_vs_seasonal_naive": round(fva_vs_seasonal, 2) if fva_vs_seasonal is not None else None,
         "bias_direction": "over" if aggregate_bias_pct > 1 else "under" if aggregate_bias_pct < -1 else "neutral",
         "hit_rate": round(hit_count / len(accuracy_items) * 100, 1) if accuracy_items else 0,
         "total_comparisons": len(accuracy_items),
@@ -1626,6 +1712,7 @@ async def get_accuracy_tracking(
         panel_type="accuracy_tracking",
         title=f"Accuracy Tracking: {version.name}",
         data={
+            "version": {"id": version.id, "name": version.name},
             "overall": overall,
             "model_performance": model_performance,
             "category_accuracy": category_accuracy_fixed,
@@ -1852,7 +1939,7 @@ async def submit_driver_inputs(
 @router.post("/rescore-forecasts/{version_id}")
 async def rescore_forecasts(
     version_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("generate")),
     db: Session = Depends(get_db),
 ):
     """Re-score confidence and generate remediation for an existing forecast version.
@@ -1860,6 +1947,8 @@ async def rescore_forecasts(
     This fixes forecasts that were generated before inline scoring was added,
     where all items show confidence_score=0.
     """
+    from app.services.audit import record_audit
+
     version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
     if not version:
         raise HTTPException(status_code=404, detail="Forecast version not found")
@@ -1905,6 +1994,15 @@ async def rescore_forecasts(
     version.medium_confidence_count = medium
     version.low_confidence_count = low
 
+    record_audit(
+        db,
+        action="forecast.rescore",
+        entity_type="forecast_version",
+        entity_id=version_id,
+        actor_id=current_user.id,
+        actor_username=current_user.username,
+        details={"lines": len(results), "high": high, "medium": medium, "low": low},
+    )
     db.commit()
 
     return {
@@ -1918,20 +2016,27 @@ async def rescore_forecasts(
 
 @router.post("/rescore-all")
 async def rescore_all_forecasts(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("generate")),
     db: Session = Depends(get_db),
 ):
     """Re-score all forecast versions at once."""
+    from app.services.audit import record_audit
+
     versions = db.query(ForecastVersion).all()
     total_rescored = 0
-
-    for version in versions:
-        results = (
+    version_ids = [v.id for v in versions]
+    results_by_version: dict[str, list] = {vid: [] for vid in version_ids}
+    if version_ids:
+        for r in (
             db.query(ForecastLineResult)
             .join(LineItem)
-            .filter(ForecastLineResult.version_id == version.id)
+            .filter(ForecastLineResult.version_id.in_(version_ids))
             .all()
-        )
+        ):
+            results_by_version.setdefault(r.version_id, []).append(r)
+
+    for version in versions:
+        results = results_by_version.get(version.id, [])
 
         high = medium = low = 0
 
@@ -1962,6 +2067,15 @@ async def rescore_all_forecasts(
         version.low_confidence_count = low
         total_rescored += len(results)
 
+    record_audit(
+        db,
+        action="forecast.rescore_all",
+        entity_type="forecast_version",
+        entity_id=None,
+        actor_id=current_user.id,
+        actor_username=current_user.username,
+        details={"versions_updated": len(versions), "total_lines_rescored": total_rescored},
+    )
     db.commit()
 
     return {
@@ -1988,7 +2102,7 @@ class InlineOverrideRequest(BaseModel):
 @router.post("/inline-override")
 async def inline_override(
     request: InlineOverrideRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("override")),
     db: Session = Depends(get_db),
 ):
     """Apply a quick override from the forecast table.
@@ -1997,7 +2111,7 @@ async def inline_override(
     downstream DAG recalculation.
     """
     import uuid
-    from app.services.dependency_graph import DependencyGraphManager
+    from app.services.audit import record_audit
 
     result = db.query(ForecastLineResult).filter(
         ForecastLineResult.id == request.result_id
@@ -2063,13 +2177,15 @@ async def inline_override(
         t.override_value = request.new_value
         overrides_created += 1
 
-    # Recalculate downstream dependents
+    # Recalculate downstream dependents (p10/p90) + MinT reconciliation
     downstream_count = 0
     try:
-        dag_manager = DependencyGraphManager(db)
-        downstream_count = dag_manager.recalculate_dependents(
-            version_id=result.version_id,
-            source_line_item_id=result.line_item_id,
+        from app.services.overrides import recalculate_and_reconcile
+
+        downstream_count = recalculate_and_reconcile(
+            db,
+            result.version_id,
+            [result.line_item_id],
         )
     except Exception as e:
         logger.warning(f"DAG recalculation failed (non-fatal): {e}")
@@ -2079,11 +2195,25 @@ async def inline_override(
         db.query(ForecastLineResult)
         .filter(
             ForecastLineResult.version_id == result.version_id,
-            ForecastLineResult.is_overridden == True,
+            ForecastLineResult.is_overridden == True,  # noqa: E712
         )
         .count()
     )
 
+    record_audit(
+        db,
+        action="override.inline",
+        entity_type="forecast_line_result",
+        entity_id=request.result_id,
+        actor_id=current_user.id,
+        actor_username=current_user.username,
+        details={
+            "version_id": result.version_id,
+            "new_value": request.new_value,
+            "overrides_created": overrides_created,
+            "downstream_recalculated": downstream_count,
+        },
+    )
     db.commit()
 
     li = db.query(LineItem).filter(LineItem.id == result.line_item_id).first()

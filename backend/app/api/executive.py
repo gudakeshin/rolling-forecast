@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 
+from collections import defaultdict
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, EmailStr
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -174,48 +177,69 @@ async def budget_bridge(
         .order_by(LineItem.display_order, LineItem.name)
         .all()
     )
-    rows_out = []
-    for li in line_items:
-        fc_rows = (
-            db.query(ForecastLineResult)
+    li_ids = [li.id for li in line_items]
+
+    # Batched SUM aggregates — one query per source instead of 4×N
+    effective_p50 = case(
+        (ForecastLineResult.is_overridden == True, ForecastLineResult.override_value),  # noqa: E712
+        else_=ForecastLineResult.p50,
+    )
+
+    fc_totals: dict[int, float] = defaultdict(float)
+    if li_ids:
+        for lid, total in (
+            db.query(ForecastLineResult.line_item_id, func.coalesce(func.sum(effective_p50), 0.0))
             .filter(
                 ForecastLineResult.version_id == version.id,
-                ForecastLineResult.line_item_id == li.id,
+                ForecastLineResult.line_item_id.in_(li_ids),
             )
+            .group_by(ForecastLineResult.line_item_id)
             .all()
-        )
-        fc_total = sum(
-            (r.override_value if r.is_overridden else r.p50) or 0 for r in fc_rows
-        )
+        ):
+            fc_totals[int(lid)] = float(total or 0)
 
-        budget_total = 0.0
-        if budget:
-            budget_total = sum(
-                b.value
-                for b in db.query(BudgetLineItem)
-                .filter(
-                    BudgetLineItem.budget_version_id == budget.id,
-                    BudgetLineItem.line_item_id == li.id,
-                )
-                .all()
+    budget_totals: dict[int, float] = defaultdict(float)
+    if budget and li_ids:
+        for lid, total in (
+            db.query(BudgetLineItem.line_item_id, func.coalesce(func.sum(BudgetLineItem.value), 0.0))
+            .filter(
+                BudgetLineItem.budget_version_id == budget.id,
+                BudgetLineItem.line_item_id.in_(li_ids),
             )
+            .group_by(BudgetLineItem.line_item_id)
+            .all()
+        ):
+            budget_totals[int(lid)] = float(total or 0)
 
-        prior_total = 0.0
-        if prior:
-            prior_total = sum(
-                (r.override_value if r.is_overridden else r.p50) or 0
-                for r in db.query(ForecastLineResult)
-                .filter(
-                    ForecastLineResult.version_id == prior.id,
-                    ForecastLineResult.line_item_id == li.id,
-                )
-                .all()
+    prior_totals: dict[int, float] = defaultdict(float)
+    if prior and li_ids:
+        for lid, total in (
+            db.query(ForecastLineResult.line_item_id, func.coalesce(func.sum(effective_p50), 0.0))
+            .filter(
+                ForecastLineResult.version_id == prior.id,
+                ForecastLineResult.line_item_id.in_(li_ids),
             )
+            .group_by(ForecastLineResult.line_item_id)
+            .all()
+        ):
+            prior_totals[int(lid)] = float(total or 0)
 
-        ytd_actuals = sum(
-            a.value
-            for a in db.query(ActualsRecord).filter(ActualsRecord.line_item_id == li.id).all()
-        )
+    ytd_totals: dict[int, float] = defaultdict(float)
+    if li_ids:
+        for lid, total in (
+            db.query(ActualsRecord.line_item_id, func.coalesce(func.sum(ActualsRecord.value), 0.0))
+            .filter(ActualsRecord.line_item_id.in_(li_ids))
+            .group_by(ActualsRecord.line_item_id)
+            .all()
+        ):
+            ytd_totals[int(lid)] = float(total or 0)
+
+    rows_out = []
+    for li in line_items:
+        fc_total = fc_totals.get(li.id, 0.0)
+        budget_total = budget_totals.get(li.id, 0.0)
+        prior_total = prior_totals.get(li.id, 0.0)
+        ytd_actuals = ytd_totals.get(li.id, 0.0)
 
         var_budget = fc_total - budget_total
         var_prior = fc_total - prior_total
@@ -283,9 +307,15 @@ async def driver_drilldown(
         bu = current_user.business_unit
         drivers = [d for d in drivers if not d.business_unit or d.business_unit == bu]
 
+    override_li_ids = list({o.line_item_id for o in overrides})
+    li_map = {
+        li.id: li
+        for li in db.query(LineItem).filter(LineItem.id.in_(override_li_ids)).all()
+    } if override_li_ids else {}
+
     breakdown = []
     for o in overrides:
-        li = db.query(LineItem).filter(LineItem.id == o.line_item_id).first()
+        li = li_map.get(o.line_item_id)
         if not user_can_view_line_item(current_user, li):
             continue
         delta = o.override_value - o.original_model_value

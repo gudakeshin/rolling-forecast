@@ -1,10 +1,13 @@
 import { Component, type ErrorInfo, type ReactNode, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from './store/authStore';
+import { useVersionStore } from './store/versionStore';
 import { AppLayout } from './components/common/AppLayout';
 import { LoginForm } from './components/common/LoginForm';
+import { PanelUrlSync } from './components/common/PanelUrlSync';
 import { ExecutiveLandingPage } from './components/pages/ExecutiveLandingPage';
 import { AdminPage } from './components/pages/AdminPage';
+import { ToastHost } from './components/ui/ToastHost';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import type { TokenResponse } from './types/auth';
 
@@ -100,11 +103,30 @@ function SsoTokenHandler() {
   return null;
 }
 
+/** Hydrate capability flags + forecast versions when a token exists. */
+function AuthBootstrap() {
+  const token = useAuthStore((s) => s.token);
+  const fetchMe = useAuthStore((s) => s.fetchMe);
+  const hydrateVersions = useVersionStore((s) => s.hydrate);
+
+  useEffect(() => {
+    if (token) {
+      void fetchMe();
+      void hydrateVersions();
+    }
+  }, [token, fetchMe, hydrateVersions]);
+
+  return null;
+}
+
 export default function App() {
   return (
     <ErrorBoundary>
       <BrowserRouter>
         <SsoTokenHandler />
+        <AuthBootstrap />
+        <PanelUrlSync />
+        <ToastHost />
         <Routes>
           <Route path="/login" element={<LoginForm />} />
           <Route

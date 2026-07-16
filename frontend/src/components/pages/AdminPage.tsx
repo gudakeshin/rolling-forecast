@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Users, Shield, ListTree, ScrollText, DollarSign } from 'lucide-react';
+import { ArrowLeft, Users, Shield, ListTree, ScrollText, DollarSign, RefreshCw } from 'lucide-react';
 import { apiGet, apiPost, apiPut, uploadFile } from '../../api/client';
+import { rescoreAll } from '../../api/dashboard';
 import type { User } from '../../types/auth';
+import { toast } from '../../store/toastStore';
 
 type Tab = 'users' | 'roles' | 'coa' | 'audit' | 'fx';
 
@@ -37,6 +39,23 @@ export function AdminPage() {
   });
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [rescoring, setRescoring] = useState(false);
+
+  const handleRescoreAll = async () => {
+    setRescoring(true);
+    setError('');
+    try {
+      const res = await rescoreAll();
+      const msg = res.message || 'Rescore complete';
+      setMessage(msg);
+      toast.success(msg);
+    } catch (e: any) {
+      setError(e.message || 'Rescore failed');
+      toast.error(e.message || 'Rescore failed');
+    } finally {
+      setRescoring(false);
+    }
+  };
 
   const load = async (t: Tab) => {
     setError('');
@@ -143,7 +162,16 @@ export function AdminPage() {
         <Link to="/" className="text-surface-400 hover:text-white flex items-center gap-1 text-sm">
           <ArrowLeft className="w-4 h-4" /> Back
         </Link>
-        <span className="font-semibold">Admin Console</span>
+        <span className="font-semibold flex-1">Admin Console</span>
+        <button
+          type="button"
+          onClick={handleRescoreAll}
+          disabled={rescoring}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-surface-800 border border-surface-700 text-surface-300 rounded-lg hover:text-white disabled:opacity-50"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${rescoring ? 'animate-spin' : ''}`} />
+          Rescore all forecasts
+        </button>
       </header>
 
       <div className="max-w-5xl mx-auto px-6 py-6">

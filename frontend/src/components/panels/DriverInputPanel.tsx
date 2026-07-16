@@ -2,10 +2,12 @@ import { useState, useCallback, useMemo } from 'react';
 import {
   Send, Clock, CheckCircle, AlertTriangle,
   ChevronDown, ChevronUp, Plus, RefreshCw,
-  Sparkles, TrendingUp, Filter,
+  Sparkles, TrendingUp, Filter, Download,
 } from 'lucide-react';
 import { apiPost } from '../../api/client';
 import { Tabs } from '../ui/Tabs';
+import { downloadCsv } from '../ui/DataTable';
+import { usePanelStore } from '../../store/panelStore';
 
 interface LineItemInput {
   id: number;
@@ -107,6 +109,43 @@ export function DriverInputPanel({ data }: Props) {
     }
   }, [formValues, version.id, useModelDefaults]);
 
+  const lineItemColumns = [
+    { key: 'name', label: 'Line Item' },
+    { key: 'category', label: 'Category' },
+    { key: 'account_code', label: 'Account Code' },
+    { key: 'model_suggested_value', label: 'Model Suggested Value' },
+    { key: 'model_type', label: 'Model Type' },
+    { key: 'confidence_score', label: 'Confidence Score' },
+    { key: 'last_actual', label: 'Last Actual' },
+  ];
+
+  const historyColumns = [
+    { key: 'business_unit', label: 'Business Unit' },
+    { key: 'status', label: 'Status' },
+    { key: 'is_late', label: 'Late' },
+    { key: 'submitted_at', label: 'Submitted At' },
+    { key: 'review_comments', label: 'Review Comments' },
+  ];
+
+  const handleExport = () => {
+    const filename = `drivers_${version?.name || 'export'}`;
+    if (activeTab === 'history') {
+      downloadCsv(
+        filename,
+        historyColumns,
+        inputs.map((inp: any) => ({
+          business_unit: inp.business_unit,
+          status: inp.status,
+          is_late: inp.is_late ? 'yes' : 'no',
+          submitted_at: inp.submitted_at || '',
+          review_comments: inp.review_comments || '',
+        })) as Record<string, unknown>[],
+      );
+    } else {
+      downloadCsv(filename, lineItemColumns, available_line_items as unknown as Record<string, unknown>[]);
+    }
+  };
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -116,13 +155,29 @@ export function DriverInputPanel({ data }: Props) {
             <h4 className="text-xs font-semibold text-white">{version.name}</h4>
             <p className="text-xs text-surface-500 mt-0.5">{version.status} • {inputs.length} submissions</p>
           </div>
-          <span className={`px-2 py-1 text-xs font-medium rounded-md border ${
-            version.status === 'draft' ? 'bg-blue-500/10 border-blue-500/20 text-blue-400'
-            : version.status === 'in_review' ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
-            : 'bg-deloitte-green/10 border-deloitte-green/20 text-deloitte-green'
-          }`}>
-            {version.status}
-          </span>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => usePanelStore.getState().openPanel('approvals', { version_id: version.id })}
+              className={`px-2 py-1 text-xs font-medium rounded-md border cursor-pointer hover:opacity-90 ${
+                version.status === 'draft' ? 'bg-blue-500/10 border-blue-500/20 text-blue-400'
+                : version.status === 'in_review' ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+                : 'bg-deloitte-green/10 border-deloitte-green/20 text-deloitte-green'
+              }`}
+              title="Open approvals"
+            >
+              {version.status}
+            </button>
+            <button
+              type="button"
+              onClick={handleExport}
+              className="inline-flex items-center gap-1.5 text-xs text-surface-300 hover:text-white px-2 py-1 rounded-md border border-surface-600 hover:border-deloitte-green/40"
+              title="Export drivers CSV"
+            >
+              <Download className="w-3.5 h-3.5" />
+              CSV
+            </button>
+          </div>
         </div>
       </div>
 

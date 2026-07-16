@@ -58,6 +58,10 @@ class BranchForecastSkill(BaseSkill):
                     "type": "string",
                     "description": "Description of the scenario",
                 },
+                "scenario": {
+                    "type": "string",
+                    "description": "Scenario label for the branch (default: inherits source, or 'upside' if unnamed)",
+                },
             },
             "required": ["action"],
         }
@@ -98,10 +102,12 @@ class BranchForecastSkill(BaseSkill):
         adjustments = params.get("adjustments", {})
 
         # Create the branch version
+        scenario = (params.get("scenario") or "").strip() or getattr(source, "scenario", None) or "upside"
         branch = ForecastVersion(
             name=branch_name,
             status="draft",
             version_type="scenario",
+            scenario=scenario,
             parent_version_id=source.id,
             actuals_dataset_id=source.actuals_dataset_id,
             actuals_hash=source.actuals_hash,

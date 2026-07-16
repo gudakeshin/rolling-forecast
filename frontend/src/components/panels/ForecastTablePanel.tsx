@@ -1,14 +1,15 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   AlertTriangle, CheckCircle2, XCircle, ChevronDown, ChevronRight,
   Edit3, ShieldCheck, Eye, Filter, BarChart3, TrendingDown, TrendingUp,
   Bot, Sparkles, Info, MessageSquare, Upload, RefreshCw, ArrowRightLeft,
   UserCheck, Search, Zap, CircleDot, Save, X, GitBranch, Activity,
-  Loader2, Download,
+  Loader2,
 } from 'lucide-react';
 import { apiPost } from '../../api/client';
 import { usePanelStore } from '../../store/panelStore';
-import { downloadCsv } from '../ui/DataTable';
+import { toast } from '../../store/toastStore';
+import { DataTable, type DataTableColumn } from '../ui/DataTable';
 
 // ── Deloitte Colors ──────────────────────────
 const COLORS = {
@@ -137,26 +138,61 @@ interface Props {
       items?: ForecastRow[];
       view?: string;
       total_count?: number;
+      limit?: number;
+      offset?: number;
+      has_more?: boolean;
       available_categories?: string[];
     };
   };
+  onRefresh?: () => void;
+  enablePolling?: boolean;
 }
 
+type ForecastTableRow = ForecastRow & Record<string, unknown>;
+
 // ── Main Component ───────────────────────────
-export function ForecastTablePanel({ data }: Props) {
+export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
   const rows = data.data.rows || data.data.items || [];
   const version = data.data.version;
   const quality = data.data.quality_summary;
   const isSummaryView = data.data.view === 'summary' || (!data.data.view && rows.length > 0 && rows[0]?.period_count);
   const categories = data.data.available_categories || [];
+  const hasMore = Boolean(data.data.has_more);
+  const pageLimit = data.data.limit || 100;
 
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterConfidence, setFilterConfidence] = useState<string>('all');
   const [sortBy, setSortBy] = useState<string>('default');
   const [actioningId, setActioningId] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
 
-  const { openPanel } = usePanelStore();
+  const { openPanel, panelParams, setPanelParams } = usePanelStore();
+
+  const pollEnabled = (enablePolling ?? true) && Boolean(onRefresh);
+
+  useEffect(() => {
+    if (!pollEnabled || !onRefresh) return;
+    const id = window.setInterval(() => {
+      void onRefresh();
+    }, 60_000);
+    return () => window.clearInterval(id);
+  }, [pollEnabled, onRefresh]);
+
+  const handleLoadMore = useCallback(() => {
+    if (!version?.id || loadingMore) return;
+    setLoadingMore(true);
+    const nextOffset = (data.data.offset || 0) + pageLimit;
+    setPanelParams({
+      ...panelParams,
+      version_id: version.id,
+      offset: nextOffset,
+      _append: true,
+      _refresh: Date.now(),
+    });
+    // loading flag cleared when PanelContainer finishes (isLoading → false)
+    setTimeout(() => setLoadingMore(false), 800);
+  }, [version, loadingMore, data.data.offset, pageLimit, panelParams, setPanelParams]);
 
   const toggleExpand = useCallback((id: string) => {
     setExpandedRows(prev => {
@@ -191,12 +227,14 @@ export function ForecastTablePanel({ data }: Props) {
     setActioningId(itemId);
     try {
       await apiPost('/panel/review-item', { item_id: itemId, action, comment: null });
-    } catch (e) {
-      console.error('Review action failed:', e);
+      toast.success(action === 'approve' ? 'Item approved' : 'Review recorded');
+      onRefresh?.();
+    } catch (e: any) {
+      toast.error(e?.message || 'Review action failed');
     } finally {
       setActioningId(null);
     }
-  }, []);
+  }, [onRefresh]);
 
   // ── Handle open review dashboard ──
   const handleOpenReview = useCallback(() => {
@@ -205,30 +243,101 @@ export function ForecastTablePanel({ data }: Props) {
     }
   }, [version, openPanel]);
 
-  const handleExportCsv = useCallback(() => {
-    const cols = isSummaryView
-      ? [
-          { key: 'name', label: 'Line Item' },
-          { key: 'category', label: 'Category' },
-          { key: 'total_p50', label: 'Total P50' },
-          { key: 'confidence_level', label: 'Confidence' },
-          { key: 'period_count', label: 'Periods' },
-        ]
-      : [
-          { key: 'name', label: 'Line Item' },
-          { key: 'category', label: 'Category' },
-          { key: 'period', label: 'Period' },
-          { key: 'p50', label: 'P50' },
-          { key: 'p10', label: 'P10' },
-          { key: 'p90', label: 'P90' },
-          { key: 'confidence_level', label: 'Confidence' },
-        ];
-    downloadCsv(
-      `forecast_${version?.name || 'export'}.csv`,
-      cols,
-      sortedRows as unknown as Record<string, unknown>[],
-    );
-  }, [isSummaryView, sortedRows, version]);
+  const tableRows = useMemo<ForecastTableRow[]>(
+    () =>
+      sortedRows.map((row) => ({
+        ...row,
+        line_item_name: row.line_item_name,
+        category: row.category,
+        period: row.period,
+        period_count: row.period_count,
+        p50: row.p50,
+        total_p50: row.total_p50,
+        p10: row.p10,
+        p90: row.p90,
+        confidence_level: row.confidence_level,
+      })),
+    [sortedRows],
+  );
+
+  const getRowClassName = useCallback((row: ForecastTableRow) => {
+    const recommendation = row.ai_recommendation;
+    const hasIssue = recommendation && recommendation !== 'approve';
+    const parts: string[] = [];
+    if (hasIssue) {
+      parts.push(
+        recommendation === 'override' || recommendation === 'manual_input'
+          ? 'bg-red-500/5 hover:bg-red-500/10'
+          : 'bg-amber-500/5 hover:bg-amber-500/8',
+      );
+    } else {
+      parts.push('hover:bg-deloitte-green/5');
+    }
+    if (row.is_subtotal) parts.push('bg-surface-800/50');
+    return parts.join(' ');
+  }, []);
+
+  const columns = useMemo<DataTableColumn<ForecastTableRow>[]>(() => {
+    const forecastKey = isSummaryView ? 'total_p50' : 'p50';
+    const periodKey = isSummaryView ? 'period_count' : 'period';
+    const cols: DataTableColumn<ForecastTableRow>[] = [
+      {
+        key: 'line_item_name',
+        label: 'Line Item',
+        render: (_, row) => (
+          <ForecastLineItemCell
+            row={row}
+            isExpanded={expandedRows.has(row.id)}
+            onToggle={() => toggleExpand(row.id)}
+          />
+        ),
+      },
+      {
+        key: periodKey,
+        label: isSummaryView ? 'Periods' : 'Period',
+        render: (_, row) => (
+          <span className="text-surface-500 font-mono text-xs">
+            {isSummaryView ? `${row.period_count}mo` : row.period}
+          </span>
+        ),
+      },
+      {
+        key: forecastKey,
+        label: 'Forecast (P50)',
+        align: 'right',
+        render: (_, row) => (
+          <ForecastValueCell
+            row={row}
+            isSummary={!!isSummaryView}
+            onOverrideSaved={onRefresh}
+          />
+        ),
+      },
+      {
+        key: 'confidence_level',
+        label: 'Confidence',
+        align: 'center',
+        render: (_, row) => (
+          <ConfidenceIndicator
+            score={row.min_confidence ?? row.confidence_score ?? 0}
+            level={row.confidence_level || 'low'}
+          />
+        ),
+      },
+      {
+        key: 'review_status',
+        label: 'Status',
+        align: 'center',
+        render: (_, row) => (
+          <StatusBadge
+            recommendation={row.ai_recommendation}
+            reviewStatus={row.review_status}
+          />
+        ),
+      },
+    ];
+    return cols;
+  }, [isSummaryView, expandedRows, toggleExpand, onRefresh]);
 
   if (rows.length === 0) {
     return (
@@ -295,63 +404,56 @@ export function ForecastTablePanel({ data }: Props) {
         <span className="text-xs text-surface-500 ml-auto">
           {sortedRows.length} of {rows.length} items
         </span>
-        <button
-          type="button"
-          onClick={handleExportCsv}
-          className="inline-flex items-center gap-1 text-xs text-surface-300 hover:text-white px-2 py-1 rounded-md border border-surface-600 hover:border-deloitte-green/40"
-          aria-label="Export forecast table as CSV"
-        >
-          <Download className="w-3.5 h-3.5" />
-          CSV
-        </button>
       </div>
 
-      {/* ── Data Table ── */}
-      <div className="border border-surface-700 rounded-xl overflow-hidden">
-        <div className="overflow-x-auto max-h-[calc(100vh-320px)]">
-          <table className="w-full text-xs">
-            <thead className="sticky top-0 bg-surface-800 z-10">
-              <tr className="border-b border-surface-600">
-                <th className="px-3 py-2.5 text-left text-surface-400 font-semibold uppercase text-xs tracking-wider w-[200px]">
-                  Line Item
-                </th>
-                <th className="px-3 py-2.5 text-left text-surface-400 font-semibold uppercase text-xs tracking-wider">
-                  {isSummaryView ? 'Periods' : 'Period'}
-                </th>
-                <th className="px-3 py-2.5 text-right text-surface-400 font-semibold uppercase text-xs tracking-wider">
-                  Forecast (P50)
-                </th>
-                <th className="px-3 py-2.5 text-center text-surface-400 font-semibold uppercase text-xs tracking-wider w-[100px]">
-                  Confidence
-                </th>
-                <th className="px-3 py-2.5 text-center text-surface-400 font-semibold uppercase text-xs tracking-wider w-[80px]">
-                  Status
-                </th>
-                <th className="px-3 py-2.5 text-center text-surface-400 font-semibold uppercase text-xs tracking-wider w-[100px]">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedRows.map((row) => (
-                <ForecastRowItem
-                  key={row.id}
-                  row={row}
-                  isSummary={!!isSummaryView}
-                  isExpanded={expandedRows.has(row.id)}
-                  onToggle={() => toggleExpand(row.id)}
-                  onAction={handleReviewAction}
-                  isActioning={actioningId === row.id}
-                />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <DataTable<ForecastTableRow>
+        title={version?.name ? `Forecast — ${version.name}` : 'Forecast'}
+        columns={columns}
+        rows={tableRows}
+        getRowId={(row) => row.id}
+        getRowClassName={getRowClassName}
+        expandedRowIds={expandedRows}
+        renderExpandedRow={(row) =>
+          row.ai_reasoning ? (
+            <ExpandedRemediation
+              row={row}
+              reasoning={row.ai_reasoning}
+              hasIssue={Boolean(row.ai_recommendation && row.ai_recommendation !== 'approve')}
+              isReviewed={row.review_status === 'approved' || row.review_status === 'rejected'}
+              isActioning={actioningId === row.id}
+              onAction={handleReviewAction}
+            />
+          ) : null
+        }
+        rowActions={(row) => (
+          <ForecastRowActions
+            row={row}
+            onAction={handleReviewAction}
+            isActioning={actioningId === row.id}
+            onToggle={() => toggleExpand(row.id)}
+          />
+        )}
+        exportFilename={`forecast_${version?.name || 'export'}`}
+        maxHeight={typeof window !== 'undefined' ? Math.max(400, window.innerHeight - 320) : 560}
+        rowHeight={56}
+      />
 
-      <p className="text-xs text-surface-500 text-center">
-        Showing {sortedRows.length} items{data.data.total_count ? ` of ${data.data.total_count} total` : ''}
-      </p>
+      <div className="flex flex-col items-center gap-2">
+        <p className="text-xs text-surface-500 text-center">
+          Showing {rows.length} items
+          {data.data.total_count != null ? ` of ${data.data.total_count} total` : ''}
+        </p>
+        {hasMore && (
+          <button
+            type="button"
+            onClick={handleLoadMore}
+            disabled={loadingMore}
+            className="text-xs font-medium px-3 py-1.5 rounded-lg border border-surface-600 text-surface-300 hover:border-deloitte-green/40 hover:text-white disabled:opacity-50"
+          >
+            {loadingMore ? 'Loading…' : 'Load more'}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -468,31 +570,55 @@ function QualitySummaryBanner({
   );
 }
 
-// ── Single Forecast Row ─────────────────────
-function ForecastRowItem({
+// ── Line Item Cell ───────────────────────────
+function ForecastLineItemCell({
   row,
-  isSummary,
   isExpanded,
   onToggle,
-  onAction,
-  isActioning,
+}: {
+  row: ForecastRow;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  const reasoning = row.ai_reasoning;
+  return (
+    <div className="text-surface-300 whitespace-normal">
+      <div className="flex items-center gap-1.5" style={{ paddingLeft: `${(row.indent_level || 0) * 12}px` }}>
+        {reasoning ? (
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={isExpanded}
+            aria-label={isExpanded ? 'Collapse row details' : 'Expand row details'}
+            className="p-0.5 rounded text-surface-500 hover:text-surface-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deloitte-green"
+          >
+            {isExpanded
+              ? <ChevronDown className="w-3 h-3 flex-shrink-0" />
+              : <ChevronRight className="w-3 h-3 flex-shrink-0" />}
+          </button>
+        ) : (
+          <span className="w-4" aria-hidden="true" />
+        )}
+        <span className={`truncate ${row.is_subtotal ? 'font-bold text-white' : ''}`}>
+          {row.line_item_name}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ── Editable Forecast Value Cell ─────────────
+function ForecastValueCell({
+  row,
+  isSummary,
+  onOverrideSaved,
 }: {
   row: ForecastRow;
   isSummary: boolean;
-  isExpanded: boolean;
-  onToggle: () => void;
-  onAction: (id: string, action: string) => void;
-  isActioning: boolean;
+  onOverrideSaved?: () => void;
 }) {
-  const score = row.min_confidence ?? row.confidence_score ?? 0;
-  const level = row.confidence_level || 'low';
-  const recommendation = row.ai_recommendation;
-  const reasoning = row.ai_reasoning;
-  const hasIssue = recommendation && recommendation !== 'approve';
-  const isReviewed = row.review_status === 'approved' || row.review_status === 'rejected';
   const forecastValue = isSummary ? row.total_p50 : row.p50;
 
-  // Inline edit state
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
   const [editReason, setEditReason] = useState('');
@@ -509,7 +635,7 @@ function ForecastRowItem({
 
   const handleStartEdit = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
-    if (row.is_subtotal) return; // Cannot edit subtotals
+    if (row.is_subtotal) return;
     const val = savedValue ?? forecastValue;
     setEditValue(val != null ? val.toString() : '0');
     setEditReason('');
@@ -539,215 +665,167 @@ function ForecastRowItem({
       });
       setSavedValue(numVal);
       setIsEditing(false);
-    } catch (err) {
-      console.error('Override failed:', err);
+      toast.success('Override applied');
+      onOverrideSaved?.();
+    } catch (err: any) {
+      toast.error(err?.message || 'Override failed');
     } finally {
       setIsSaving(false);
     }
-  }, [editValue, editReason, row.id, isSummary]);
+  }, [editValue, editReason, row.id, isSummary, onOverrideSaved]);
 
   const displayValue = savedValue ?? forecastValue;
   const wasOverridden = savedValue !== null;
 
   return (
-    <>
-      <tr
-        className={`border-b border-surface-700/20 transition-colors ${
-          hasIssue
-            ? recommendation === 'override' || recommendation === 'manual_input'
-              ? 'bg-red-500/5 hover:bg-red-500/10'
-              : 'bg-amber-500/5 hover:bg-amber-500/8'
-            : 'hover:bg-deloitte-green/5'
-        } ${row.is_subtotal ? 'bg-surface-800/50' : ''}`}
-      >
-        {/* Line Item Name */}
-        <td className="px-3 py-2 text-surface-300">
-          <div className="flex items-center gap-1.5" style={{ paddingLeft: `${(row.indent_level || 0) * 12}px` }}>
-            {reasoning ? (
-              <button
-                type="button"
-                onClick={onToggle}
-                aria-expanded={isExpanded}
-                aria-label={isExpanded ? 'Collapse row details' : 'Expand row details'}
-                className="p-0.5 rounded text-surface-500 hover:text-surface-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deloitte-green"
-              >
-                {isExpanded
-                  ? <ChevronDown className="w-3 h-3 flex-shrink-0" />
-                  : <ChevronRight className="w-3 h-3 flex-shrink-0" />}
-              </button>
-            ) : (
-              <span className="w-4" aria-hidden="true" />
-            )}
-            <span className={`truncate ${row.is_subtotal ? 'font-bold text-white' : ''}`}>
-              {row.line_item_name}
-            </span>
+    <div className="whitespace-normal" onMouseDown={(e) => e.stopPropagation()}>
+      {isEditing ? (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-1 justify-end">
+            <span className="text-xs text-surface-500">$</span>
+            <input
+              ref={editInputRef}
+              type="number"
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              className="w-24 px-1.5 py-1 bg-surface-800 border border-cyan-500/50 rounded text-xs text-white text-right font-mono focus:outline-none focus:border-cyan-400"
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') handleCancelEdit();
+                if (e.key === 'Enter' && editReason.trim().length >= 10) handleSaveEdit();
+              }}
+            />
           </div>
-        </td>
-
-        {/* Period */}
-        <td className="px-3 py-2 text-surface-500 font-mono text-xs">
-          {isSummary ? (
-            <span>{row.period_count}mo</span>
-          ) : (
-            row.period
-          )}
-        </td>
-
-        {/* Forecast Value — EDITABLE */}
-        <td className="px-3 py-2 text-right font-mono" onMouseDown={(e) => e.stopPropagation()}>
-          {isEditing ? (
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-1 justify-end">
-                <span className="text-xs text-surface-500">$</span>
-                <input
-                  ref={editInputRef}
-                  type="number"
-                  value={editValue}
-                  onChange={(e) => setEditValue(e.target.value)}
-                  className="w-24 px-1.5 py-1 bg-surface-800 border border-cyan-500/50 rounded text-xs text-white text-right font-mono focus:outline-none focus:border-cyan-400"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape') handleCancelEdit();
-                    if (e.key === 'Enter' && editReason.trim().length >= 10) handleSaveEdit();
-                  }}
-                />
-              </div>
-              <input
-                type="text"
-                placeholder="Reason for change (min 10 chars)"
-                value={editReason}
-                onChange={(e) => setEditReason(e.target.value)}
-                className="w-full px-1.5 py-1 bg-surface-800 border border-surface-600 rounded text-xs text-surface-300 placeholder-surface-600 focus:outline-none focus:border-cyan-500/50"
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape') handleCancelEdit();
-                  if (e.key === 'Enter' && editReason.trim().length >= 10) handleSaveEdit();
-                }}
-              />
-              <div className="flex items-center gap-1 justify-end">
-                <button
-                  onClick={handleSaveEdit}
-                  disabled={isSaving || editReason.trim().length < 10 || isNaN(parseFloat(editValue))}
-                  className="flex items-center gap-0.5 px-1.5 py-0.5 bg-deloitte-green/20 text-deloitte-green text-xs rounded hover:bg-deloitte-green/30 disabled:opacity-30 transition-colors"
-                  title="Save override (Enter)"
-                >
-                  {isSaving ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Save className="w-2.5 h-2.5" />}
-                  Save
-                </button>
-                <button
-                  onClick={handleCancelEdit}
-                  className="flex items-center gap-0.5 px-1.5 py-0.5 bg-surface-700 text-surface-400 text-xs rounded hover:bg-surface-600 transition-colors"
-                  title="Cancel (Esc)"
-                >
-                  <X className="w-2.5 h-2.5" />
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button
-              type="button"
-              disabled={row.is_subtotal}
-              className={`group/edit inline-flex flex-col items-end ${!row.is_subtotal ? 'cursor-text' : 'cursor-default'}`}
-              onClick={!row.is_subtotal ? handleStartEdit : undefined}
-              title={!row.is_subtotal ? 'Click to edit forecast value' : undefined}
-            >
-              <span className={`font-medium ${wasOverridden ? 'text-cyan-400' : 'text-surface-200'} ${!row.is_subtotal ? 'group-hover/edit:text-cyan-300 group-hover/edit:underline group-hover/edit:decoration-dashed group-hover/edit:underline-offset-2' : ''}`}>
-                {formatCurrency(displayValue)}
-                {!row.is_subtotal && (
-                  <Edit3 className="w-2.5 h-2.5 inline-block ml-1 opacity-0 group-hover/edit:opacity-60 transition-opacity" />
-                )}
-              </span>
-              {wasOverridden && (
-                <span className="text-xs text-surface-500 line-through">
-                  was {formatCurrency(forecastValue)}
-                </span>
-              )}
-              {isSummary && row.avg_p50 != null && !wasOverridden && (
-                <span className="text-xs text-surface-500">
-                  avg: {formatCurrency(row.avg_p50)}/mo
-                </span>
-              )}
-            </button>
-          )}
-        </td>
-
-        {/* Confidence */}
-        <td className="px-3 py-2 text-center">
-          <ConfidenceIndicator score={score} level={level} />
-        </td>
-
-        {/* Status / AI Recommendation */}
-        <td className="px-3 py-2 text-center">
-          <StatusBadge
-            recommendation={recommendation}
-            reviewStatus={row.review_status}
+          <input
+            type="text"
+            placeholder="Reason for change (min 10 chars)"
+            value={editReason}
+            onChange={(e) => setEditReason(e.target.value)}
+            className="w-full px-1.5 py-1 bg-surface-800 border border-surface-600 rounded text-xs text-surface-300 placeholder-surface-600 focus:outline-none focus:border-cyan-500/50"
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') handleCancelEdit();
+              if (e.key === 'Enter' && editReason.trim().length >= 10) handleSaveEdit();
+            }}
           />
-        </td>
-
-        {/* Actions */}
-        <td className="px-3 py-2 text-center" onMouseDown={(e) => e.stopPropagation()}>
-          {isReviewed ? (
-            <span className="text-xs text-surface-500">Done</span>
-          ) : hasIssue ? (
-            <div className="flex items-center gap-1 justify-center">
-              <button
-                onClick={() => onAction(row.id, 'approve')}
-                disabled={isActioning}
-                className="p-1 rounded-md hover:bg-deloitte-green/20 text-deloitte-green transition-colors"
-                title="Approve as-is"
-              >
-                <CheckCircle2 className="w-3.5 h-3.5" />
-              </button>
-              <button
-                onClick={() => onAction(row.id, 'flag')}
-                disabled={isActioning}
-                className="p-1 rounded-md hover:bg-amber-500/20 text-amber-400 transition-colors"
-                title="Flag for later"
-              >
-                <Eye className="w-3.5 h-3.5" />
-              </button>
-              <button
-                onClick={onToggle}
-                className="p-1 rounded-md hover:bg-cyan-500/20 text-cyan-400 transition-colors"
-                title="View AI recommendations"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1 justify-center">
-              <button
-                onClick={() => onAction(row.id, 'approve')}
-                disabled={isActioning}
-                className="p-1 rounded-md hover:bg-deloitte-green/20 text-surface-500 hover:text-deloitte-green transition-colors"
-                title="Approve"
-              >
-                <CheckCircle2 className="w-3.5 h-3.5" />
-              </button>
-              {reasoning && (
-                <button
-                  onClick={onToggle}
-                  className="p-1 rounded-md hover:bg-surface-700 text-surface-600 hover:text-surface-300 transition-colors"
-                  title="View details"
-                >
-                  <Info className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
+          <div className="flex items-center gap-1 justify-end">
+            <button
+              onClick={handleSaveEdit}
+              disabled={isSaving || editReason.trim().length < 10 || isNaN(parseFloat(editValue))}
+              className="flex items-center gap-0.5 px-1.5 py-0.5 bg-deloitte-green/20 text-deloitte-green text-xs rounded hover:bg-deloitte-green/30 disabled:opacity-30 transition-colors"
+              title="Save override (Enter)"
+            >
+              {isSaving ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Save className="w-2.5 h-2.5" />}
+              Save
+            </button>
+            <button
+              onClick={handleCancelEdit}
+              className="flex items-center gap-0.5 px-1.5 py-0.5 bg-surface-700 text-surface-400 text-xs rounded hover:bg-surface-600 transition-colors"
+              title="Cancel (Esc)"
+            >
+              <X className="w-2.5 h-2.5" />
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          disabled={row.is_subtotal}
+          className={`group/edit inline-flex flex-col items-end ${!row.is_subtotal ? 'cursor-text' : 'cursor-default'}`}
+          onClick={!row.is_subtotal ? handleStartEdit : undefined}
+          title={!row.is_subtotal ? 'Click to edit forecast value' : undefined}
+        >
+          <span className={`font-medium font-mono ${wasOverridden ? 'text-cyan-400' : 'text-surface-200'} ${!row.is_subtotal ? 'group-hover/edit:text-cyan-300 group-hover/edit:underline group-hover/edit:decoration-dashed group-hover/edit:underline-offset-2' : ''}`}>
+            {formatCurrency(displayValue)}
+            {!row.is_subtotal && (
+              <Edit3 className="w-2.5 h-2.5 inline-block ml-1 opacity-0 group-hover/edit:opacity-60 transition-opacity" />
+            )}
+          </span>
+          {wasOverridden && (
+            <span className="text-xs text-surface-500 line-through">
+              was {formatCurrency(forecastValue)}
+            </span>
           )}
-        </td>
-      </tr>
-
-      {/* ── Expanded remediation detail ── */}
-      {isExpanded && reasoning && (
-        <ExpandedRemediation
-          row={row}
-          reasoning={reasoning}
-          hasIssue={!!hasIssue}
-          isReviewed={isReviewed}
-          isActioning={isActioning}
-          onAction={onAction}
-        />
+          {isSummary && row.avg_p50 != null && !wasOverridden && (
+            <span className="text-xs text-surface-500">
+              avg: {formatCurrency(row.avg_p50)}/mo
+            </span>
+          )}
+        </button>
       )}
-    </>
+    </div>
+  );
+}
+
+// ── Row Actions ──────────────────────────────
+function ForecastRowActions({
+  row,
+  onAction,
+  isActioning,
+  onToggle,
+}: {
+  row: ForecastRow;
+  onAction: (id: string, action: string) => void;
+  isActioning: boolean;
+  onToggle: () => void;
+}) {
+  const recommendation = row.ai_recommendation;
+  const reasoning = row.ai_reasoning;
+  const hasIssue = recommendation && recommendation !== 'approve';
+  const isReviewed = row.review_status === 'approved' || row.review_status === 'rejected';
+
+  if (isReviewed) {
+    return <span className="text-xs text-surface-500">Done</span>;
+  }
+
+  if (hasIssue) {
+    return (
+      <div className="flex items-center gap-1 justify-center" onMouseDown={(e) => e.stopPropagation()}>
+        <button
+          onClick={() => onAction(row.id, 'approve')}
+          disabled={isActioning}
+          className="p-1 rounded-md hover:bg-deloitte-green/20 text-deloitte-green transition-colors"
+          title="Approve as-is"
+        >
+          <CheckCircle2 className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={() => onAction(row.id, 'flag')}
+          disabled={isActioning}
+          className="p-1 rounded-md hover:bg-amber-500/20 text-amber-400 transition-colors"
+          title="Flag for later"
+        >
+          <Eye className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={onToggle}
+          className="p-1 rounded-md hover:bg-cyan-500/20 text-cyan-400 transition-colors"
+          title="View AI recommendations"
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1 justify-center" onMouseDown={(e) => e.stopPropagation()}>
+      <button
+        onClick={() => onAction(row.id, 'approve')}
+        disabled={isActioning}
+        className="p-1 rounded-md hover:bg-deloitte-green/20 text-surface-500 hover:text-deloitte-green transition-colors"
+        title="Approve"
+      >
+        <CheckCircle2 className="w-3.5 h-3.5" />
+      </button>
+      {reasoning && (
+        <button
+          onClick={onToggle}
+          className="p-1 rounded-md hover:bg-surface-700 text-surface-600 hover:text-surface-300 transition-colors"
+          title="View details"
+        >
+          <Info className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -905,9 +983,7 @@ function ExpandedRemediation({
   const recommendation = row.ai_recommendation;
 
   return (
-    <tr className="border-b border-surface-700/10">
-      <td colSpan={6} className="px-4 py-3 bg-surface-850/50">
-        <div className="space-y-3">
+    <div className="space-y-3">
           {/* Header with metadata */}
           <div className="flex items-center gap-3 flex-wrap">
             <Bot className="w-4 h-4 text-deloitte-green flex-shrink-0" />
@@ -1136,11 +1212,9 @@ function ExpandedRemediation({
                 <XCircle className="w-3 h-3" />
                 Reject
               </button>
-            </div>
-          )}
         </div>
-      </td>
-    </tr>
+      )}
+    </div>
   );
 }
 

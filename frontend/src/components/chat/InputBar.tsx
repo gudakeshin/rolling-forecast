@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
-import { Send, Paperclip, Loader2, FileText, CheckCircle } from 'lucide-react';
+import { Send, Paperclip, Loader2, CheckCircle, Square } from 'lucide-react';
 import { uploadFile, apiPost } from '../../api/client';
 import { useI18n } from '../../i18n/useI18n';
 
@@ -12,10 +12,11 @@ function getFileExtension(name: string): string {
 
 interface Props {
   onSend: (content: string) => void;
+  onStop?: () => void;
   isStreaming: boolean;
 }
 
-export function InputBar({ onSend, isStreaming }: Props) {
+export function InputBar({ onSend, onStop, isStreaming }: Props) {
   const { t } = useI18n();
   const [input, setInput] = useState('');
   const [isUploading, setIsUploading] = useState(false);
@@ -123,19 +124,27 @@ export function InputBar({ onSend, isStreaming }: Props) {
           disabled={isStreaming}
         />
 
-        <button
-          type="button"
-          onClick={handleSend}
-          disabled={!input.trim() || isStreaming}
-          aria-label={t('chat.send')}
-          className="flex-shrink-0 p-1.5 bg-deloitte-green hover:bg-deloitte-green/90 disabled:bg-surface-700 disabled:text-surface-600 text-black rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
-        >
-          {isStreaming ? (
-            <Loader2 className="w-5 h-5 animate-spin text-deloitte-green" />
-          ) : (
+        {isStreaming ? (
+          <button
+            type="button"
+            onClick={onStop}
+            aria-label={t('chat.stop')}
+            title={t('chat.stop')}
+            className="flex-shrink-0 p-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+          >
+            <Square className="w-4 h-4 fill-current" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={handleSend}
+            disabled={!input.trim()}
+            aria-label={t('chat.send')}
+            className="flex-shrink-0 p-1.5 bg-deloitte-green hover:bg-deloitte-green/90 disabled:bg-surface-700 disabled:text-surface-600 text-black rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+          >
             <Send className="w-5 h-5" />
-          )}
-        </button>
+          </button>
+        )}
       </div>
 
       <p className="text-center text-xs text-surface-500 mt-2">

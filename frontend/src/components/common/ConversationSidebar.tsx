@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { deleteConversation, getConversation, getConversations } from '../../api/chat';
 import { useChatStore } from '../../store/chatStore';
+import { toast } from '../../store/toastStore';
 import { useI18n } from '../../i18n/useI18n';
 import type { Conversation } from '../../types/chat';
 
@@ -60,8 +61,8 @@ export function ConversationSidebar() {
     try {
       const detail = await getConversation(c.id);
       setMessages(detail.messages || []);
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      toast.error(e?.message || t('sidebar.loadError'));
     }
   };
 
@@ -189,7 +190,7 @@ export function ConversationSidebar() {
                 type="button"
                 onClick={(e) => handleDelete(c, e)}
                 disabled={isStreaming || deleting}
-                className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 self-center mr-1 p-1.5 rounded-md text-surface-500 hover:text-red-400 hover:bg-red-500/10 transition-opacity disabled:opacity-40 min-h-[36px] min-w-[36px]"
+                className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 focus:opacity-100 self-center mr-1 p-1.5 rounded-md text-surface-500 hover:text-red-400 hover:bg-red-500/10 transition-opacity disabled:opacity-40 min-h-[36px] min-w-[36px]"
                 aria-label={`Delete ${c.title || t('sidebar.untitled')}`}
                 title="Delete"
               >

@@ -15,7 +15,9 @@ class Settings(BaseSettings):
     # Auth
     jwt_secret_key: str = "dev-secret-key-change-in-production"
     jwt_algorithm: str = "HS256"
+    # Access token TTL — 480 min (8h) preserves local/dev UX; set JWT_EXPIRY_MINUTES=30 in prod
     jwt_expiry_minutes: int = 480
+    jwt_refresh_days: int = 14
     allow_open_registration: bool = True  # Forced False when app_env=production
     seed_demo_users: bool = True  # Forced False when app_env=production
 
@@ -45,6 +47,8 @@ class Settings(BaseSettings):
 
     # Redis (locks / rate-limit / OIDC store / arq job queue)
     redis_url: str = ""
+    # When true, generate_baseline must enqueue via arq; missing Redis → 503 (no silent sync)
+    require_async_jobs: bool = False
 
     # Warehouse / ERP (legacy env fallbacks — prefer connection registry)
     warehouse_connection_url: str = ""
@@ -78,6 +82,11 @@ class Settings(BaseSettings):
     ideal_history_months: int = 24
     panel_page_size: int = 100
     audit_retention_days: int = 2555
+    # Pre-fit outlier cleaning (STL remainder + MAD winsorize)
+    outlier_cleaning_enabled: bool = True
+    outlier_mad_z: float = 3.5
+    # Structural break: require this many post-break points before truncating
+    structural_break_min_post_points: int = 12
 
     # Context Engine
     chroma_persist_dir: str = str(Path(__file__).parent.parent / "data" / "chroma")

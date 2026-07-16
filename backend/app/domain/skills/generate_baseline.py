@@ -250,6 +250,11 @@ class GenerateBaselineSkill(BaseSkill):
                     "description": "If true and REDIS_URL is set, enqueue generation on the arq worker and return a job_id",
                     "default": False,
                 },
+                "scenario": {
+                    "type": "string",
+                    "description": "Scenario label for this version (default: base). Examples: base, upside, downside.",
+                    "default": "base",
+                },
             },
         }
 
@@ -262,33 +267,46 @@ class GenerateBaselineSkill(BaseSkill):
         db: Session = context.db
         start_time = time.time()
 
-        # Optional async enqueue when Redis/arq is available
-        if params.get("async_job"):
-            from app.services.job_queue import enqueue_generate_baseline, redis_configured
+        # Async enqueue: prod default when require_async_jobs is set.
+        # Worker passes async_job=False explicitly to run in-process.
+        want_async = params.get("async_job")
+        if want_async is None and settings.require_async_jobs:
+            want_async = True
+        if want_async:
+            from app.services.job_queue import enqueue_generate_baseline
 
-            if redis_configured():
-                job = await enqueue_generate_baseline(
-                    version_name="pending",
-                    params={k: v for k, v in params.items() if k != "async_job"},
-                    user_id=context.user_id,
-                    conversation_id=context.conversation_id,
+            job = await enqueue_generate_baseline(
+                version_name="pending",
+                params={k: v for k, v in params.items() if k != "async_job"},
+                user_id=context.user_id,
+                conversation_id=context.conversation_id,
+            )
+            if job.get("status") == "sync_required":
+                if settings.require_async_jobs:
+                    return SkillResult.fail(
+                        job.get("message")
+                        or "Async job queue unavailable (Redis/arq required in production)",
+                        error="async_unavailable",
+                    )
+                # Dev fallback: continue synchronously
+                params = {**params, "async_job": False}
+            else:
+                status = self._status_block(
+                    label="Queued forecast generation",
+                    progress=0.05,
+                    step=f"job_id={job['job_id']}",
                 )
+                status["data"]["job_id"] = job["job_id"]
                 return SkillResult.ok(
                     message=f"Baseline generation queued (job {job['job_id']})",
                     data=job,
                     content_blocks=[
-                        self._status_block(
-                            label="Queued forecast generation",
-                            progress=0.05,
-                            step=f"job_id={job['job_id']}",
-                        ),
+                        status,
                         self._text_block(
                             f"Job `{job['job_id']}` queued. Poll `GET /api/jobs/{job['job_id']}` for status."
                         ),
                     ],
                 )
-            # No Redis — fall through to synchronous execution
-            params = {**params, "async_job": False}
 
         horizon = params.get("horizon_months", settings.default_horizon_months)
         model_type = params.get("model_type", "auto")
@@ -331,10 +349,12 @@ class GenerateBaselineSkill(BaseSkill):
         now = datetime.now(timezone.utc)
         version_name = f"FC-{now.strftime('%Y-%m')}-v{existing_count + 1}"
 
+        scenario = (params.get("scenario") or "base").strip() or "base"
         version = ForecastVersion(
             name=version_name,
             status="draft",
             version_type="scheduled",
+            scenario=scenario,
             actuals_dataset_id=dataset_id,
             actuals_hash=dataset.file_hash,
             horizon_months=horizon,
@@ -362,6 +382,18 @@ class GenerateBaselineSkill(BaseSkill):
         cal_cfg = get_calendar_config(db)
         cal_token = push_calendar(cal_cfg)
 
+        # Preload all actuals for this dataset once (avoids N+1 per line item)
+        from collections import defaultdict
+
+        actuals_by_li: dict[int, list[ActualsRecord]] = defaultdict(list)
+        for rec in (
+            db.query(ActualsRecord)
+            .filter(ActualsRecord.dataset_id == dataset_id)
+            .order_by(ActualsRecord.period)
+            .all()
+        ):
+            actuals_by_li[rec.line_item_id].append(rec)
+
         # Generate forecast for each line item
         model_registry = get_model_registry()
         summary: dict[str, Any] = {
@@ -377,10 +409,25 @@ class GenerateBaselineSkill(BaseSkill):
         }
         all_warnings: list[str] = []
         all_flags: list[dict] = []
+        pending_line_rows: list[dict[str, Any]] = []
+        pending_metadata: list[ModelMetadata] = []
+
+        job_id = params.get("_job_id")
+        n_line_items = len(line_items)
 
         try:
             for li in line_items:
                 summary["total"] += 1
+
+                if job_id and (n_line_items <= 5 or summary["total"] % 5 == 0):
+                    from app.services.job_queue import update_job
+
+                    update_job(
+                        job_id,
+                        status="running",
+                        progress=min(0.9, summary["total"] / max(n_line_items, 1)),
+                        step=f"{li.name} ({summary['total']}/{n_line_items})",
+                    )
 
                 # EC11: Check timeout periodically
                 try:
@@ -389,22 +436,14 @@ class GenerateBaselineSkill(BaseSkill):
                         context=f"Processing line {summary['total']}/{len(line_items)}: {li.name}",
                     )
                 except ForecastTimeoutError as e:
-                    # Save partial results
+                    # Flush any pending rows before returning
+                    self._flush_forecast_batch(db, pending_line_rows, pending_metadata)
                     version.generation_time_seconds = time.time() - start_time
                     db.commit()
                     all_warnings.append(str(e))
                     return self._build_timeout_response(version, summary, all_warnings, all_flags)
 
-                # Get actuals for this line item
-                records = (
-                    db.query(ActualsRecord)
-                    .filter(
-                        ActualsRecord.dataset_id == dataset_id,
-                        ActualsRecord.line_item_id == li.id,
-                    )
-                    .order_by(ActualsRecord.period)
-                    .all()
-                )
+                records = actuals_by_li.get(li.id, [])
 
                 if not records:
                     summary["skipped"] += 1
@@ -480,19 +519,43 @@ class GenerateBaselineSkill(BaseSkill):
                     summary["success"] += 1
                     continue
 
-                # EC12: Structural break -- use post-break data only
+                # EC12: Structural break -- truncate only with enough post-break history
                 effective_values = values
                 effective_dates = dates
-                if analysis.has_structural_break and analysis.structural_break_period:
+                min_post = settings.structural_break_min_post_points
+                if analysis.has_structural_break:
                     summary["structural_breaks"] += 1
-                    break_idx = None
-                    for idx, d in enumerate(dates):
-                        if d.strftime("%Y-%m") == analysis.structural_break_period:
-                            break_idx = idx
-                            break
-                    if break_idx is not None and (len(values) - break_idx) >= 6:
+                    break_idx = analysis.structural_break_index
+                    if break_idx is None and analysis.structural_break_period:
+                        for idx, d in enumerate(dates):
+                            if d.strftime("%Y-%m") == analysis.structural_break_period:
+                                break_idx = idx
+                                break
+                    if break_idx is not None and (len(values) - break_idx) >= min_post:
                         effective_values = values[break_idx:]
                         effective_dates = dates[break_idx:]
+                    else:
+                        all_warnings.append(
+                            f"Structural break flagged for '{li.name}' but post-break "
+                            f"history < {min_post} periods — retaining full series."
+                        )
+
+                # Pre-fit outlier cleaning (winsorize; never delete)
+                from app.services.outlier_cleaning import clean_series_for_fit
+
+                cleaning = clean_series_for_fit(
+                    effective_values,
+                    effective_dates,
+                    enabled=settings.outlier_cleaning_enabled,
+                    mad_z=settings.outlier_mad_z,
+                )
+                effective_values = cleaning.cleaned
+                if cleaning.n_cleaned:
+                    all_warnings.append(
+                        f"Winsorized {cleaning.n_cleaned} outlier(s) for '{li.name}' "
+                        f"({', '.join(cleaning.cleaned_periods[:5])}"
+                        f"{'…' if cleaning.n_cleaned > 5 else ''})."
+                    )
 
                 # Select and run model
                 try:
@@ -520,7 +583,7 @@ class GenerateBaselineSkill(BaseSkill):
                             cv = model.evaluate_cv(
                                 effective_values, effective_dates, n_folds=3, fold_horizon=3
                             )
-                            selection_mape = cv.get("mean_mape")
+                            selection_mape = float(cv.get("mean_mape") or 0.0)
                             summary["model_comparisons"][li.name] = {
                                 "best_model": selected_model,
                                 "best_mape": selection_mape,
@@ -586,46 +649,67 @@ class GenerateBaselineSkill(BaseSkill):
                         summary["model_distribution"].get(selected_model, 0) + 1
                     )
 
-                    # Store results for each forecast period
+                    # Batch line results (pre-assign UUIDs; no per-row flush)
+                    import uuid as _uuid
+
                     for i, period in enumerate(forecast_output.periods):
                         p50 = float(point_forecast[i])
                         p10 = float(lower_bound[i]) if lower_bound is not None else None
-                        p90 = float(forecast_output.upper_bound[i]) if forecast_output.upper_bound is not None else None
-
-                        line_result = ForecastLineResult(
-                            version_id=version.id,
-                            line_item_id=li.id,
-                            period=period,
-                            p10=p10, p50=p50, p90=p90,
-                            confidence_score=0,
-                            confidence_level="pending",
-                            model_type=selected_model,
-                            model_mape=honest_mape,
-                            model_r_squared=forecast_output.fit_metrics.get("r_squared"),
-                            bounds_method=BOUNDS_METHOD_MODEL,
+                        p90 = (
+                            float(forecast_output.upper_bound[i])
+                            if forecast_output.upper_bound is not None
+                            else None
                         )
-                        db.add(line_result)
-                        db.flush()  # Ensure line_result.id is assigned
-
-                        # Store model metadata (first period only)
+                        result_id = str(_uuid.uuid4())
+                        pending_line_rows.append({
+                            "id": result_id,
+                            "version_id": version.id,
+                            "line_item_id": li.id,
+                            "period": period,
+                            "p10": p10,
+                            "p50": p50,
+                            "p90": p90,
+                            "model_p50": p50,
+                            "confidence_score": 0,
+                            "confidence_level": "pending",
+                            "model_type": selected_model,
+                            "model_mape": honest_mape,
+                            "model_r_squared": forecast_output.fit_metrics.get("r_squared"),
+                            "bounds_method": BOUNDS_METHOD_MODEL,
+                            "is_overridden": False,
+                            "is_calculated": False,
+                        })
                         if i == 0:
-                            metadata = ModelMetadata(
-                                line_result_id=line_result.id,
-                                model_type=selected_model,
-                                parameters=forecast_output.parameters,
-                                training_window_start=periods[0],
-                                training_window_end=periods[-1],
-                                training_points=len(records),
-                                mape=honest_mape,
-                                r_squared=forecast_output.fit_metrics.get("r_squared"),
-                                aic=forecast_output.fit_metrics.get("aic"),
-                                seasonality_detected=forecast_output.diagnostics.get("seasonality_detected", False),
-                                seasonality_period=forecast_output.diagnostics.get("seasonality_period"),
-                                structural_break_detected=analysis.has_structural_break,
-                                structural_break_period=analysis.structural_break_period,
-                                random_seed=random_seed,
+                            pending_metadata.append(
+                                ModelMetadata(
+                                    line_result_id=result_id,
+                                    model_type=selected_model,
+                                    parameters=forecast_output.parameters,
+                                    training_window_start=periods[0],
+                                    training_window_end=periods[-1],
+                                    training_points=len(effective_values),
+                                    mape=honest_mape,
+                                    r_squared=forecast_output.fit_metrics.get("r_squared"),
+                                    aic=forecast_output.fit_metrics.get("aic"),
+                                    seasonality_detected=forecast_output.diagnostics.get(
+                                        "seasonality_detected", False
+                                    ),
+                                    seasonality_period=forecast_output.diagnostics.get(
+                                        "seasonality_period"
+                                    ),
+                                    structural_break_detected=analysis.has_structural_break,
+                                    structural_break_period=analysis.structural_break_period,
+                                    cleaned_periods=cleaning.cleaned_periods or None,
+                                    outliers_cleaned=cleaning.n_cleaned,
+                                    random_seed=random_seed,
+                                )
                             )
-                            db.add(metadata)
+
+                    # Flush in chunks to bound memory
+                    if len(pending_line_rows) >= 1000:
+                        self._flush_forecast_batch(db, pending_line_rows, pending_metadata)
+                        pending_line_rows.clear()
+                        pending_metadata.clear()
 
                     summary["success"] += 1
 
@@ -639,6 +723,11 @@ class GenerateBaselineSkill(BaseSkill):
             all_warnings.append(f"Generation error: {str(e)[:200]}")
         finally:
             reset_calendar(cal_token)
+
+        # Persist batched forecast rows before reconciliation / scoring
+        self._flush_forecast_batch(db, pending_line_rows, pending_metadata)
+        pending_line_rows.clear()
+        pending_metadata.clear()
 
         # Reconcile CoA parents (p50 identities + full MinT correlation-aware bounds)
         try:
@@ -747,6 +836,11 @@ class GenerateBaselineSkill(BaseSkill):
             if item["line_item"] not in seen_lines:
                 seen_lines.add(item["line_item"])
                 unique_remediation.append(item)
+
+        if job_id:
+            from app.services.job_queue import update_job
+
+            update_job(job_id, status="running", progress=0.95, step="Finalizing")
 
         return self._build_success_response(
             version, horizon, dataset, model_type, summary, elapsed,
@@ -1052,6 +1146,41 @@ class GenerateBaselineSkill(BaseSkill):
             },
             content_blocks=content_blocks,
         )
+
+    @staticmethod
+    def _flush_forecast_batch(
+        db: Session,
+        line_rows: list[dict[str, Any]],
+        metadata_rows: list[ModelMetadata],
+    ) -> None:
+        """Bulk-upsert forecast line results then attach model metadata."""
+        if not line_rows:
+            return
+        from app.services.upsert import bulk_upsert
+
+        bulk_upsert(
+            db,
+            ForecastLineResult,
+            line_rows,
+            conflict_cols=("version_id", "line_item_id", "period"),
+            update_cols=(
+                "p10",
+                "p50",
+                "p90",
+                "model_p50",
+                "confidence_score",
+                "confidence_level",
+                "model_type",
+                "model_mape",
+                "model_r_squared",
+                "bounds_method",
+                "is_overridden",
+                "is_calculated",
+            ),
+        )
+        for meta in metadata_rows:
+            db.add(meta)
+        db.flush()
 
     def _build_timeout_response(self, version, summary, warnings, flags) -> SkillResult:
         """Build response when generation times out (EC11)."""

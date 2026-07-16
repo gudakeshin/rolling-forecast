@@ -21,7 +21,7 @@ jobs:
       - name: Ruff
         run: ruff check app tests alembic
       - name: Mypy
-        run: mypy app --config-file pyproject.toml --no-error-summary
+        run: mypy app alembic --config-file pyproject.toml --no-error-summary
 
   backend-test:
     runs-on: ubuntu-latest
@@ -44,7 +44,7 @@ jobs:
           ALLOW_OPEN_REGISTRATION: "true"
         run: |
           pip install pytest-cov
-          pytest -q --tb=short --cov=app --cov-report=term-missing:skip-covered --cov-fail-under=40
+          pytest -q --tb=short --cov=app --cov-report=term-missing:skip-covered --cov-fail-under=60
       - name: Security scans
         run: |
           pip install pip-audit bandit
@@ -98,7 +98,7 @@ jobs:
           test "$(alembic heads | wc -l)" -eq 1
           alembic upgrade head
           alembic current | tee /tmp/current.txt
-          grep -q "007_fiscal_mint" /tmp/current.txt
+          grep -q "012_forecast_scenario" /tmp/current.txt
 
   frontend:
     runs-on: ubuntu-latest

@@ -51,8 +51,26 @@ export async function submitReviewAction(action: ReviewAction): Promise<any> {
   return apiPost('/panel/review-item', action);
 }
 
+export async function batchReview(
+  versionId: string,
+  itemIds: string[],
+  action: 'approve' | 'reject',
+  comment?: string,
+): Promise<any> {
+  return apiPost('/panel/batch-review', {
+    version_id: versionId,
+    item_ids: itemIds,
+    action,
+    comment: comment || null,
+  });
+}
+
+/** @deprecated Use batchReview(versionId, itemIds, action, comment) */
 export async function batchReviewActions(actions: ReviewAction[]): Promise<any> {
-  return apiPost('/panel/batch-review', { actions });
+  if (!actions.length) return { success: true, items_reviewed: 0 };
+  const action = actions[0].action;
+  const comment = actions[0].comment;
+  return batchReview('', actions.map((a) => a.item_id), action, comment);
 }
 
 export async function acceptAiRecommendations(versionId: string): Promise<any> {

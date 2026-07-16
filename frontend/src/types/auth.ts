@@ -6,6 +6,12 @@ export interface User {
   business_unit: string | null;
   role_name: string;
   is_active: boolean;
+  can_input?: boolean;
+  can_generate?: boolean;
+  can_override?: boolean;
+  can_review?: boolean;
+  can_publish?: boolean;
+  can_admin?: boolean;
 }
 
 export interface LoginRequest {
@@ -15,6 +21,7 @@ export interface LoginRequest {
 
 export interface TokenResponse {
   access_token: string;
+  refresh_token?: string | null;
   token_type: string;
   user_id: string;
   username: string;

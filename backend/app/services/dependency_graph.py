@@ -96,12 +96,15 @@ class DependencyGraphManager:
     ) -> int:
         """
         Recalculate all downstream dependents after an override.
-        
+
+        Batches predecessor/result lookups (no per-cell queries). Recomputes
+        dependent p10/p90 via linear aggregation and tags ``bounds_method``.
+
         Args:
             version_id: Forecast version to update
             source_line_item_id: The overridden line item
             periods: Specific periods to recalculate (all if None)
-            
+
         Returns:
             Number of line results recalculated
         """
@@ -111,76 +114,77 @@ class DependencyGraphManager:
         if not downstream:
             return 0
 
+        # Preload all version rows once — includes predecessors of dependents
+        rows = (
+            self.db.query(ForecastLineResult)
+            .filter(ForecastLineResult.version_id == version_id)
+            .all()
+        )
+        by_key: dict[tuple[int, str], ForecastLineResult] = {
+            (r.line_item_id, r.period): r for r in rows
+        }
+
         recalc_count = 0
 
         for dependent_id in downstream:
-            # Get the dependency edges leading into this node
             predecessors = list(G.predecessors(dependent_id))
             node_data = G.nodes[dependent_id]
 
             if not node_data.get("is_calculated"):
                 continue
 
-            # Get the periods to recalculate
             if periods:
                 target_periods = periods
             else:
-                # Get all periods for this line item in this version
-                results = (
-                    self.db.query(ForecastLineResult.period)
-                    .filter(
-                        ForecastLineResult.version_id == version_id,
-                        ForecastLineResult.line_item_id == dependent_id,
-                    )
-                    .distinct()
-                    .all()
+                target_periods = sorted(
+                    {p for (lid, p) in by_key if lid == dependent_id}
                 )
-                target_periods = [r[0] for r in results]
 
             for period in target_periods:
-                # Gather source values
                 source_values = {}
                 for pred_id in predecessors:
-                    pred_result = (
-                        self.db.query(ForecastLineResult)
-                        .filter(
-                            ForecastLineResult.version_id == version_id,
-                            ForecastLineResult.line_item_id == pred_id,
-                            ForecastLineResult.period == period,
-                        )
-                        .first()
+                    pred_result = by_key.get((pred_id, period))
+                    if not pred_result:
+                        continue
+                    val = (
+                        pred_result.override_value
+                        if pred_result.is_overridden
+                        else pred_result.p50
                     )
-                    if pred_result:
-                        # Use override value if present, otherwise model value
-                        val = pred_result.override_value if pred_result.is_overridden else pred_result.p50
-                        edge_data = G.edges[pred_id, dependent_id]
-                        source_values[pred_id] = {
-                            "value": val,
-                            "relationship": edge_data.get("relationship_type", "sum"),
-                            "weight": edge_data.get("weight", 1.0),
-                        }
+                    edge_data = G.edges[pred_id, dependent_id]
+                    source_values[pred_id] = {
+                        "value": val,
+                        "relationship": edge_data.get("relationship_type", "sum"),
+                        "weight": edge_data.get("weight", 1.0),
+                    }
 
                 if not source_values:
                     continue
 
-                # Calculate new value
-                new_value = self._calculate_value(source_values, node_data.get("formula"))
-
-                # Update the forecast result
-                result = (
-                    self.db.query(ForecastLineResult)
-                    .filter(
-                        ForecastLineResult.version_id == version_id,
-                        ForecastLineResult.line_item_id == dependent_id,
-                        ForecastLineResult.period == period,
-                    )
-                    .first()
+                new_value = self._calculate_value(
+                    source_values, node_data.get("formula")
                 )
+                result = by_key.get((dependent_id, period))
+                if not result:
+                    continue
 
-                if result:
-                    result.p50 = new_value
-                    result.is_calculated = True
-                    recalc_count += 1
+                result.p50 = new_value
+                result.is_calculated = True
+
+                # Linear aggregation of bounds (same as recalculate_all)
+                lowers, uppers = [], []
+                for pred_id in predecessors:
+                    pred = by_key.get((pred_id, period))
+                    if pred and pred.p10 is not None:
+                        lowers.append(pred.p10)
+                    if pred and pred.p90 is not None:
+                        uppers.append(pred.p90)
+                if lowers:
+                    result.p10 = sum(lowers)
+                if uppers:
+                    result.p90 = sum(uppers)
+                result.bounds_method = "linear_aggregation"
+                recalc_count += 1
 
         self.db.flush()
         return recalc_count

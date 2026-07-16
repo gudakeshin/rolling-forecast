@@ -1,6 +1,5 @@
 """Authentication endpoints -- login, register, current user, OIDC SSO."""
 
-from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -14,21 +13,50 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.database import get_db
 from app.config import settings
 from app.models.user import User, Role
-from app.schemas.auth import LoginRequest, TokenResponse, UserCreate, UserResponse
+from app.schemas.auth import (
+    LoginRequest,
+    LogoutRequest,
+    RefreshRequest,
+    TokenResponse,
+    UserCreate,
+    UserResponse,
+)
 from app.services.audit import record_audit
 from app.services.permissions import require_permission
+from app.services.token_store import (
+    create_access_token as _mint_access,
+    issue_refresh_token,
+    is_jti_revoked,
+    revoke_access_from_bearer,
+    revoke_refresh_token,
+    rotate_refresh_token,
+)
 from app.rate_limit import limiter
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
+security_optional = HTTPBearer(auto_error=False)
 
 
 def create_access_token(data: dict) -> str:
-    to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expiry_minutes)
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+    """Backward-compatible helper — returns access JWT only."""
+    token, _jti, _exp = _mint_access(data)
+    return token
+
+
+def _token_pair(db: Session, user: User) -> TokenResponse:
+    access, _jti, _exp = _mint_access(
+        {"sub": user.id, "role": user.role.name if user.role else "analyst"}
+    )
+    refresh = issue_refresh_token(db, user.id)
+    return TokenResponse(
+        access_token=access,
+        refresh_token=refresh,
+        user_id=user.id,
+        username=user.username,
+        role=user.role.name if user.role else "analyst",
+    )
 
 
 def get_current_user(
@@ -42,8 +70,11 @@ def get_current_user(
             token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm]
         )
         user_id: str = payload.get("sub")
+        jti = payload.get("jti")
         if user_id is None:
             raise HTTPException(status_code=401, detail="Invalid token")
+        if is_jti_revoked(db, jti):
+            raise HTTPException(status_code=401, detail="Token revoked")
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
@@ -63,7 +94,6 @@ async def login(request: Request, body: LoginRequest, db: Session = Depends(get_
             detail="Incorrect username or password",
         )
 
-    token = create_access_token({"sub": user.id, "role": user.role.name})
     record_audit(
         db,
         action="auth.login",
@@ -73,12 +103,54 @@ async def login(request: Request, body: LoginRequest, db: Session = Depends(get_
         actor_username=user.username,
         commit=True,
     )
+    return _token_pair(db, user)
+
+
+@router.post("/refresh", response_model=TokenResponse)
+@limiter.limit("30/minute")
+async def refresh_tokens(
+    request: Request,
+    body: RefreshRequest,
+    db: Session = Depends(get_db),
+):
+    """Rotate refresh token and issue a new access token."""
+    _ = request
+    try:
+        new_refresh, user_id = rotate_refresh_token(db, body.refresh_token)
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e)) from e
+
+    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()  # noqa: E712
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found or inactive")
+
+    access, _jti, _exp = _mint_access(
+        {"sub": user.id, "role": user.role.name if user.role else "analyst"}
+    )
     return TokenResponse(
-        access_token=token,
+        access_token=access,
+        refresh_token=new_refresh,
         user_id=user.id,
         username=user.username,
-        role=user.role.name,
+        role=user.role.name if user.role else "analyst",
     )
+
+
+@router.post("/logout")
+@limiter.limit("30/minute")
+async def logout(
+    request: Request,
+    body: LogoutRequest | None = None,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security_optional),
+    db: Session = Depends(get_db),
+):
+    """Revoke the current access token (jti) and refresh-token family."""
+    _ = request
+    access = credentials.credentials if credentials else None
+    revoke_access_from_bearer(db, access)
+    refresh = body.refresh_token if body else None
+    revoke_refresh_token(db, refresh)
+    return {"ok": True}
 
 
 @router.post("/register", response_model=UserResponse)
@@ -141,15 +213,7 @@ async def register(
         commit=True,
     )
 
-    return UserResponse(
-        id=user.id,
-        email=user.email,
-        username=user.username,
-        full_name=user.full_name,
-        business_unit=user.business_unit,
-        role_name=user.role.name,
-        is_active=user.is_active,
-    )
+    return UserResponse.model_validate(user)
 
 
 @router.post("/admin/users", response_model=UserResponse)
@@ -192,28 +256,12 @@ async def admin_create_user(
         commit=True,
     )
 
-    return UserResponse(
-        id=user.id,
-        email=user.email,
-        username=user.username,
-        full_name=user.full_name,
-        business_unit=user.business_unit,
-        role_name=user.role.name,
-        is_active=user.is_active,
-    )
+    return UserResponse.model_validate(user)
 
 
 @router.get("/me", response_model=UserResponse)
 async def get_me(current_user: User = Depends(get_current_user)):
-    return UserResponse(
-        id=current_user.id,
-        email=current_user.email,
-        username=current_user.username,
-        full_name=current_user.full_name,
-        business_unit=current_user.business_unit,
-        role_name=current_user.role.name,
-        is_active=current_user.is_active,
-    )
+    return UserResponse.model_validate(current_user)
 
 
 @router.get("/oidc/login")
@@ -417,15 +465,7 @@ async def oidc_exchange(
     user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found or inactive")
-    app_token = create_access_token(
-        {"sub": user.id, "role": user.role.name if user.role else "analyst"}
-    )
-    return TokenResponse(
-        access_token=app_token,
-        user_id=user.id,
-        username=user.username,
-        role=user.role.name if user.role else "analyst",
-    )
+    return _token_pair(db, user)
 
 
 @router.get("/sso/status")

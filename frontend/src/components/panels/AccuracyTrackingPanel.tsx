@@ -4,8 +4,12 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, ReferenceLine, Cell,
 } from 'recharts';
-import { Target, TrendingDown, BarChart3, AlertCircle, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { Target, TrendingDown, BarChart3, AlertCircle, ArrowUpRight, ArrowDownRight, RefreshCw, Loader2, ExternalLink, Download } from 'lucide-react';
 import { Tabs } from '../ui/Tabs';
+import { downloadCsv } from '../ui/DataTable';
+import { rescoreForecasts } from '../../api/dashboard';
+import { usePanelStore } from '../../store/panelStore';
+import { toast } from '../../store/toastStore';
 
 const COLORS = {
   green: '#86BC25',
@@ -29,6 +33,12 @@ interface Props {
         bias_direction?: string;
         hit_rate: number;
         total_comparisons: number;
+        published_wape?: number | null;
+        model_wape?: number | null;
+        naive_wape?: number | null;
+        seasonal_naive_wape?: number | null;
+        fva_vs_naive?: number | null;
+        fva_vs_seasonal_naive?: number | null;
       };
       model_performance: any[];
       category_accuracy: any[];
@@ -36,8 +46,10 @@ interface Props {
       top_deviations: any[];
       bias_trend?: any[];
       items: any[];
+      version?: { id: string; name: string };
     };
   };
+  onRefresh?: () => void;
 }
 
 function formatPct(val: number): string {
@@ -64,12 +76,70 @@ const ChartTooltip = ({ active, payload, label }: any) => {
   );
 };
 
-export function AccuracyTrackingPanel({ data }: Props) {
-  const { overall, model_performance, category_accuracy, mape_trend, top_deviations, bias_trend } = data.data;
+export function AccuracyTrackingPanel({ data, onRefresh }: Props) {
+  const { overall, model_performance, category_accuracy, mape_trend, top_deviations, bias_trend, items } = data.data;
   const [activeTab, setActiveTab] = useState<'overview' | 'models' | 'deviations'>('overview');
+  const [rescoring, setRescoring] = useState(false);
+  const openPanel = usePanelStore((s) => s.openPanel);
+  const panelVersionId = usePanelStore((s) => s.panelParams.version_id);
+  const versionId = (data.data as any).version?.id || panelVersionId;
+
+  const handleRescore = async () => {
+    if (!versionId) {
+      toast.error('No version id for rescore');
+      return;
+    }
+    setRescoring(true);
+    try {
+      await rescoreForecasts(versionId);
+      toast.success('Rescore complete');
+      onRefresh?.();
+    } catch (e: any) {
+      toast.error(e.message || 'Rescore failed');
+    } finally {
+      setRescoring(false);
+    }
+  };
+
+  const deviationRows = (top_deviations?.length ? top_deviations : (items || [])) as Record<string, unknown>[];
+  const deviationColumns = [
+    { key: 'line_item_name', label: 'Line Item' },
+    { key: 'period', label: 'Period' },
+    { key: 'model_type', label: 'Model' },
+    { key: 'forecast', label: 'Forecast' },
+    { key: 'actual', label: 'Actual' },
+    { key: 'mape', label: 'MAPE' },
+    { key: 'bias', label: 'Bias' },
+  ];
+
+  const handleExportDeviations = () => {
+    downloadCsv(`accuracy_${versionId || 'export'}`, deviationColumns, deviationRows);
+  };
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-end gap-1.5">
+        {deviationRows.length > 0 && (
+          <button
+            type="button"
+            onClick={handleExportDeviations}
+            className="inline-flex items-center gap-1.5 text-xs text-surface-300 hover:text-white px-2 py-1 rounded-md border border-surface-600 hover:border-deloitte-green/40"
+            title="Export deviations CSV"
+          >
+            <Download className="w-3.5 h-3.5" />
+            CSV
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={handleRescore}
+          disabled={rescoring || !versionId}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-800 border border-surface-600 text-surface-300 text-xs rounded-lg hover:text-white disabled:opacity-50"
+        >
+          {rescoring ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+          Rescore this version
+        </button>
+      </div>
       {/* KPI cards */}
       <div className="grid grid-cols-4 gap-2">
         <KPI
@@ -105,6 +175,45 @@ export function AccuracyTrackingPanel({ data }: Props) {
           icon={Target}
         />
       </div>
+
+      {(overall.published_wape != null || overall.fva_vs_naive != null) && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <KPI
+            label="Published WAPE"
+            value={overall.published_wape != null ? formatPct(overall.published_wape) : '—'}
+            color="text-white"
+            icon={Target}
+          />
+          <KPI
+            label="Model WAPE"
+            value={overall.model_wape != null ? formatPct(overall.model_wape) : '—'}
+            color="text-deloitte-teal-light"
+            icon={BarChart3}
+          />
+          <KPI
+            label="Naive WAPE"
+            value={overall.naive_wape != null ? formatPct(overall.naive_wape) : '—'}
+            color="text-surface-300"
+            icon={AlertCircle}
+          />
+          <KPI
+            label="FVA vs Naive"
+            value={
+              overall.fva_vs_naive != null
+                ? `${overall.fva_vs_naive > 0 ? '+' : ''}${formatPct(overall.fva_vs_naive)}`
+                : '—'
+            }
+            color={
+              overall.fva_vs_naive == null
+                ? 'text-surface-400'
+                : overall.fva_vs_naive > 0
+                  ? 'text-deloitte-green'
+                  : 'text-red-400'
+            }
+            icon={overall.fva_vs_naive != null && overall.fva_vs_naive < 0 ? ArrowDownRight : ArrowUpRight}
+          />
+        </div>
+      )}
 
       {/* Tabs */}
       <Tabs
@@ -243,6 +352,7 @@ export function AccuracyTrackingPanel({ data }: Props) {
                   <th className="px-3 py-2 text-right text-surface-400 font-semibold text-xs uppercase">Actual</th>
                   <th className="px-3 py-2 text-right text-surface-400 font-semibold text-xs uppercase">MAPE</th>
                   <th className="px-3 py-2 text-right text-surface-400 font-semibold text-xs uppercase">Bias</th>
+                  <th className="px-3 py-2 text-right text-surface-400 font-semibold text-xs uppercase"></th>
                 </tr>
               </thead>
               <tbody>
@@ -263,6 +373,23 @@ export function AccuracyTrackingPanel({ data }: Props) {
                       <span className={`font-mono ${item.bias > 0 ? 'text-amber-400' : 'text-blue-400'}`}>
                         {item.bias > 0 ? '+' : ''}{formatPct(item.bias)}
                       </span>
+                    </td>
+                    <td className="px-3 py-1.5 text-right">
+                      {versionId && item.line_item_id != null && (
+                        <button
+                          type="button"
+                          title="Review item"
+                          onClick={() =>
+                            openPanel('review_dashboard', {
+                              version_id: versionId,
+                              focus_line_item_id: item.line_item_id,
+                            })
+                          }
+                          className="text-surface-400 hover:text-deloitte-green"
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

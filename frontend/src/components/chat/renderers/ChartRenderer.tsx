@@ -7,7 +7,7 @@ import {
 } from 'recharts';
 import { usePanelStore } from '../../../store/panelStore';
 import { chartTheme } from '../../../theme/chartTheme';
-import { DataTable } from '../../ui/DataTable';
+import { DataTable, downloadCsv } from '../../ui/DataTable';
 
 const COLORS = {
   green: chartTheme.colors.primary,
@@ -148,14 +148,35 @@ export function ChartRenderer({ data }: Props) {
         ) : (
           <span />
         )}
-        <button
-          type="button"
-          className="text-xs text-surface-400 hover:text-white underline-offset-2 hover:underline"
-          onClick={() => setViewAsTable((v) => !v)}
-          aria-pressed={viewAsTable}
-        >
-          {viewAsTable ? 'View as chart' : 'View as table'}
-        </button>
+        <div className="flex items-center gap-3">
+          {chart_type === 'bridge' && chartData.length > 0 && (
+            <button
+              type="button"
+              className="text-xs text-surface-400 hover:text-deloitte-green underline-offset-2 hover:underline"
+              onClick={() =>
+                downloadCsv(
+                  'bridge_chart',
+                  [
+                    { key: x_key, label: x_key },
+                    { key: 'value', label: 'value' },
+                    { key: 'invisible', label: 'invisible' },
+                  ],
+                  chartData as Record<string, unknown>[],
+                )
+              }
+            >
+              Export CSV
+            </button>
+          )}
+          <button
+            type="button"
+            className="text-xs text-surface-400 hover:text-white underline-offset-2 hover:underline"
+            onClick={() => setViewAsTable((v) => !v)}
+            aria-pressed={viewAsTable}
+          >
+            {viewAsTable ? 'View as chart' : 'View as table'}
+          </button>
+        </div>
       </div>
 
       {viewAsTable ? (

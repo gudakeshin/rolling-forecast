@@ -35,6 +35,7 @@ services:
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?Set JWT_SECRET_KEY}
       - CORS_ORIGINS=${CORS_ORIGINS:?Set CORS_ORIGINS}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - REQUIRE_ASYNC_JOBS=true
     depends_on:
       db:
         condition: service_healthy

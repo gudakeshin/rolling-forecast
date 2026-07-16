@@ -165,8 +165,47 @@ class RunEnsembleSkill(BaseSkill):
                         random_seed=version.random_seed or 42,
                     )
                     model_forecasts[model_name] = output.point_forecast
-                    mape = output.fit_metrics.get("mape", 100.0)
-                    model_mapes[model_name] = max(mape, 0.01)  # Avoid div-by-zero
+
+                    # Weight on out-of-sample CV MAPE (same pattern as generate_baseline).
+                    # Fall back to in-sample only when history is too short for CV.
+                    mape: float | None = None
+                    mape_source = "cv"
+                    model = model_registry.get(model_name)
+                    if model is not None:
+                        try:
+                            cv = model.evaluate_cv(
+                                values, dates, n_folds=3, fold_horizon=3
+                            )
+                            mean_mape = cv.get("mean_mape")
+                            if (
+                                mean_mape is not None
+                                and mean_mape != float("inf")
+                                and (cv.get("n_folds_used") or 0) > 0
+                            ):
+                                mape = float(mean_mape)
+                        except Exception as cv_err:
+                            logger.debug(
+                                "Ensemble CV MAPE failed for %s/%s: %s",
+                                model_name,
+                                li.name,
+                                cv_err,
+                            )
+                    if mape is None:
+                        mape = (
+                            output.fit_metrics.get("in_sample_mape")
+                            or output.fit_metrics.get("mape")
+                        )
+                        mape_source = "in_sample_fallback"
+                        if mape is None:
+                            mape = 100.0
+                        logger.info(
+                            "Ensemble weight for %s/%s uses %s MAPE=%.2f",
+                            model_name,
+                            li.name,
+                            mape_source,
+                            mape,
+                        )
+                    model_mapes[model_name] = max(float(mape), 0.01)
                 except Exception as e:
                     logger.warning(f"Ensemble: model '{model_name}' failed for {li.name}: {e}")
 

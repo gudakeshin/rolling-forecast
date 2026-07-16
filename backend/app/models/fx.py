@@ -59,8 +59,11 @@ class ForecastAccuracyRecord(Base):
     period: Mapped[str] = mapped_column(String(16), nullable=False)
     horizon_offset: Mapped[int] = mapped_column(Integer, nullable=False)  # months ahead of base_period
     predicted_p10: Mapped[float | None] = mapped_column(Float, nullable=True)
-    predicted_p50: Mapped[float] = mapped_column(Float, nullable=False)
+    predicted_p50: Mapped[float] = mapped_column(Float, nullable=False)  # published (post-override)
     predicted_p90: Mapped[float | None] = mapped_column(Float, nullable=True)
+    model_p50: Mapped[float | None] = mapped_column(Float, nullable=True)  # pre-override model
+    naive_p50: Mapped[float | None] = mapped_column(Float, nullable=True)  # prior-period actual
+    seasonal_naive_p50: Mapped[float | None] = mapped_column(Float, nullable=True)  # lag-12 actual
     actual: Mapped[float] = mapped_column(Float, nullable=False)
     absolute_error: Mapped[float] = mapped_column(Float, nullable=False)
     pct_error: Mapped[float | None] = mapped_column(Float, nullable=True)

@@ -10,10 +10,11 @@ import {
   TrendingDown, Activity, Zap, Search, Eye, EyeOff,
   ArrowRight, Edit3, Save, X, Loader2,
   MessageSquare, GitBranch, Clock, Target,
-  ChevronRight, BarChart3, Clipboard,
+  ChevronRight, BarChart3, Clipboard, Download,
 } from 'lucide-react';
 import { apiPost } from '../../api/client';
 import { usePanelStore } from '../../store/panelStore';
+import { downloadCsv } from '../ui/DataTable';
 
 // ─── Design tokens ─────────────────────────────────
 const COLORS = {
@@ -751,6 +752,30 @@ export function AnomalyPanel({ data }: { data: any }) {
     setExpandedId(item.id);
   }, []);
 
+  const anomalyColumns = [
+    { key: 'line_item_name', label: 'Line Item' },
+    { key: 'category', label: 'Category' },
+    { key: 'worst_severity', label: 'Worst Severity' },
+    { key: 'composite_score', label: 'Composite Score' },
+    { key: 'total_p50', label: 'Total P50' },
+    { key: 'materiality', label: 'Materiality' },
+  ];
+
+  const handleExport = () => {
+    downloadCsv(
+      'anomalies_export',
+      anomalyColumns,
+      filteredAnomalies.map((a: AnomalyItem) => ({
+        line_item_name: a.line_item_name,
+        category: a.category,
+        worst_severity: a.worst_severity,
+        composite_score: a.composite_score,
+        total_p50: a.total_p50,
+        materiality: a.materiality,
+      })) as Record<string, unknown>[],
+    );
+  };
+
   if (anomalies.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-48 gap-3 text-center">
@@ -767,6 +792,20 @@ export function AnomalyPanel({ data }: { data: any }) {
     <div className="space-y-0">
       {/* Summary */}
       <AnomalySummary summary={summary} typeChart={typeChart} />
+
+      <div className="flex items-center justify-end mb-2">
+        {filteredAnomalies.length > 0 && (
+          <button
+            type="button"
+            onClick={handleExport}
+            className="inline-flex items-center gap-1.5 text-xs text-surface-300 hover:text-white px-2 py-1 rounded-md border border-surface-600 hover:border-deloitte-green/40"
+            title="Export anomalies CSV"
+          >
+            <Download className="w-3.5 h-3.5" />
+            CSV
+          </button>
+        )}
+      </div>
 
       {/* Filters */}
       <FilterBar

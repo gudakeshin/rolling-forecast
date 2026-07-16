@@ -92,10 +92,16 @@ async def enqueue_generate_baseline(
 
     record["status"] = "sync_required"
     record["backend"] = "local"
-    record["message"] = (
-        "Redis/arq unavailable — run generate_baseline synchronously "
-        "(omit async_job=true) or start the arq worker with REDIS_URL set."
-    )
+    if settings.require_async_jobs:
+        record["message"] = (
+            "Async job queue unavailable — Redis/arq is required "
+            "(REQUIRE_ASYNC_JOBS=true). Start Redis and the arq worker."
+        )
+    else:
+        record["message"] = (
+            "Redis/arq unavailable — run generate_baseline synchronously "
+            "(omit async_job=true) or start the arq worker with REDIS_URL set."
+        )
     _save(record)
     return record
 

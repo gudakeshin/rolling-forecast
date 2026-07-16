@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import {
   Loader2, Table, GitCompare, Edit, ClipboardList, Settings2,
   LayoutDashboard, Shield, Target, FileInput, AlertTriangle, FolderOpen,
+  CheckSquare,
 } from 'lucide-react';
 import { usePanelStore } from '../../store/panelStore';
+import { toast } from '../../store/toastStore';
 import { apiGet } from '../../api/client';
 import { SlidePanel } from '../ui/SlidePanel';
 import { ForecastTablePanel } from './ForecastTablePanel';
@@ -16,6 +18,7 @@ import { AccuracyTrackingPanel } from './AccuracyTrackingPanel';
 import { DriverInputPanel } from './DriverInputPanel';
 import { AnomalyPanel } from './AnomalyPanel';
 import { DocumentLibraryPanel } from './DocumentLibraryPanel';
+import { ApprovalsPanel } from './ApprovalsPanel';
 
 const panelIcons: Record<string, any> = {
   forecast_table: Table,
@@ -29,6 +32,7 @@ const panelIcons: Record<string, any> = {
   driver_inputs: FileInput,
   anomaly_dashboard: AlertTriangle,
   document_library: FolderOpen,
+  approvals: CheckSquare,
 };
 
 export function PanelContainer() {
@@ -42,26 +46,42 @@ export function PanelContainer() {
     setLoading,
     widthMode,
     toggleWidth,
+    refreshPanel,
   } = usePanelStore();
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!panelType || !panelParams) return;
 
-    if (panelType === 'skill_editor') {
-      setPanelData({ panel_type: 'skill_editor', title: 'Skill Editor', data: {} });
+    if (panelType === 'skill_editor' || panelType === 'approvals') {
+      setPanelData({
+        panel_type: panelType,
+        title: panelType === 'approvals' ? 'Approvals' : 'Skill Editor',
+        data: {},
+      });
       return;
     }
 
+    const controller = new AbortController();
+    const append = Boolean(panelParams._append);
+    const offset = Number(panelParams.offset || 0);
+
     const fetchData = async () => {
-      setLoading(true);
+      if (!append) setLoading(true);
       setLoadError(null);
       try {
         let url = '';
         switch (panelType) {
-          case 'forecast_table':
-            url = `/panel/forecast-table/${panelParams.version_id}`;
+          case 'forecast_table': {
+            const qs = new URLSearchParams();
+            if (panelParams.view) qs.set('view', String(panelParams.view));
+            if (panelParams.category) qs.set('category', String(panelParams.category));
+            if (panelParams.confidence_level) qs.set('confidence_level', String(panelParams.confidence_level));
+            qs.set('offset', String(offset));
+            if (panelParams.limit) qs.set('limit', String(panelParams.limit));
+            url = `/panel/forecast-table/${panelParams.version_id}?${qs.toString()}`;
             break;
+          }
           case 'review_queue':
             url = `/panel/review-queue/${panelParams.version_id}`;
             break;
@@ -93,17 +113,36 @@ export function PanelContainer() {
             setLoading(false);
             return;
         }
-        const data = await apiGet(url);
-        setPanelData(data as any);
+        const data = await apiGet<any>(url, { signal: controller.signal });
+        if (append && panelType === 'forecast_table') {
+          const current = usePanelStore.getState().panelData;
+          const prevRows = (current?.data?.rows as unknown[]) || [];
+          const newRows = data?.data?.rows || [];
+          setPanelData({
+            ...data,
+            data: {
+              ...data.data,
+              rows: [...prevRows, ...newRows],
+            },
+          });
+        } else {
+          setPanelData(data);
+        }
       } catch (error: any) {
+        if (error?.name === 'AbortError' || controller.signal.aborted) return;
         console.error('Failed to load panel data:', error);
-        setPanelData(null);
-        setLoadError(error?.message || 'Failed to load panel data. Upstream data may be missing.');
+        if (!append) {
+          const message = error?.message || 'Failed to load panel data';
+          setPanelData(null);
+          setLoadError(message);
+          toast.error(message);
+        }
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     };
     fetchData();
+    return () => controller.abort();
   }, [panelType, panelParams, setLoading, setPanelData]);
 
   const Icon = panelIcons[panelType || ''] || Table;
@@ -120,6 +159,20 @@ export function PanelContainer() {
         <div className="-m-4 h-[calc(100%+2rem)] overflow-hidden">
           <SkillEditorPanel />
         </div>
+      </SlidePanel>
+    );
+  }
+
+  if (panelType === 'approvals') {
+    return (
+      <SlidePanel
+        title="Approvals"
+        icon={<CheckSquare className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
+        onClose={closePanel}
+        widthExpanded={widthMode === 'wide'}
+        onToggleWidth={toggleWidth}
+      >
+        <ApprovalsPanel />
       </SlidePanel>
     );
   }
@@ -146,7 +199,7 @@ export function PanelContainer() {
           </p>
         </div>
       ) : panelData ? (
-        <PanelContent type={panelType} data={panelData} />
+        <PanelContent type={panelType} data={panelData} onRefresh={refreshPanel} />
       ) : (
         <p className="text-surface-500 text-sm text-center">No data available</p>
       )}
@@ -154,21 +207,37 @@ export function PanelContainer() {
   );
 }
 
-function PanelContent({ type, data }: { type: string | null; data: any }) {
+function PanelContent({
+  type,
+  data,
+  onRefresh,
+}: {
+  type: string | null;
+  data: any;
+  onRefresh: () => void;
+}) {
+  const focusLineItemId = usePanelStore((s) => s.panelParams.focus_line_item_id);
+
   switch (type) {
     case 'forecast_table':
     case 'review_queue':
-      return <ForecastTablePanel data={data} />;
+      return <ForecastTablePanel data={data} onRefresh={onRefresh} />;
     case 'overrides':
-      return <OverridesPanel data={data} />;
+      return <OverridesPanel data={data} onRefresh={onRefresh} />;
     case 'comparison':
       return <ComparisonPanel data={data} />;
     case 'executive_dashboard':
-      return <ExecutiveDashboardPanel data={data} />;
+      return <ExecutiveDashboardPanel data={data} onRefresh={onRefresh} />;
     case 'review_dashboard':
-      return <ReviewDashboardPanel data={data} />;
+      return (
+        <ReviewDashboardPanel
+          data={data}
+          onRefresh={onRefresh}
+          focusLineItemId={focusLineItemId}
+        />
+      );
     case 'accuracy_tracking':
-      return <AccuracyTrackingPanel data={data} />;
+      return <AccuracyTrackingPanel data={data} onRefresh={onRefresh} />;
     case 'driver_inputs':
       return <DriverInputPanel data={data} />;
     case 'anomaly_dashboard':

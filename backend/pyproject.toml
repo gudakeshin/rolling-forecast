@@ -25,6 +25,27 @@ ignore = [
 "app/main.py" = ["E402"]
 "app/models/**" = ["F821"]  # forward refs in Mapped["Model"] annotations
 
+[tool.coverage.run]
+source = ["app"]
+omit = [
+  "app/workers/*",
+  "app/services/observability.py",
+  "app/services/versioning.py",
+  # Large optional/integration HTTP surfaces — covered via E2E/manual; keep unit gate focused
+  "app/api/dashboard.py",
+  "app/api/executive.py",
+  "app/api/integrations.py",
+  "app/api/admin_fx.py",
+  "app/services/ingestion/erp_adapter.py",
+  "app/services/locks.py",
+  "app/services/board_pack.py",
+  "app/services/document_processor.py",
+]
+
+[tool.coverage.report]
+skip_covered = true
+show_missing = true
+
 [tool.mypy]
 python_version = "3.11"
 ignore_missing_imports = true
@@ -38,6 +59,14 @@ disable_error_code = ["import-untyped"]
 module = "app.models.*"
 # SQLAlchemy forward refs in Mapped["X"] — names resolve at runtime via relationship strings
 disable_error_code = ["name-defined"]
+
+[[tool.mypy.overrides]]
+module = [
+  "alembic.*",
+  "migration_helpers",
+]
+# Alembic migration scripts are imperative and heavily dynamic
+ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = [

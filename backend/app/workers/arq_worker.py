@@ -44,7 +44,7 @@ async def run_generate_baseline(
     from app.domain.base_skill import SkillContext
     from app.services.job_queue import update_job
 
-    update_job(job_id, status="running")
+    update_job(job_id, status="running", progress=0.1, step="Starting")
     db = SessionLocal()
     try:
         uid = user_id or "system"
@@ -56,7 +56,7 @@ async def run_generate_baseline(
             user_role="admin",
             conversation_id=f"job-{job_id}",
         )
-        params = {**params, "async_job": False}
+        params = {**params, "async_job": False, "_job_id": job_id}
         result = await skill.execute(params, context)
         payload = {
             "success": result.success,
@@ -80,7 +80,7 @@ async def run_generate_baseline(
 
 class WorkerSettings:
     functions = [run_generate_baseline]
-    redis_settings = None
+    redis_settings: Any = None
 
     @staticmethod
     def on_startup(ctx: dict) -> None:

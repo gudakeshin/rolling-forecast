@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
+import { useVersionStore } from '../../store/versionStore';
 import { apiPost } from '../../api/client';
 import type { TokenResponse } from '../../types/auth';
 import { TrendingUp } from 'lucide-react';
@@ -11,6 +12,8 @@ export function LoginForm() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const login = useAuthStore((s) => s.login);
+  const fetchMe = useAuthStore((s) => s.fetchMe);
+  const hydrateVersions = useVersionStore((s) => s.hydrate);
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -24,6 +27,8 @@ export function LoginForm() {
         password,
       });
       login(response);
+      await fetchMe();
+      void hydrateVersions();
       navigate('/');
     } catch (err: any) {
       setError(err.message || 'Login failed');

@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
 from app.api.auth import get_current_user
 from app.models.user import User
@@ -10,8 +11,57 @@ from app.models.forecast import ForecastVersion, ForecastLineResult
 from app.models.line_item import LineItem
 from app.models.override import Override
 from app.schemas.forecast import PanelDataResponse
+from app.services.permissions import require_permission
 
 router = APIRouter(prefix="/panel", tags=["panel"])
+
+
+def _version_payload(v: ForecastVersion) -> dict:
+    return {
+        "id": v.id,
+        "name": v.name,
+        "label": v.label,
+        "status": v.status,
+        "version_type": v.version_type,
+        "scenario": getattr(v, "scenario", None) or "base",
+        "horizon_months": v.horizon_months,
+        "base_period": v.base_period,
+        "total_line_items": v.total_line_items,
+        "high_confidence_count": v.high_confidence_count or 0,
+        "medium_confidence_count": v.medium_confidence_count or 0,
+        "low_confidence_count": v.low_confidence_count or 0,
+        "override_count": v.override_count or 0,
+        "generation_time_seconds": v.generation_time_seconds,
+        "created_at": v.created_at.isoformat() if v.created_at else None,
+    }
+
+
+@router.get("/versions")
+async def list_versions(
+    limit: int = Query(50, ge=1, le=200),
+    scenario: str | None = Query(None, description="Filter by scenario label (e.g. base, upside)"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List recent forecast versions (newest first) for the version picker."""
+    q = db.query(ForecastVersion)
+    if scenario:
+        q = q.filter(ForecastVersion.scenario == scenario)
+    versions = q.order_by(ForecastVersion.created_at.desc()).limit(limit).all()
+    return [_version_payload(v) for v in versions]
+
+
+@router.get("/version/{version_id}")
+async def get_version_detail(
+    version_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get a single forecast version by id."""
+    v = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
+    if not v:
+        raise HTTPException(status_code=404, detail="Forecast version not found")
+    return _version_payload(v)
 
 
 @router.get("/forecast-table/{version_id}", response_model=PanelDataResponse)
@@ -21,6 +71,8 @@ async def get_forecast_table(
     category: str | None = Query(None, description="Filter by category"),
     confidence_level: str | None = Query(None, description="Filter by confidence level"),
     view: str | None = Query("summary", description="'summary' groups by line item, 'detail' shows all periods"),
+    limit: int | None = Query(None, ge=1, le=500, description="Page size (defaults to panel_page_size)"),
+    offset: int = Query(0, ge=0, description="Row offset for pagination"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -28,7 +80,10 @@ async def get_forecast_table(
 
     When view=summary (default): returns one row per line item with aggregated stats.
     When view=detail: returns all periods (original behavior).
+    Summary aggregates and quality_summary are computed over the full filtered set;
+    ``rows`` are paginated via limit/offset.
     """
+    page_size = limit or settings.panel_page_size
     version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
     if not version:
         raise HTTPException(status_code=404, detail="Forecast version not found")
@@ -50,12 +105,21 @@ async def get_forecast_table(
     if confidence_level:
         query = query.filter(ForecastLineResult.confidence_level == confidence_level)
 
-    results = query.order_by(LineItem.display_order, ForecastLineResult.period).all()
+    # Full filtered set for aggregates + grouping; only a page of rows is returned
+    all_filtered = query.order_by(LineItem.display_order, ForecastLineResult.period).all()
+
+    all_scores = [r.confidence_score for r in all_filtered]
+    avg_score = sum(all_scores) / len(all_scores) if all_scores else 0
+    critical_count = sum(1 for r in all_filtered if r.ai_recommendation in ("override", "manual_input"))
+    warning_count = sum(1 for r in all_filtered if r.ai_recommendation == "review")
+    ok_count = sum(1 for r in all_filtered if r.ai_recommendation == "approve")
+    available_categories = sorted(
+        {r.line_item.category for r in all_filtered if r.line_item and r.line_item.category}
+    )
 
     if view == "detail":
-        # Original detailed view — one row per period
         rows = []
-        for r in results:
+        for r in all_filtered:
             rows.append({
                 "id": r.id,
                 "line_item_id": r.line_item_id,
@@ -74,17 +138,15 @@ async def get_forecast_table(
                 "override_value": r.override_value,
                 "indent_level": r.line_item.indent_level,
                 "is_subtotal": r.line_item.is_subtotal,
-                # AI analysis & remediation
                 "ai_recommendation": r.ai_recommendation,
                 "ai_reasoning": r.ai_reasoning,
                 "ai_risk_score": r.ai_risk_score,
                 "review_status": r.review_status,
             })
     else:
-        # Summary view — one row per line item with aggregated stats
         from collections import defaultdict
         groups: dict[int, list[ForecastLineResult]] = defaultdict(list)
-        for r in results:
+        for r in all_filtered:
             groups[r.line_item_id].append(r)
 
         rows = []
@@ -116,23 +178,17 @@ async def get_forecast_table(
                 "override_count": overridden_count,
                 "indent_level": li.indent_level,
                 "is_subtotal": li.is_subtotal,
-                # AI analysis & remediation
                 "ai_recommendation": worst.ai_recommendation,
                 "ai_reasoning": worst.ai_reasoning,
                 "ai_risk_score": worst.ai_risk_score,
                 "review_status": worst.review_status,
             })
 
-        # Sort by display_order (preserve P&L structure)
         rows.sort(key=lambda x: (x.get("indent_level", 0), x.get("line_item_name", "")))
 
-    # Compute quality summary stats
-    all_scores = [r.confidence_score for r in results]
-    avg_score = sum(all_scores) / len(all_scores) if all_scores else 0
-
-    critical_count = sum(1 for r in results if r.ai_recommendation in ("override", "manual_input"))
-    warning_count = sum(1 for r in results if r.ai_recommendation == "review")
-    ok_count = sum(1 for r in results if r.ai_recommendation == "approve")
+    total_count = len(rows)
+    page_rows = rows[offset : offset + page_size]
+    has_more = offset + page_size < total_count
 
     return PanelDataResponse(
         panel_type="forecast_table",
@@ -155,9 +211,12 @@ async def get_forecast_table(
                 "total_scored": len(all_scores),
             },
             "view": view,
-            "rows": rows,
-            "total_count": len(rows),
-            "available_categories": sorted(set(r.line_item.category for r in results if r.line_item)),
+            "rows": page_rows,
+            "total_count": total_count,
+            "limit": page_size,
+            "offset": offset,
+            "has_more": has_more,
+            "available_categories": available_categories,
         },
     )
 
@@ -231,6 +290,7 @@ async def get_overrides_panel(
         change_pct = ((o.override_value - o.original_model_value) / abs(o.original_model_value) * 100) if o.original_model_value != 0 else 0
         items.append({
             "id": o.id,
+            "line_item_id": o.line_item_id,
             "line_item_name": li.name if li else "Unknown",
             "period": o.period,
             "original_value": o.original_model_value,
@@ -256,6 +316,18 @@ async def get_overrides_panel(
             "total_count": len(items),
         },
     )
+
+
+@router.post("/overrides/{override_id}/revert")
+async def revert_override_endpoint(
+    override_id: str,
+    current_user: User = Depends(require_permission("override")),
+    db: Session = Depends(get_db),
+):
+    """Revert an active override and restore the original model value."""
+    from app.services.overrides import revert_override
+
+    return revert_override(db, override_id, current_user)
 
 
 @router.get("/comparison/{version_id_a}/{version_id_b}", response_model=PanelDataResponse)
@@ -323,8 +395,16 @@ async def get_comparison_panel(
         panel_type="comparison",
         title=f"Comparison: {va.name} vs {vb.name}",
         data={
-            "version_a": {"id": va.id, "name": va.name},
-            "version_b": {"id": vb.id, "name": vb.name},
+            "version_a": {
+                "id": va.id,
+                "name": va.name,
+                "scenario": getattr(va, "scenario", None) or "base",
+            },
+            "version_b": {
+                "id": vb.id,
+                "name": vb.name,
+                "scenario": getattr(vb, "scenario", None) or "base",
+            },
             "rows": rows,
             "total_count": len(rows),
         },

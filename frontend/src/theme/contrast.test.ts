@@ -40,7 +40,7 @@ const DARK = {
   bgElevated: '#1a1a1a',
   text: '#f5f5f5',
   textMuted: '#b0b2b4',
-  surface500: '#75787b',
+  surface500: '#8a8d90',
   deloitteGreen: '#86BC25',
   deloitteTeal: '#0076A8',
   white: '#ffffff',
@@ -53,7 +53,7 @@ const LIGHT = {
   bgElevated: '#ffffff',
   text: '#1a1a1a',
   textMuted: '#53565a',
-  surface500: '#97999b',
+  surface500: '#6b6e72',
   deloitteGreen: '#86BC25',
   deloitteTeal: '#0076A8',
   white: '#ffffff',
@@ -79,6 +79,14 @@ describe('WCAG AA contrast — dark theme', () => {
 
   it('muted text on elevated surface meets AA for large/UI', () => {
     expect(contrastRatio(DARK.textMuted, DARK.bgElevated)).toBeGreaterThanOrEqual(AA_LARGE);
+  });
+
+  it('surface-500 on page background meets AA for 12px normal text (≥4.5:1)', () => {
+    expect(contrastRatio(DARK.surface500, DARK.bg)).toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+
+  it('surface-500 on elevated surface meets AA for 12px normal text', () => {
+    expect(contrastRatio(DARK.surface500, DARK.bgElevated)).toBeGreaterThanOrEqual(AA_NORMAL);
   });
 
   it('Deloitte green on dark bg meets AA for large text / icons', () => {
@@ -109,6 +117,14 @@ describe('WCAG AA contrast — light theme', () => {
 
   it('muted text on elevated surface meets AA for large/UI', () => {
     expect(contrastRatio(LIGHT.textMuted, LIGHT.bgElevated)).toBeGreaterThanOrEqual(AA_LARGE);
+  });
+
+  it('surface-500 on page background meets AA for 12px normal text (≥4.5:1)', () => {
+    expect(contrastRatio(LIGHT.surface500, LIGHT.bg)).toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+
+  it('surface-500 on elevated surface meets AA for 12px normal text', () => {
+    expect(contrastRatio(LIGHT.surface500, LIGHT.bgElevated)).toBeGreaterThanOrEqual(AA_NORMAL);
   });
 
   it('Deloitte teal on light bg meets AA for links/accents', () => {

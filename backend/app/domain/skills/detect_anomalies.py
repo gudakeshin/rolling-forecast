@@ -46,8 +46,8 @@ class DetectAnomaliesSkill(BaseSkill):
                 },
                 "method": {
                     "type": "string",
-                    "description": "Detection method: zscore, iqr, trend_deviation, all",
-                    "enum": ["zscore", "iqr", "trend_deviation", "all"],
+                    "description": "Detection method: zscore, iqr, trend_deviation, stl_mad, all",
+                    "enum": ["zscore", "iqr", "trend_deviation", "stl_mad", "all"],
                     "default": "all",
                 },
                 "sensitivity": {
@@ -215,6 +215,11 @@ class DetectAnomaliesSkill(BaseSkill):
             values = np.array([r.value for r in records])
             periods = [r.period for r in records]
 
+            if method in ("stl_mad", "all"):
+                anomalies.extend(
+                    self._stl_mad_detection(values, periods, li, "actuals", thresholds["zscore"])
+                )
+
             if method in ("zscore", "all"):
                 anomalies.extend(self._zscore_detection(
                     values, periods, li, "actuals", thresholds["zscore"]
@@ -343,6 +348,42 @@ class DetectAnomaliesSkill(BaseSkill):
                     "note": f"Z-score: {z:.1f} (threshold: {threshold})",
                 })
 
+        return anomalies
+
+    def _stl_mad_detection(
+        self,
+        values: np.ndarray,
+        periods: list,
+        li: LineItem,
+        source: str,
+        mad_z: float,
+    ) -> list[dict]:
+        """Reuse pre-fit STL+MAD detector (flags only; does not mutate series)."""
+        import pandas as pd
+        from app.services.outlier_cleaning import detect_outliers_stl_mad
+
+        if len(values) < 6:
+            return []
+        try:
+            dates = pd.DatetimeIndex([pd.Timestamp(f"{p}-01") if len(p) == 7 else pd.Timestamp(p) for p in periods])
+        except Exception:
+            dates = pd.date_range("2020-01-01", periods=len(values), freq="MS")
+        series = pd.Series(values.astype(float))
+        result = detect_outliers_stl_mad(series, dates, mad_z=mad_z)
+        anomalies = []
+        for i in result.outlier_indices:
+            severity = self._classify_severity(mad_z + 0.5, mad_z)
+            anomalies.append({
+                "line_item": li.name,
+                "category": li.category,
+                "period": periods[i],
+                "value": float(values[i]),
+                "source": source,
+                "method": "stl_mad",
+                "severity": severity,
+                "score": float(mad_z),
+                "note": f"STL/MAD outlier (threshold z≥{mad_z})",
+            })
         return anomalies
 
     def _iqr_detection(

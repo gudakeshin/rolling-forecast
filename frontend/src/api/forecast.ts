@@ -3,8 +3,9 @@ import type { ForecastVersion, ForecastLineResult } from '../types/forecast';
 
 // ─── Forecast Versions ───────────────────────────────────
 
-export async function getVersions(): Promise<ForecastVersion[]> {
-  return apiGet<ForecastVersion[]>('/panel/versions');
+export async function getVersions(scenario?: string): Promise<ForecastVersion[]> {
+  const qs = scenario ? `?scenario=${encodeURIComponent(scenario)}` : '';
+  return apiGet<ForecastVersion[]>(`/panel/versions${qs}`);
 }
 
 export async function getVersion(versionId: string): Promise<ForecastVersion> {

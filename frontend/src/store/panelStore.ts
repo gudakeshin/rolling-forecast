@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { PanelData } from '../types/forecast';
+import { useVersionStore } from './versionStore';
 
 type PanelWidth = 'normal' | 'wide';
 
@@ -17,6 +18,11 @@ interface PanelState {
   setLoading: (loading: boolean) => void;
   setWidthMode: (mode: PanelWidth) => void;
   toggleWidth: () => void;
+  /** Bump panelParams so PanelContainer's fetch effect re-runs. */
+  refreshPanel: () => void;
+  /** Append rows for paginated "Load more" without resetting the panel. */
+  appendPanelRows: (rows: unknown[]) => void;
+  setPanelParams: (params: Record<string, any>) => void;
 }
 
 const PANEL_WIDTH_KEY = 'rf_panel_width_mode';
@@ -38,14 +44,20 @@ export const usePanelStore = create<PanelState>((set) => ({
   isLoading: false,
   widthMode: readWidthMode(),
 
-  openPanel: (type, params) =>
+  openPanel: (type, params) => {
+    let merged = { ...params };
+    if (!merged.version_id && !merged.version_id_a) {
+      const active = useVersionStore.getState().activeVersionId;
+      if (active) merged = { version_id: active, ...merged };
+    }
     set({
       isOpen: true,
       panelType: type,
-      panelParams: params,
+      panelParams: merged,
       panelData: null,
       isLoading: true,
-    }),
+    });
+  },
 
   closePanel: () =>
     set({
@@ -79,4 +91,30 @@ export const usePanelStore = create<PanelState>((set) => ({
       }
       return { widthMode: mode };
     }),
+
+  refreshPanel: () =>
+    set((state) => {
+      if (!state.panelType) return state;
+      return {
+        panelParams: { ...state.panelParams, _refresh: Date.now(), offset: 0 },
+        isLoading: true,
+      };
+    }),
+
+  appendPanelRows: (rows) =>
+    set((state) => {
+      if (!state.panelData) return state;
+      const prev = (state.panelData.data?.rows as unknown[]) || [];
+      return {
+        panelData: {
+          ...state.panelData,
+          data: {
+            ...state.panelData.data,
+            rows: [...prev, ...rows],
+          },
+        },
+      };
+    }),
+
+  setPanelParams: (params) => set({ panelParams: params }),
 }));

@@ -60,18 +60,7 @@ async def list_users(
     db: Session = Depends(get_db),
 ):
     users = db.query(User).order_by(User.username).all()
-    return [
-        UserResponse(
-            id=u.id,
-            email=u.email,
-            username=u.username,
-            full_name=u.full_name,
-            business_unit=u.business_unit,
-            role_name=u.role.name if u.role else "",
-            is_active=u.is_active,
-        )
-        for u in users
-    ]
+    return [UserResponse.model_validate(u) for u in users]
 
 
 @router.patch("/users/{user_id}", response_model=UserResponse)
@@ -107,15 +96,7 @@ async def update_user(
     )
     db.commit()
     db.refresh(user)
-    return UserResponse(
-        id=user.id,
-        email=user.email,
-        username=user.username,
-        full_name=user.full_name,
-        business_unit=user.business_unit,
-        role_name=user.role.name,
-        is_active=user.is_active,
-    )
+    return UserResponse.model_validate(user)
 
 
 @router.get("/roles")

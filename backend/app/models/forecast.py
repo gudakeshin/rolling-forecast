@@ -4,7 +4,18 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, Float, Integer, Boolean, ForeignKey, Text, JSON
+from sqlalchemy import (
+    String,
+    DateTime,
+    Float,
+    Integer,
+    Boolean,
+    ForeignKey,
+    Text,
+    JSON,
+    UniqueConstraint,
+    Index,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -29,6 +40,8 @@ class ForecastVersion(Base):
     version_type: Mapped[str] = mapped_column(
         String(50), default="scheduled"
     )  # scheduled, ad_hoc, branch
+    # Named scenario label (base / upside / downside / …) — not a what-if engine
+    scenario: Mapped[str] = mapped_column(String(64), default="base", index=True)
     parent_version_id: Mapped[str | None] = mapped_column(
         ForeignKey("forecast_versions.id"), nullable=True
     )  # For branches
@@ -93,6 +106,16 @@ class ForecastLineResult(Base):
     """Forecast output for a single line item in a single period."""
 
     __tablename__ = "forecast_line_results"
+    __table_args__ = (
+        UniqueConstraint(
+            "version_id",
+            "line_item_id",
+            "period",
+            name="uq_flr_version_line_period",
+        ),
+        Index("ix_flr_version_id", "version_id"),
+        Index("ix_flr_line_item_period", "line_item_id", "period"),
+    )
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())
@@ -107,8 +130,10 @@ class ForecastLineResult(Base):
 
     # Forecast values
     p10: Mapped[float | None] = mapped_column(Float, nullable=True)  # 10th percentile
-    p50: Mapped[float] = mapped_column(Float, nullable=False)  # Point forecast (median)
+    p50: Mapped[float] = mapped_column(Float, nullable=False)  # Point forecast (median / published)
     p90: Mapped[float | None] = mapped_column(Float, nullable=True)  # 90th percentile
+    # Immutable model point at generation time (survives overrides; p50 is published)
+    model_p50: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # How interval bounds were produced (model | linear_aggregation | mint_diagonal | mint_full)
     bounds_method: Mapped[str | None] = mapped_column(String(40), nullable=True)
@@ -193,6 +218,9 @@ class ModelMetadata(Base):
     structural_break_period: Mapped[str | None] = mapped_column(
         String(7), nullable=True
     )
+    # Periods winsorized by pre-fit outlier cleaning (YYYY-MM labels)
+    cleaned_periods: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    outliers_cleaned: Mapped[int] = mapped_column(Integer, default=0)
     random_seed: Mapped[int] = mapped_column(Integer, default=42)
 
     # Relationships

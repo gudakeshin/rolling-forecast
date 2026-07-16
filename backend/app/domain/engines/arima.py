@@ -145,10 +145,16 @@ class ARIMAModel(IForecastModel):
                 )
                 fitted = model.fit(disp=False, maxiter=200)
                 pred = fitted.get_forecast(steps=horizon, alpha=0.20)  # 80% CI
-                forecast = pred.predicted_mean
+                forecast = np.asarray(pred.predicted_mean, dtype=float)
                 ci = pred.conf_int()
-                lower = ci.iloc[:, 0].values
-                upper = ci.iloc[:, 1].values
+                # statsmodels may return DataFrame or ndarray depending on version/input
+                if hasattr(ci, "iloc"):
+                    lower = np.asarray(ci.iloc[:, 0], dtype=float)
+                    upper = np.asarray(ci.iloc[:, 1], dtype=float)
+                else:
+                    ci_arr = np.asarray(ci, dtype=float)
+                    lower = ci_arr[:, 0]
+                    upper = ci_arr[:, 1]
 
         from app.domain.engines.base_model import make_period_labels
 

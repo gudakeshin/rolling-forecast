@@ -6,6 +6,7 @@ import { getConversations, sendMessage } from '../../api/chat';
 import type { ContentBlock } from '../../types/chat';
 import { Upload, BarChart3, Search, GitCompare } from 'lucide-react';
 import { useI18n } from '../../i18n/useI18n';
+import { toast } from '../../store/toastStore';
 
 export function ChatContainer() {
   const {
@@ -26,87 +27,134 @@ export function ChatContainer() {
   } = useChatStore();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingMessage]);
 
-  const handleSend = async (content: string) => {
+  const finalizePartial = (conversationId: string | null) => {
+    const streamed = useChatStore.getState().streamingMessage;
+    const content = streamed?.content?.trim() || '';
+    const blocks = streamed?.content_blocks || [];
+    if (content || blocks.length > 0) {
+      finishStreaming({
+        id: `assistant-${Date.now()}`,
+        conversation_id: conversationId || '',
+        role: 'assistant',
+        content: content || '(Generation stopped)',
+        content_blocks: blocks,
+        created_at: new Date().toISOString(),
+      });
+    } else {
+      cancelStreaming();
+    }
+  };
+
+  const handleStop = () => {
+    abortRef.current?.abort();
+  };
+
+  const handleSend = async (content: string, options?: { retry?: boolean }) => {
     if (isStreaming) return;
 
-    const userMessage = {
-      id: `user-${Date.now()}`,
-      conversation_id: activeConversationId || '',
-      role: 'user' as const,
-      content,
-      content_blocks: [],
-      created_at: new Date().toISOString(),
-    };
-    addMessage(userMessage);
-    startStreaming(activeConversationId || 'new');
+    if (!options?.retry) {
+      const userMessage = {
+        id: `user-${Date.now()}`,
+        conversation_id: activeConversationId || '',
+        role: 'user' as const,
+        content,
+        content_blocks: [],
+        created_at: new Date().toISOString(),
+      };
+      addMessage(userMessage);
+      startStreaming(activeConversationId || 'new');
+    }
+
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     try {
       let conversationId = activeConversationId;
       let finalContent = '';
       let finalBlocks: ContentBlock[] = [];
       let finalToolCalls: any[] = [];
-      let finalPanelPayload: any = null;
 
-      await sendMessage(content, conversationId, (event) => {
-        switch (event.event) {
-          case 'message_start':
-            if (event.data.conversation_id) {
-              conversationId = event.data.conversation_id;
-              setActiveConversation(conversationId!);
-            }
-            break;
-          case 'token':
-            // Stream intermediate LLM tokens for real-time typing effect
-            if (event.data.text) {
-              appendStreamContent(event.data.text);
-            }
-            break;
-          case 'content_block':
-            addStreamContentBlock(event.data as ContentBlock);
-            finalBlocks.push(event.data as ContentBlock);
-            break;
-          case 'tool_start':
-            setToolInProgress(event.data.tool_name);
-            break;
-          case 'tool_end':
-            setToolInProgress(null);
-            break;
-          case 'message_end':
-            finalContent = event.data.content || '';
-            if (event.data.content_blocks) finalBlocks = event.data.content_blocks;
-            finalToolCalls = event.data.tool_calls || [];
-            finalPanelPayload = event.data.panel_payload;
-            break;
-          case 'error':
-            finalContent = `Error: ${event.data.error}`;
-            break;
-        }
-      });
+      await sendMessage(
+        content,
+        conversationId,
+        (event) => {
+          switch (event.event) {
+            case 'message_start':
+              if (event.data.conversation_id) {
+                conversationId = event.data.conversation_id;
+                setActiveConversation(conversationId!);
+              }
+              break;
+            case 'token':
+              if (event.data.text) {
+                appendStreamContent(event.data.text);
+              }
+              break;
+            case 'content_block':
+              addStreamContentBlock(event.data as ContentBlock);
+              finalBlocks.push(event.data as ContentBlock);
+              break;
+            case 'tool_start':
+              setToolInProgress(event.data.tool_name);
+              break;
+            case 'tool_end':
+              setToolInProgress(null);
+              break;
+            case 'message_end':
+              finalContent = event.data.content || '';
+              if (event.data.content_blocks) finalBlocks = event.data.content_blocks;
+              finalToolCalls = event.data.tool_calls || [];
+              break;
+            case 'error':
+              finalContent = `Error: ${event.data.error}`;
+              break;
+          }
+        },
+        controller.signal,
+      );
 
-      finishStreaming({
-        id: `assistant-${Date.now()}`,
-        conversation_id: conversationId || '',
-        role: 'assistant',
-        content: finalContent,
-        content_blocks: finalBlocks,
-        tool_calls: finalToolCalls.length > 0 ? finalToolCalls : undefined,
-        panel_payload: finalPanelPayload,
-        created_at: new Date().toISOString(),
-      });
+      if (!finalContent) {
+        const streamed = useChatStore.getState().streamingMessage?.content || '';
+        if (streamed.trim()) finalContent = streamed;
+      }
 
-      // Keep left sidebar in sync (new chats + updated titles)
+      const hasContent = Boolean(finalContent.trim()) || finalBlocks.length > 0;
+
+      if (!hasContent) {
+        cancelStreaming();
+      } else {
+        finishStreaming({
+          id: `assistant-${Date.now()}`,
+          conversation_id: conversationId || '',
+          role: 'assistant',
+          content: finalContent,
+          content_blocks: finalBlocks,
+          tool_calls: finalToolCalls.length > 0 ? finalToolCalls : undefined,
+          created_at: new Date().toISOString(),
+        });
+      }
+
       try {
         const list = await getConversations();
         setConversations(list);
-      } catch {
-        /* non-fatal */
+      } catch (err: unknown) {
+        toast.error(err instanceof Error ? err.message : 'Failed to refresh conversations');
       }
     } catch (error: any) {
+      if (error?.message === 'TOKEN_REFRESHED' && !options?.retry) {
+        return handleSend(content, { retry: true });
+      }
+      if (error?.name === 'AbortError') {
+        finalizePartial(useChatStore.getState().activeConversationId);
+        toast.info('Generation stopped');
+        return;
+      }
       cancelStreaming();
       addMessage({
         id: `error-${Date.now()}`,
@@ -116,6 +164,8 @@ export function ChatContainer() {
         content_blocks: [{ type: 'text', data: { text: `Error: ${error.message}` } }],
         created_at: new Date().toISOString(),
       });
+    } finally {
+      abortRef.current = null;
     }
   };
 
@@ -148,7 +198,7 @@ export function ChatContainer() {
       )}
       <div className="px-4 pb-4 pt-2">
         <div className="max-w-3xl mx-auto">
-          <InputBar onSend={handleSend} isStreaming={isStreaming} />
+          <InputBar onSend={handleSend} onStop={handleStop} isStreaming={isStreaming} />
         </div>
       </div>
     </div>
