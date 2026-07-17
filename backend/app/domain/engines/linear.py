@@ -36,6 +36,7 @@ class LinearTrendModel(IForecastModel):
         ss_res = float(np.sum(residuals ** 2))
         ss_tot = float(np.sum((y - np.mean(y)) ** 2))
         r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+        in_sample_mape = float(np.mean(np.abs(residuals / (np.abs(y) + 1e-10)))) * 100
 
         x_bar = float(np.mean(X))
         sxx = float(np.sum((X - x_bar) ** 2))
@@ -45,6 +46,7 @@ class LinearTrendModel(IForecastModel):
             "intercept": float(model.intercept_),
             "residual_std": residual_std,
             "r_squared": float(r_squared),
+            "in_sample_mape": in_sample_mape,
             "n_points": n,
             "x_bar": x_bar,
             "sxx": sxx,
@@ -99,6 +101,9 @@ class LinearTrendModel(IForecastModel):
             periods=periods,
             model_type="linear",
             parameters=params,
-            fit_metrics={"r_squared": params["r_squared"]},
+            fit_metrics={
+                "r_squared": params["r_squared"],
+                "in_sample_mape": params.get("in_sample_mape", 0.0),
+            },
             diagnostics={"seasonality_detected": False, "pi_method": "ols_prediction"},
         )

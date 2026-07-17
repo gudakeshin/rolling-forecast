@@ -31,9 +31,8 @@ omit = [
   "app/workers/*",
   "app/services/observability.py",
   "app/services/versioning.py",
-  # Large optional/integration HTTP surfaces — covered via E2E/manual; keep unit gate focused
-  "app/api/dashboard.py",
-  "app/api/executive.py",
+  # Remaining low-coverage modules kept out of the 60% gate.
+  # Now counted: app/api/dashboard.py (batching + panel regression suite)
   "app/api/integrations.py",
   "app/api/admin_fx.py",
   "app/services/ingestion/erp_adapter.py",
@@ -68,11 +67,11 @@ module = [
 # Alembic migration scripts are imperative and heavily dynamic
 ignore_errors = true
 
+# Remaining typing debt — shrink as modules are cleaned.
+# Now type-checked (removed from ignore): app.api.approvals, app.api.panel, app.domain.composer
 [[tool.mypy.overrides]]
 module = [
   "app.api.dashboard",
-  "app.api.approvals",
-  "app.api.panel",
   "app.api.executive",
   "app.api.integrations",
   "app.domain.skills.generate_commentary",
@@ -86,7 +85,6 @@ module = [
   "app.domain.engines.arima",
   "app.domain.engines.ets",
   "app.domain.skill_loader",
-  "app.domain.composer",
   "app.services.error_handlers",
   "app.services.vector_store",
   "app.services.context_engine",

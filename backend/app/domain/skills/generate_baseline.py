@@ -267,10 +267,10 @@ class GenerateBaselineSkill(BaseSkill):
         db: Session = context.db
         start_time = time.time()
 
-        # Async enqueue: prod default when require_async_jobs is set.
+        # Async enqueue: default in production (or when REQUIRE_ASYNC_JOBS=true).
         # Worker passes async_job=False explicitly to run in-process.
         want_async = params.get("async_job")
-        if want_async is None and settings.require_async_jobs:
+        if want_async is None and settings.async_jobs_required:
             want_async = True
         if want_async:
             from app.services.job_queue import enqueue_generate_baseline
@@ -282,7 +282,7 @@ class GenerateBaselineSkill(BaseSkill):
                 conversation_id=context.conversation_id,
             )
             if job.get("status") == "sync_required":
-                if settings.require_async_jobs:
+                if settings.async_jobs_required:
                     return SkillResult.fail(
                         job.get("message")
                         or "Async job queue unavailable (Redis/arq required in production)",

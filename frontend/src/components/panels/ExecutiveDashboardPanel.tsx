@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   BarChart, Bar, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -7,14 +7,14 @@ import {
 import {
   TrendingUp, TrendingDown, DollarSign, Shield, Clock, FileText,
   Download, Loader2, AlertTriangle, Target, Activity,
-  ChevronDown, ChevronUp, CheckCircle, XCircle, Eye,
+  CheckCircle, XCircle, Eye,
   ArrowUpRight, ArrowDownRight, Zap, Users, GitBranch,
   AlertOctagon, Lightbulb, ChevronRight,
 } from 'lucide-react';
 import { usePanelStore } from '../../store/panelStore';
 import { useCan } from '../../store/authStore';
 import { toast } from '../../store/toastStore';
-import { downloadCsv } from '../ui/DataTable';
+import { DataTable, downloadCsv, type DataTableColumn } from '../ui/DataTable';
 
 const COLORS = {
   green: '#86BC25',
@@ -234,8 +234,67 @@ function PriorityActions({
   items: PriorityItem[];
   versionId: string;
 }) {
-  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const openPanel = usePanelStore((s) => s.openPanel);
+
+  const columns = useMemo<DataTableColumn<Record<string, unknown>>[]>(
+    () => [
+      {
+        key: 'urgency',
+        label: '',
+        render: (v) =>
+          v === 'high' ? (
+            <AlertOctagon className="w-3.5 h-3.5 text-red-400" />
+          ) : (
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+          ),
+      },
+      {
+        key: 'line_item_name',
+        label: 'Item',
+        render: (_v, row) => (
+          <div className="min-w-0">
+            <div className="text-xs font-medium text-white truncate max-w-[160px]">
+              {String(row.line_item_name ?? '')}
+            </div>
+            <div className="text-xs text-surface-500 truncate max-w-[160px]">
+              {String(row.priority_reason ?? '')}
+            </div>
+          </div>
+        ),
+      },
+      {
+        key: 'avg_p50',
+        label: 'Forecast',
+        align: 'right',
+        render: (v) => formatCurrency(Number(v) || 0),
+      },
+      {
+        key: 'materiality_pct',
+        label: 'Materiality',
+        align: 'right',
+        render: (v) => `${Number(v) || 0}%`,
+      },
+      {
+        key: 'risk_score',
+        label: 'Risk',
+        align: 'right',
+        render: (v) => {
+          const score = Number(v) || 0;
+          return (
+            <span
+              className={`font-mono font-bold ${
+                score > 60 ? 'text-red-400' : score > 30 ? 'text-amber-400' : 'text-deloitte-green'
+              }`}
+            >
+              {score}
+            </span>
+          );
+        },
+      },
+    ],
+    [],
+  );
 
   if (items.length === 0) {
     return (
@@ -248,92 +307,92 @@ function PriorityActions({
   }
 
   return (
-    <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl overflow-hidden">
-      <div className="px-3 py-2 border-b border-surface-700/50 flex items-center justify-between">
-        <h4 className="text-xs text-surface-500 uppercase tracking-wider font-semibold flex items-center gap-1">
-          <AlertTriangle className="w-3 h-3 text-amber-400" /> Items Requiring Your Attention
-        </h4>
-        <span className="text-xs text-surface-600">{items.length} items</span>
-      </div>
-      <div className="divide-y divide-surface-700/30 max-h-[280px] overflow-y-auto">
-        {items.map((item, i) => {
-          const isExpanded = expandedIdx === i;
-          const urgencyColor = item.urgency === 'high' ? 'border-l-red-400' : item.urgency === 'medium' ? 'border-l-amber-400' : 'border-l-sky-400';
-
-          return (
-            <div key={i} className={`border-l-2 ${urgencyColor}`}>
-              <button
-                onClick={() => setExpandedIdx(isExpanded ? null : i)}
-                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-surface-700/20 transition-colors"
-              >
-                <div className="flex-shrink-0">
-                  {item.urgency === 'high'
-                    ? <AlertOctagon className="w-3.5 h-3.5 text-red-400" />
-                    : <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />}
+    <DataTable
+      title="Items Requiring Your Attention"
+      columns={columns}
+      rows={items as unknown as Record<string, unknown>[]}
+      maxHeight={280}
+      exportFilename="priority_actions"
+      getRowId={(row) => String(row.line_item_id ?? row.line_item_name)}
+      expandedRowIds={expandedIds}
+      onRowClick={(row) => {
+        const id = String(row.line_item_id ?? row.line_item_name);
+        setExpandedIds((prev) => {
+          const next = new Set(prev);
+          if (next.has(id)) next.delete(id);
+          else next.add(id);
+          return next;
+        });
+      }}
+      getRowClassName={(row) =>
+        row.urgency === 'high'
+          ? 'border-l-2 border-l-red-400'
+          : row.urgency === 'medium'
+            ? 'border-l-2 border-l-amber-400'
+            : 'border-l-2 border-l-sky-400'
+      }
+      renderExpandedRow={(row) => {
+        const item = row as unknown as PriorityItem;
+        return (
+          <div className="space-y-2">
+            <div className="grid grid-cols-3 gap-1.5">
+              <div className="bg-surface-900/50 rounded p-1.5 text-center">
+                <div className="text-xs text-surface-500">Forecast Range</div>
+                <div className="text-xs text-white font-mono">
+                  {formatCurrency(item.forecast_range.low)} – {formatCurrency(item.forecast_range.high)}
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs font-medium text-white truncate">{item.line_item_name}</div>
-                  <div className="text-xs text-surface-500 truncate">{item.priority_reason}</div>
+              </div>
+              <div className="bg-surface-900/50 rounded p-1.5 text-center">
+                <div className="text-xs text-surface-500">Risk Score</div>
+                <div
+                  className={`text-xs font-mono font-bold ${
+                    item.risk_score > 60
+                      ? 'text-red-400'
+                      : item.risk_score > 30
+                        ? 'text-amber-400'
+                        : 'text-deloitte-green'
+                  }`}
+                >
+                  {item.risk_score}/100
                 </div>
-                <div className="text-right flex-shrink-0">
-                  <div className="text-xs font-mono text-white">{formatCurrency(item.avg_p50)}</div>
-                  <div className="text-xs text-surface-500">{item.materiality_pct}% of total</div>
+              </div>
+              <div className="bg-surface-900/50 rounded p-1.5 text-center">
+                <div className="text-xs text-surface-500">Last Actual</div>
+                <div className="text-xs text-white font-mono">
+                  {item.last_actual !== null ? formatCurrency(item.last_actual) : '—'}
                 </div>
-                {isExpanded ? <ChevronUp className="w-3 h-3 text-surface-500 flex-shrink-0" /> : <ChevronDown className="w-3 h-3 text-surface-500 flex-shrink-0" />}
-              </button>
-
-              {isExpanded && (
-                <div className="px-3 pb-2.5 space-y-2">
-                  {/* Context cards */}
-                  <div className="grid grid-cols-3 gap-1.5">
-                    <div className="bg-surface-900/50 rounded p-1.5 text-center">
-                      <div className="text-xs text-surface-500">Forecast Range</div>
-                      <div className="text-xs text-white font-mono">{formatCurrency(item.forecast_range.low)} – {formatCurrency(item.forecast_range.high)}</div>
-                    </div>
-                    <div className="bg-surface-900/50 rounded p-1.5 text-center">
-                      <div className="text-xs text-surface-500">Risk Score</div>
-                      <div className={`text-xs font-mono font-bold ${item.risk_score > 60 ? 'text-red-400' : item.risk_score > 30 ? 'text-amber-400' : 'text-deloitte-green'}`}>{item.risk_score}/100</div>
-                    </div>
-                    <div className="bg-surface-900/50 rounded p-1.5 text-center">
-                      <div className="text-xs text-surface-500">Last Actual</div>
-                      <div className="text-xs text-white font-mono">{item.last_actual !== null ? formatCurrency(item.last_actual) : '—'}</div>
-                    </div>
-                  </div>
-
-                  {/* AI reasoning */}
-                  {item.ai_reasoning && (
-                    <div className="bg-surface-900/40 rounded-lg p-2 border border-surface-700/30">
-                      <div className="text-xs text-surface-500 uppercase font-semibold mb-0.5">AI Assessment</div>
-                      <p className="text-xs text-surface-300 leading-relaxed">{item.ai_reasoning}</p>
-                    </div>
-                  )}
-
-                  <div className="flex items-center gap-2 text-xs text-surface-500">
-                    <span>{item.category}</span>
-                    {item.business_unit && <span>• BU: {item.business_unit}</span>}
-                    {item.is_overridden && <span className="text-cyan-400">• Overridden</span>}
-                  </div>
-                  {versionId && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        openPanel('review_dashboard', {
-                          version_id: versionId,
-                          focus_line_item_id: item.line_item_id,
-                        })
-                      }
-                      className="w-full mt-1 flex items-center justify-center gap-1 py-1.5 text-xs text-deloitte-green border border-deloitte-green/25 rounded-lg hover:bg-deloitte-green/10"
-                    >
-                      Review <ChevronRight className="w-3 h-3" />
-                    </button>
-                  )}
-                </div>
-              )}
+              </div>
             </div>
-          );
-        })}
-      </div>
-    </div>
+            {item.ai_reasoning && (
+              <div className="bg-surface-900/40 rounded-lg p-2 border border-surface-700/30">
+                <div className="text-xs text-surface-500 uppercase font-semibold mb-0.5">AI Assessment</div>
+                <p className="text-xs text-surface-300 leading-relaxed">{item.ai_reasoning}</p>
+              </div>
+            )}
+            <div className="flex items-center gap-2 text-xs text-surface-500">
+              <span>{item.category}</span>
+              {item.business_unit && <span>• BU: {item.business_unit}</span>}
+              {item.is_overridden && <span className="text-cyan-400">• Overridden</span>}
+            </div>
+            {versionId && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openPanel('review_dashboard', {
+                    version_id: versionId,
+                    focus_line_item_id: item.line_item_id,
+                  });
+                }}
+                className="w-full mt-1 flex items-center justify-center gap-1 py-1.5 text-xs text-deloitte-green border border-deloitte-green/25 rounded-lg hover:bg-deloitte-green/10"
+              >
+                Review <ChevronRight className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+        );
+      }}
+    />
   );
 }
 

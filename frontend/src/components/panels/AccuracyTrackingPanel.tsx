@@ -4,9 +4,9 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, ReferenceLine, Cell,
 } from 'recharts';
-import { Target, TrendingDown, BarChart3, AlertCircle, ArrowUpRight, ArrowDownRight, RefreshCw, Loader2, ExternalLink, Download } from 'lucide-react';
+import { Target, TrendingDown, BarChart3, AlertCircle, ArrowUpRight, ArrowDownRight, RefreshCw, Loader2, ExternalLink } from 'lucide-react';
 import { Tabs } from '../ui/Tabs';
-import { downloadCsv } from '../ui/DataTable';
+import { DataTable, type DataTableColumn } from '../ui/DataTable';
 import { rescoreForecasts } from '../../api/dashboard';
 import { usePanelStore } from '../../store/panelStore';
 import { toast } from '../../store/toastStore';
@@ -102,34 +102,67 @@ export function AccuracyTrackingPanel({ data, onRefresh }: Props) {
   };
 
   const deviationRows = (top_deviations?.length ? top_deviations : (items || [])) as Record<string, unknown>[];
-  const deviationColumns = [
-    { key: 'line_item_name', label: 'Line Item' },
-    { key: 'period', label: 'Period' },
-    { key: 'model_type', label: 'Model' },
-    { key: 'forecast', label: 'Forecast' },
-    { key: 'actual', label: 'Actual' },
-    { key: 'mape', label: 'MAPE' },
-    { key: 'bias', label: 'Bias' },
+  const deviationColumns: DataTableColumn<Record<string, unknown>>[] = [
+    {
+      key: 'line_item_name',
+      label: 'Item',
+      render: (_v, row) => (
+        <div>
+          <div className="text-surface-300 truncate max-w-[140px]">{String(row.line_item_name ?? '')}</div>
+          <div className="text-surface-500 text-xs">
+            {String(row.period ?? '')} • {String(row.model_type ?? '')}
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'forecast',
+      label: 'Forecast',
+      align: 'right',
+      render: (v) => formatCurrency(Number(v) || 0),
+    },
+    {
+      key: 'actual',
+      label: 'Actual',
+      align: 'right',
+      render: (v) => formatCurrency(Number(v) || 0),
+    },
+    {
+      key: 'mape',
+      label: 'MAPE',
+      align: 'right',
+      render: (v) => {
+        const mape = Number(v) || 0;
+        return (
+          <span
+            className={`font-mono font-medium ${
+              mape > 20 ? 'text-red-400' : mape > 10 ? 'text-amber-400' : 'text-deloitte-green'
+            }`}
+          >
+            {formatPct(mape)}
+          </span>
+        );
+      },
+    },
+    {
+      key: 'bias',
+      label: 'Bias',
+      align: 'right',
+      render: (v) => {
+        const bias = Number(v) || 0;
+        return (
+          <span className={`font-mono ${bias > 0 ? 'text-amber-400' : 'text-blue-400'}`}>
+            {bias > 0 ? '+' : ''}
+            {formatPct(bias)}
+          </span>
+        );
+      },
+    },
   ];
-
-  const handleExportDeviations = () => {
-    downloadCsv(`accuracy_${versionId || 'export'}`, deviationColumns, deviationRows);
-  };
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-end gap-1.5">
-        {deviationRows.length > 0 && (
-          <button
-            type="button"
-            onClick={handleExportDeviations}
-            className="inline-flex items-center gap-1.5 text-xs text-surface-300 hover:text-white px-2 py-1 rounded-md border border-surface-600 hover:border-deloitte-green/40"
-            title="Export deviations CSV"
-          >
-            <Download className="w-3.5 h-3.5" />
-            CSV
-          </button>
-        )}
         <button
           type="button"
           onClick={handleRescore}
@@ -315,19 +348,47 @@ export function AccuracyTrackingPanel({ data, onRefresh }: Props) {
                 </BarChart>
               </ResponsiveContainer>
 
-              <div className="mt-3 space-y-1.5">
-                {model_performance.map((m: any, i: number) => (
-                  <div key={i} className="flex items-center justify-between text-xs px-2 py-1.5 bg-surface-800/40 rounded">
-                    <span className="text-white font-medium">{m.model}</span>
-                    <div className="flex items-center gap-3 text-surface-400">
-                      <span>{m.count} forecasts</span>
-                      <span className={m.avg_mape > 10 ? 'text-red-400' : 'text-deloitte-green'}>
-                        {formatPct(m.avg_mape)} MAPE
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <DataTable
+                title="Model metrics"
+                columns={[
+                  { key: 'model', label: 'Model' },
+                  {
+                    key: 'count',
+                    label: 'Forecasts',
+                    align: 'right',
+                    render: (v) => String(v ?? 0),
+                  },
+                  {
+                    key: 'avg_mape',
+                    label: 'Avg MAPE',
+                    align: 'right',
+                    render: (v) => {
+                      const mape = Number(v) || 0;
+                      return (
+                        <span className={mape > 10 ? 'text-red-400' : 'text-deloitte-green'}>
+                          {formatPct(mape)}
+                        </span>
+                      );
+                    },
+                  },
+                  {
+                    key: 'best_mape',
+                    label: 'Best',
+                    align: 'right',
+                    render: (v) => formatPct(Number(v) || 0),
+                  },
+                  {
+                    key: 'worst_mape',
+                    label: 'Worst',
+                    align: 'right',
+                    render: (v) => formatPct(Number(v) || 0),
+                  },
+                ]}
+                rows={model_performance as Record<string, unknown>[]}
+                maxHeight={220}
+                exportFilename={`model_performance_${versionId || 'export'}`}
+                getRowId={(row) => String(row.model ?? '')}
+              />
             </>
           ) : (
             <p className="text-surface-500 text-xs text-center py-6">No model performance data</p>
@@ -336,66 +397,36 @@ export function AccuracyTrackingPanel({ data, onRefresh }: Props) {
       )}
 
       {activeTab === 'deviations' && (
-        <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-surface-700/50">
-            <h4 className="text-xs font-semibold text-white flex items-center gap-1.5">
-              <AlertCircle className="w-3.5 h-3.5 text-red-400" />
-              Top {top_deviations.length} Largest Deviations
-            </h4>
-          </div>
-          <div className="max-h-[300px] overflow-y-auto">
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-surface-800 z-10">
-                <tr className="border-b border-surface-700">
-                  <th className="px-3 py-2 text-left text-surface-400 font-semibold text-xs uppercase">Item</th>
-                  <th className="px-3 py-2 text-right text-surface-400 font-semibold text-xs uppercase">Forecast</th>
-                  <th className="px-3 py-2 text-right text-surface-400 font-semibold text-xs uppercase">Actual</th>
-                  <th className="px-3 py-2 text-right text-surface-400 font-semibold text-xs uppercase">MAPE</th>
-                  <th className="px-3 py-2 text-right text-surface-400 font-semibold text-xs uppercase">Bias</th>
-                  <th className="px-3 py-2 text-right text-surface-400 font-semibold text-xs uppercase"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {top_deviations.map((item: any, i: number) => (
-                  <tr key={i} className="border-b border-surface-700/20 hover:bg-red-500/5 transition-colors">
-                    <td className="px-3 py-1.5">
-                      <div className="text-surface-300 truncate max-w-[120px]">{item.line_item_name}</div>
-                      <div className="text-surface-500 text-xs">{item.period} • {item.model_type}</div>
-                    </td>
-                    <td className="px-3 py-1.5 text-right text-surface-200 font-mono">{formatCurrency(item.forecast)}</td>
-                    <td className="px-3 py-1.5 text-right text-surface-200 font-mono">{formatCurrency(item.actual)}</td>
-                    <td className="px-3 py-1.5 text-right">
-                      <span className={`font-mono font-medium ${item.mape > 20 ? 'text-red-400' : item.mape > 10 ? 'text-amber-400' : 'text-deloitte-green'}`}>
-                        {formatPct(item.mape)}
-                      </span>
-                    </td>
-                    <td className="px-3 py-1.5 text-right">
-                      <span className={`font-mono ${item.bias > 0 ? 'text-amber-400' : 'text-blue-400'}`}>
-                        {item.bias > 0 ? '+' : ''}{formatPct(item.bias)}
-                      </span>
-                    </td>
-                    <td className="px-3 py-1.5 text-right">
-                      {versionId && item.line_item_id != null && (
-                        <button
-                          type="button"
-                          title="Review item"
-                          onClick={() =>
-                            openPanel('review_dashboard', {
-                              version_id: versionId,
-                              focus_line_item_id: item.line_item_id,
-                            })
-                          }
-                          className="text-surface-400 hover:text-deloitte-green"
-                        >
-                          <ExternalLink className="w-3 h-3" />
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl overflow-hidden p-2">
+          <h4 className="text-xs font-semibold text-white flex items-center gap-1.5 px-2 py-1.5 mb-1">
+            <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+            Top {top_deviations.length} Largest Deviations
+          </h4>
+          <DataTable
+            columns={deviationColumns}
+            rows={deviationRows}
+            maxHeight={300}
+            exportFilename={`accuracy_${versionId || 'export'}`}
+            getRowClassName={() => 'hover:bg-red-500/5'}
+            rowActions={(row) =>
+              versionId && row.line_item_id != null ? (
+                <button
+                  type="button"
+                  title="Review item"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openPanel('review_dashboard', {
+                      version_id: versionId,
+                      focus_line_item_id: row.line_item_id as number,
+                    });
+                  }}
+                  className="text-surface-400 hover:text-deloitte-green"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                </button>
+              ) : null
+            }
+          />
         </div>
       )}
 

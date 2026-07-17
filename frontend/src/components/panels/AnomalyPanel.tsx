@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { apiPost } from '../../api/client';
 import { usePanelStore } from '../../store/panelStore';
-import { downloadCsv } from '../ui/DataTable';
+import { DataTable, downloadCsv, type DataTableColumn } from '../ui/DataTable';
 
 // ─── Design tokens ─────────────────────────────────
 const COLORS = {
@@ -376,12 +376,14 @@ function AnomalyRow({
   onToggle,
   onDismiss,
   onOverride,
+  detailOnly = false,
 }: {
   item: AnomalyItem;
   isExpanded: boolean;
   onToggle: () => void;
   onDismiss: (id: string) => void;
   onOverride: (item: AnomalyItem) => void;
+  detailOnly?: boolean;
 }) {
   const [editMode, setEditMode] = useState(false);
   const [editValue, setEditValue] = useState('');
@@ -413,12 +415,15 @@ function AnomalyRow({
     }
   };
 
+  const showDetail = detailOnly || isExpanded;
+
   return (
-    <div className={`border rounded-lg transition-colors ${item.is_dismissed
+    <div className={detailOnly ? '' : `border rounded-lg transition-colors ${item.is_dismissed
       ? 'bg-surface-800/40 border-surface-700/30 opacity-60'
       : `bg-surface-800 ${isExpanded ? 'border-surface-600' : 'border-surface-700/50 hover:border-surface-600'}`
       }`}>
       {/* Compact row */}
+      {!detailOnly && (
       <button
         onClick={onToggle}
         className="w-full flex items-center gap-3 px-3 py-2.5 text-left"
@@ -435,7 +440,7 @@ function AnomalyRow({
             <MaterialityPill level={item.materiality} pct={item.materiality_pct} />
           </div>
           <div className="text-xs text-surface-400 truncate mt-0.5">
-            {topFinding.headline}
+            {topFinding?.headline}
           </div>
         </div>
 
@@ -457,10 +462,11 @@ function AnomalyRow({
           {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
         </div>
       </button>
+      )}
 
       {/* Expanded detail */}
-      {isExpanded && (
-        <div className="px-3 pb-3 border-t border-surface-700/50 mt-0">
+      {showDetail && (
+        <div className={detailOnly ? 'space-y-0' : 'px-3 pb-3 border-t border-surface-700/50 mt-0'}>
           {/* Findings */}
           <div className="mt-3 space-y-2">
             <div className="text-xs text-surface-500 uppercase tracking-wider font-semibold flex items-center gap-1">
@@ -752,19 +758,59 @@ export function AnomalyPanel({ data }: { data: any }) {
     setExpandedId(item.id);
   }, []);
 
-  const anomalyColumns = [
-    { key: 'line_item_name', label: 'Line Item' },
-    { key: 'category', label: 'Category' },
-    { key: 'worst_severity', label: 'Worst Severity' },
-    { key: 'composite_score', label: 'Composite Score' },
-    { key: 'total_p50', label: 'Total P50' },
-    { key: 'materiality', label: 'Materiality' },
-  ];
+  const anomalyColumns = useMemo<DataTableColumn<Record<string, unknown>>[]>(
+    () => [
+      {
+        key: 'worst_severity',
+        label: 'Severity',
+        render: (v) => <SeverityIcon severity={String(v ?? 'info')} />,
+      },
+      {
+        key: 'line_item_name',
+        label: 'Line Item',
+        render: (_v, row) => (
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="truncate max-w-[140px]">{String(row.line_item_name ?? '')}</span>
+              <MaterialityPill
+                level={String(row.materiality ?? '')}
+                pct={Number(row.materiality_pct) || 0}
+              />
+            </div>
+            <div className="text-xs text-surface-400 truncate max-w-[200px]">
+              {String((row.findings as Finding[] | undefined)?.[0]?.headline ?? '')}
+            </div>
+          </div>
+        ),
+      },
+      {
+        key: 'composite_score',
+        label: 'Score',
+        align: 'right',
+        render: (v) => Number(v || 0).toFixed(1),
+      },
+      {
+        key: 'avg_p50',
+        label: 'Forecast',
+        align: 'right',
+        render: (v) => formatCurrency(Number(v) || 0),
+      },
+      { key: 'category', label: 'Category' },
+    ],
+    [],
+  );
 
   const handleExport = () => {
     downloadCsv(
       'anomalies_export',
-      anomalyColumns,
+      [
+        { key: 'line_item_name', label: 'Line Item' },
+        { key: 'category', label: 'Category' },
+        { key: 'worst_severity', label: 'Worst Severity' },
+        { key: 'composite_score', label: 'Composite Score' },
+        { key: 'total_p50', label: 'Total P50' },
+        { key: 'materiality', label: 'Materiality' },
+      ],
       filteredAnomalies.map((a: AnomalyItem) => ({
         line_item_name: a.line_item_name,
         category: a.category,
@@ -817,25 +863,54 @@ export function AnomalyPanel({ data }: { data: any }) {
       />
 
       {/* Anomaly list */}
-      <div className="space-y-2">
-        {filteredAnomalies.map((item: AnomalyItem) => (
-          <AnomalyRow
-            key={item.id}
-            item={{ ...item, is_dismissed: dismissedIds.has(item.id) }}
-            isExpanded={expandedId === item.id}
-            onToggle={() => setExpandedId(expandedId === item.id ? null : item.id)}
-            onDismiss={handleDismiss}
-            onOverride={handleOverride}
-          />
-        ))}
-
-        {filteredAnomalies.length === 0 && (
-          <div className="text-center py-8 text-surface-500 text-xs">
-            <Filter className="w-6 h-6 mx-auto mb-2 opacity-40" />
-            No anomalies match your current filters.
-          </div>
-        )}
-      </div>
+      {filteredAnomalies.length === 0 ? (
+        <div className="text-center py-8 text-surface-500 text-xs">
+          <Filter className="w-6 h-6 mx-auto mb-2 opacity-40" />
+          No anomalies match your current filters.
+        </div>
+      ) : (
+        <DataTable
+          title="Anomalies"
+          columns={anomalyColumns}
+          rows={filteredAnomalies.map((a) => ({
+            ...a,
+            is_dismissed: dismissedIds.has(a.id),
+          })) as unknown as Record<string, unknown>[]}
+          maxHeight={420}
+          exportFilename="anomalies_export"
+          hideExport
+          getRowId={(row) => String(row.id)}
+          getRowClassName={(row) => (row.is_dismissed ? 'opacity-60' : '')}
+          expandedRowIds={expandedId ? new Set([expandedId]) : new Set()}
+          onRowClick={(row) => {
+            const id = String(row.id);
+            setExpandedId(expandedId === id ? null : id);
+          }}
+          rowActions={(row) => (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDismiss(String(row.id));
+              }}
+              className="text-xs text-surface-500 hover:text-surface-300"
+              title="Dismiss"
+            >
+              <EyeOff className="w-3 h-3" />
+            </button>
+          )}
+          renderExpandedRow={(row) => (
+            <AnomalyRow
+              item={row as unknown as AnomalyItem}
+              isExpanded
+              detailOnly
+              onToggle={() => setExpandedId(null)}
+              onDismiss={handleDismiss}
+              onOverride={handleOverride}
+            />
+          )}
+        />
+      )}
 
       {/* Footer note */}
       <div className="mt-4 text-xs text-surface-600 text-center">

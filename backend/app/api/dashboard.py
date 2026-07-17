@@ -57,18 +57,110 @@ def formatCurrency(value: float) -> str:
 # ──────────────────────────────────────────────────
 
 
+def _preload_driver_context(
+    db: Session,
+    version_id: str,
+    line_item_ids: list[int],
+) -> dict[str, Any]:
+    """Batch-load dependency / forecast / override / driver data for review items.
+
+    Avoids the prior ~4 queries per line item inside `_build_driver_context`.
+    """
+    empty: dict[str, Any] = {
+        "deps_by_dependent": {},
+        "deps_by_source": {},
+        "line_items_by_id": {},
+        "forecast_totals": {},
+        "overrides_by_li": {},
+        "driver_rows": [],
+    }
+    if not line_item_ids:
+        return empty
+
+    deps = (
+        db.query(LineItemDependency)
+        .filter(
+            (LineItemDependency.dependent_item_id.in_(line_item_ids))
+            | (LineItemDependency.source_item_id.in_(line_item_ids))
+        )
+        .all()
+    )
+    deps_by_dependent: dict[int, list[LineItemDependency]] = {}
+    deps_by_source: dict[int, list[LineItemDependency]] = {}
+    related_ids: set[int] = set(line_item_ids)
+    for dep in deps:
+        deps_by_dependent.setdefault(dep.dependent_item_id, []).append(dep)
+        deps_by_source.setdefault(dep.source_item_id, []).append(dep)
+        related_ids.add(dep.source_item_id)
+        related_ids.add(dep.dependent_item_id)
+
+    line_items_by_id = {
+        li.id: li
+        for li in db.query(LineItem).filter(LineItem.id.in_(related_ids)).all()
+    }
+
+    forecast_totals = {
+        li_id: float(total or 0)
+        for li_id, total in (
+            db.query(ForecastLineResult.line_item_id, func.sum(ForecastLineResult.p50))
+            .filter(
+                ForecastLineResult.version_id == version_id,
+                ForecastLineResult.line_item_id.in_(related_ids),
+            )
+            .group_by(ForecastLineResult.line_item_id)
+            .all()
+        )
+    }
+
+    overrides_by_li: dict[int, list[Override]] = {}
+    for ov in (
+        db.query(Override)
+        .filter(
+            Override.version_id == version_id,
+            Override.line_item_id.in_(line_item_ids),
+            Override.status == "active",
+        )
+        .order_by(Override.created_at.desc())
+        .all()
+    ):
+        bucket = overrides_by_li.setdefault(ov.line_item_id, [])
+        if len(bucket) < 5:
+            bucket.append(ov)
+
+    driver_rows: list[Any] = []
+    try:
+        from app.models.driver_input import DriverInput
+
+        driver_rows = (
+            db.query(DriverInput)
+            .filter(DriverInput.version_id == version_id)
+            .all()
+        )
+    except Exception:
+        driver_rows = []
+
+    return {
+        "deps_by_dependent": deps_by_dependent,
+        "deps_by_source": deps_by_source,
+        "line_items_by_id": line_items_by_id,
+        "forecast_totals": forecast_totals,
+        "overrides_by_li": overrides_by_li,
+        "driver_rows": driver_rows,
+    }
+
+
 def _build_driver_context(
     li: LineItem,
     group: list[ForecastLineResult],
     actuals_map: dict[tuple[int, str], float],
     db: Session,
     version_id: str,
+    cache: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a business driver narrative for a line item.
 
-    Queries dependencies, actuals trends, driver inputs, and overrides
-    to produce a human-readable explanation of WHAT is driving the
-    forecast movement, not just THAT it moved.
+    Prefer a preloaded `cache` from `_preload_driver_context` when building
+    many items; falls back to per-item queries for single-item call sites.
     """
     context: dict[str, Any] = {
         "dependencies": [],
@@ -81,41 +173,28 @@ def _build_driver_context(
     if not li:
         return context
 
+    if cache is None:
+        cache = _preload_driver_context(db, version_id, [li.id])
+
     # ── 1. Dependencies: what P&L lines feed into this item ───
-    deps = (
-        db.query(LineItemDependency)
-        .filter(LineItemDependency.dependent_item_id == li.id)
-        .all()
-    )
+    deps = cache["deps_by_dependent"].get(li.id, [])
+    line_items_by_id: dict[int, LineItem] = cache["line_items_by_id"]
+    forecast_totals: dict[int, float] = cache["forecast_totals"]
     for dep in deps:
-        source = db.query(LineItem).filter(LineItem.id == dep.source_item_id).first()
+        source = line_items_by_id.get(dep.source_item_id)
         if source:
-            # Get source's forecast for this version
-            source_p50 = (
-                db.query(func.sum(ForecastLineResult.p50))
-                .filter(
-                    ForecastLineResult.version_id == version_id,
-                    ForecastLineResult.line_item_id == source.id,
-                )
-                .scalar()
-            )
             context["dependencies"].append({
                 "name": source.name,
                 "category": source.category,
                 "relationship": dep.relationship_type,
                 "weight": dep.weight,
-                "forecast_total": round(float(source_p50 or 0), 2),
+                "forecast_total": round(forecast_totals.get(source.id, 0.0), 2),
             })
 
     # Also show what this item feeds into (dependents)
-    dependents = (
-        db.query(LineItemDependency)
-        .filter(LineItemDependency.source_item_id == li.id)
-        .all()
-    )
     downstream_names = []
-    for dep in dependents:
-        dependent = db.query(LineItem).filter(LineItem.id == dep.dependent_item_id).first()
+    for dep in cache["deps_by_source"].get(li.id, []):
+        dependent = line_items_by_id.get(dep.dependent_item_id)
         if dependent:
             downstream_names.append(dependent.name)
 
@@ -172,41 +251,21 @@ def _build_driver_context(
         }
 
     # ── 3. Driver inputs for this line item ───────────────────
-    try:
-        from app.models.driver_input import DriverInput
-        driver_inputs = (
-            db.query(DriverInput)
-            .filter(DriverInput.version_id == version_id)
-            .all()
-        )
-        for di in driver_inputs:
-            if di.values and isinstance(di.values, dict):
-                for field_name, field_data in di.values.items():
-                    if isinstance(field_data, dict) and field_data.get("line_item_id") == li.id:
-                        context["driver_inputs"].append({
-                            "business_unit": di.business_unit,
-                            "field": field_name,
-                            "value": field_data.get("value"),
-                            "reason": field_data.get("reason", ""),
-                            "prior_value": field_data.get("prior_value"),
-                            "submitted_at": di.submitted_at.isoformat() if di.submitted_at else None,
-                        })
-    except Exception:
-        pass  # Driver inputs may not exist yet
+    for di in cache.get("driver_rows") or []:
+        if di.values and isinstance(di.values, dict):
+            for field_name, field_data in di.values.items():
+                if isinstance(field_data, dict) and field_data.get("line_item_id") == li.id:
+                    context["driver_inputs"].append({
+                        "business_unit": di.business_unit,
+                        "field": field_name,
+                        "value": field_data.get("value"),
+                        "reason": field_data.get("reason", ""),
+                        "prior_value": field_data.get("prior_value"),
+                        "submitted_at": di.submitted_at.isoformat() if di.submitted_at else None,
+                    })
 
     # ── 4. Active overrides ───────────────────────────────────
-    active_overrides = (
-        db.query(Override)
-        .filter(
-            Override.version_id == version_id,
-            Override.line_item_id == li.id,
-            Override.status == "active",
-        )
-        .order_by(Override.created_at.desc())
-        .limit(5)
-        .all()
-    )
-    for ov in active_overrides:
+    for ov in cache.get("overrides_by_li", {}).get(li.id, []):
         context["active_overrides"].append({
             "period": ov.period,
             "original_value": round(ov.original_model_value, 2),
@@ -556,12 +615,12 @@ async def get_executive_dashboard(
 
     # Driver input submissions
     driver_inputs = db.query(DriverInput).filter(DriverInput.version_id == version_id).all()
-    driver_summary = {
+    driver_summary: dict[str, Any] = {
         "total_submissions": len(driver_inputs),
         "approved": sum(1 for d in driver_inputs if d.status == "approved"),
         "pending": sum(1 for d in driver_inputs if d.status == "submitted"),
         "late": sum(1 for d in driver_inputs if d.is_late),
-        "business_units": sorted(set(d.business_unit for d in driver_inputs)),
+        "business_units": sorted({d.business_unit for d in driver_inputs if d.business_unit}),
     }
 
     # ─── 7. Forward-Looking Insights ──────────────────
@@ -1091,6 +1150,8 @@ async def get_review_dashboard(
     ai_flagged_items = []      # AI says flag / override needed
     already_reviewed_items = []  # Human already reviewed
 
+    driver_cache = _preload_driver_context(db, version_id, list(line_item_groups.keys()))
+
     for li_id, group in line_item_groups.items():
         # Pick the worst-case period for this line item
         worst = min(group, key=lambda x: x.confidence_score)
@@ -1104,8 +1165,10 @@ async def get_review_dashboard(
 
         li = worst.line_item
 
-        # Build business driver context
-        driver_ctx = _build_driver_context(li, group, actuals_map, db, version_id)
+        # Build business driver context (batched via driver_cache)
+        driver_ctx = _build_driver_context(
+            li, group, actuals_map, db, version_id, cache=driver_cache,
+        )
 
         item = {
             "id": worst.id,
@@ -1509,48 +1572,47 @@ async def get_accuracy_tracking(
                 else:
                     horizon_buckets["7m+"].append(mape)
     else:
-        # Fallback: live join when no vintage snapshots yet
-        results = (
-            db.query(ForecastLineResult)
-            .join(LineItem)
-            .filter(ForecastLineResult.version_id == version_id)
-            .all()
-        )
-        for r in results:
-            actual = (
-                db.query(ActualsRecord)
-                .filter(
-                    ActualsRecord.line_item_id == r.line_item_id,
-                    ActualsRecord.period == r.period,
-                )
-                .first()
+        # Fallback: live join when no vintage snapshots yet (one query, not per-row)
+        live_q = (
+            db.query(ForecastLineResult, ActualsRecord, LineItem)
+            .select_from(ForecastLineResult)
+            .join(LineItem, LineItem.id == ForecastLineResult.line_item_id)
+            .join(
+                ActualsRecord,
+                (ActualsRecord.line_item_id == ForecastLineResult.line_item_id)
+                & (ActualsRecord.period == ForecastLineResult.period),
             )
-            if actual and actual.value != 0:
-                mape = abs(r.p50 - actual.value) / abs(actual.value) * 100
-                bias = (r.p50 - actual.value) / abs(actual.value) * 100
-                hit_range = (
-                    r.p10 is not None and r.p90 is not None
-                    and r.p10 <= actual.value <= r.p90
-                )
-                item = {
-                    "line_item_id": r.line_item_id,
-                    "line_item_name": r.line_item.name,
-                    "category": r.line_item.category,
-                    "period": r.period,
-                    "horizon_offset": None,
-                    "forecast": round(r.p50, 2),
-                    "actual": round(actual.value, 2),
-                    "mape": round(mape, 2),
-                    "bias": round(bias, 2),
-                    "hit_range": hit_range,
-                    "model_type": r.model_type,
-                    "confidence_score": r.confidence_score,
-                    "source": "live",
-                }
-                accuracy_items.append(item)
-                model = r.model_type or "unknown"
-                model_mapes.setdefault(model, []).append(mape)
-                category_mapes.setdefault(r.line_item.category, []).append(mape)
+            .filter(ForecastLineResult.version_id == version_id)
+        )
+        live_q = line_item_scope_filter(live_q, current_user, LineItem)
+        for r, actual, li in live_q.all():
+            if actual.value == 0:
+                continue
+            mape = abs(r.p50 - actual.value) / abs(actual.value) * 100
+            bias = (r.p50 - actual.value) / abs(actual.value) * 100
+            hit_range = (
+                r.p10 is not None and r.p90 is not None
+                and r.p10 <= actual.value <= r.p90
+            )
+            item = {
+                "line_item_id": r.line_item_id,
+                "line_item_name": li.name,
+                "category": li.category,
+                "period": r.period,
+                "horizon_offset": None,
+                "forecast": round(r.p50, 2),
+                "actual": round(actual.value, 2),
+                "mape": round(mape, 2),
+                "bias": round(bias, 2),
+                "hit_range": hit_range,
+                "model_type": r.model_type,
+                "confidence_score": r.confidence_score,
+                "source": "live",
+            }
+            accuracy_items.append(item)
+            model = r.model_type or "unknown"
+            model_mapes.setdefault(model, []).append(mape)
+            category_mapes.setdefault(li.category, []).append(mape)
 
     model_performance = []
     for model, mapes in sorted(model_mapes.items()):
@@ -1597,14 +1659,43 @@ async def get_accuracy_tracking(
         .limit(6)
         .all()
     )
+    recent_version_ids = [v.id for v in recent_versions]
+    accuracy_by_version: dict[str, list] = {vid: [] for vid in recent_version_ids}
+    if recent_version_ids:
+        for rec in (
+            db.query(ForecastAccuracyRecord)
+            .filter(ForecastAccuracyRecord.version_id.in_(recent_version_ids))
+            .all()
+        ):
+            accuracy_by_version.setdefault(rec.version_id, []).append(rec)
+
+    # Fallback join for versions with no vintage rows — one query for all such versions
+    versions_needing_fallback = [
+        v.id for v in recent_versions if not accuracy_by_version.get(v.id)
+    ]
+    fallback_by_version: dict[str, list[tuple[float, float]]] = {
+        vid: [] for vid in versions_needing_fallback
+    }
+    if versions_needing_fallback:
+        for vr, act in (
+            db.query(ForecastLineResult, ActualsRecord)
+            .join(
+                ActualsRecord,
+                (ActualsRecord.line_item_id == ForecastLineResult.line_item_id)
+                & (ActualsRecord.period == ForecastLineResult.period),
+            )
+            .filter(ForecastLineResult.version_id.in_(versions_needing_fallback))
+            .all()
+        ):
+            if act.value != 0:
+                fallback_by_version.setdefault(vr.version_id, []).append(
+                    (float(vr.p50), float(act.value))
+                )
+
     mape_trend = []
     bias_trend = []
     for v in reversed(recent_versions):
-        v_recs = (
-            db.query(ForecastAccuracyRecord)
-            .filter(ForecastAccuracyRecord.version_id == v.id)
-            .all()
-        )
+        v_recs = accuracy_by_version.get(v.id) or []
         if v_recs:
             mapes_for_version = [r.pct_error for r in v_recs if r.pct_error is not None]
             v_sum_forecast = sum(r.predicted_p50 for r in v_recs)
@@ -1613,22 +1704,10 @@ async def get_accuracy_tracking(
             mapes_for_version = []
             v_sum_forecast = 0.0
             v_sum_actual = 0.0
-            # Single join instead of per-row ActualsRecord lookups
-            joined = (
-                db.query(ForecastLineResult, ActualsRecord)
-                .join(
-                    ActualsRecord,
-                    (ActualsRecord.line_item_id == ForecastLineResult.line_item_id)
-                    & (ActualsRecord.period == ForecastLineResult.period),
-                )
-                .filter(ForecastLineResult.version_id == v.id)
-                .all()
-            )
-            for vr, act in joined:
-                if act.value != 0:
-                    mapes_for_version.append(abs(vr.p50 - act.value) / abs(act.value) * 100)
-                    v_sum_forecast += float(vr.p50)
-                    v_sum_actual += float(act.value)
+            for pred, act_val in fallback_by_version.get(v.id, []):
+                mapes_for_version.append(abs(pred - act_val) / abs(act_val) * 100)
+                v_sum_forecast += pred
+                v_sum_actual += act_val
 
         avg_mape = sum(mapes_for_version) / len(mapes_for_version) if mapes_for_version else 0
         mape_trend.append({
@@ -1784,33 +1863,44 @@ async def get_driver_inputs(
         .order_by(LineItem.category, LineItem.display_order)
         .all()
     )
+    li_ids = [li.id for li in line_items]
 
-    available_items = []
-    for li in line_items:
-        # Model suggestion from forecast p50 (first period) + last actual
-        flr = (
+    # Batch first-period forecast + latest actual (avoid 2 queries per line item)
+    first_flr_by_li: dict[int, ForecastLineResult] = {}
+    last_actual_by_li: dict[int, ActualsRecord] = {}
+    if li_ids:
+        for flr in (
             db.query(ForecastLineResult)
             .filter(
                 ForecastLineResult.version_id == version_id,
-                ForecastLineResult.line_item_id == li.id,
+                ForecastLineResult.line_item_id.in_(li_ids),
             )
             .order_by(ForecastLineResult.period)
-            .first()
-        )
-        last_actual = (
+            .all()
+        ):
+            if flr.line_item_id not in first_flr_by_li:
+                first_flr_by_li[flr.line_item_id] = flr
+        for act in (
             db.query(ActualsRecord)
-            .filter(ActualsRecord.line_item_id == li.id)
+            .filter(ActualsRecord.line_item_id.in_(li_ids))
             .order_by(ActualsRecord.period.desc())
-            .first()
-        )
+            .all()
+        ):
+            if act.line_item_id not in last_actual_by_li:
+                last_actual_by_li[act.line_item_id] = act
+
+    available_items = []
+    for li in line_items:
+        suggestion = first_flr_by_li.get(li.id)
+        prior = last_actual_by_li.get(li.id)
         available_items.append({
             "id": li.id,
             "name": li.name,
             "category": li.category,
             "account_code": li.account_code,
-            "model_suggested_value": flr.p50 if flr else None,
-            "confidence": flr.confidence_score if flr else None,
-            "last_actual": last_actual.value if last_actual else None,
+            "model_suggested_value": suggestion.p50 if suggestion else None,
+            "confidence": suggestion.confidence_score if suggestion else None,
+            "last_actual": prior.value if prior else None,
         })
 
     return PanelDataResponse(
@@ -2541,13 +2631,14 @@ async def get_anomaly_dashboard(
     warning_value = sum(abs(a["total_p50"]) for a in warning_items)
 
     # Category breakdown
-    category_counts: dict[str, dict] = {}
-    for a in anomaly_items:
-        cat = a["category"]
+    category_counts: dict[str, dict[str, float]] = {}
+    for item in anomaly_items:
+        cat = str(item["category"])
         if cat not in category_counts:
             category_counts[cat] = {"critical": 0, "warning": 0, "info": 0, "total_value": 0}
-        category_counts[cat][a["worst_severity"]] += 1
-        category_counts[cat]["total_value"] += abs(a["total_p50"])
+        severity = str(item["worst_severity"])
+        category_counts[cat][severity] = category_counts[cat].get(severity, 0) + 1
+        category_counts[cat]["total_value"] += abs(float(item["total_p50"]))
 
     category_chart = [
         {"category": cat, **counts}
@@ -2556,9 +2647,10 @@ async def get_anomaly_dashboard(
 
     # Finding type distribution
     type_counts: dict[str, int] = {}
-    for a in anomaly_items:
-        for f in a["findings"]:
-            type_counts[f["type"]] = type_counts.get(f["type"], 0) + 1
+    for item in anomaly_items:
+        for f in item["findings"]:
+            ftype = str(f["type"])
+            type_counts[ftype] = type_counts.get(ftype, 0) + 1
 
     type_labels = {
         "forecast_jump": "Forecast vs Actuals Jump",

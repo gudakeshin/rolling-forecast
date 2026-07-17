@@ -1,12 +1,11 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import {
   Upload, Link2, Search, Trash2, FileText, FileSpreadsheet,
-  Image, Globe, File, Loader2, CheckCircle, XCircle,
-  ChevronDown, ChevronUp, Filter, FolderOpen, Plus,
-  ExternalLink, Tag, Clock, Database, AlertCircle, Download,
+  Globe, File, Loader2, CheckCircle, XCircle,
+  FolderOpen, Plus, ExternalLink, Tag, Clock, Database, Download,
 } from 'lucide-react';
 import { apiPost, apiDelete, apiGet } from '../../api/client';
-import { downloadCsv } from '../ui/DataTable';
+import { DataTable, downloadCsv, type DataTableColumn } from '../ui/DataTable';
 
 const FILE_ICONS: Record<string, typeof FileText> = {
   pdf: FileText,
@@ -94,8 +93,53 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
 
-  const [expandedDoc, setExpandedDoc] = useState<string | null>(null);
+  const [expandedDocIds, setExpandedDocIds] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const documentTableColumns = useMemo<DataTableColumn<Record<string, unknown>>[]>(
+    () => [
+      {
+        key: 'original_name',
+        label: 'Name',
+        render: (v, row) => {
+          const Icon = FILE_ICONS[String(row.file_type)] || File;
+          return (
+            <span className="inline-flex items-center gap-1.5 min-w-0">
+              <Icon className="w-3.5 h-3.5 text-surface-400 shrink-0" />
+              <span className="truncate max-w-[180px]">{String(v ?? '')}</span>
+            </span>
+          );
+        },
+      },
+      {
+        key: 'status',
+        label: 'Status',
+        render: (v) => (
+          <span className={`text-xs px-1.5 py-0.5 rounded border ${STATUS_STYLES[String(v)] || ''}`}>
+            {String(v ?? '')}
+          </span>
+        ),
+      },
+      {
+        key: 'chunk_count',
+        label: 'Chunks',
+        align: 'right',
+        render: (v) => String(v ?? 0),
+      },
+      {
+        key: 'file_size_bytes',
+        label: 'Size',
+        align: 'right',
+        render: (v) => formatBytes(Number(v) || 0),
+      },
+      {
+        key: 'scope',
+        label: 'Scope',
+        render: (v) => SCOPE_LABELS[String(v)] || String(v ?? ''),
+      },
+    ],
+    [],
+  );
 
   const filteredDocs = documents.filter(doc => {
     if (scopeFilter !== 'all' && doc.scope !== scopeFilter) return false;
@@ -388,97 +432,82 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
               </button>
             </div>
           ) : (
-            <div className="space-y-1.5">
-              {filteredDocs.map(doc => {
-                const Icon = FILE_ICONS[doc.file_type] || File;
-                const isExpanded = expandedDoc === doc.id;
+            <DataTable
+              title="Documents"
+              columns={documentTableColumns}
+              rows={filteredDocs as unknown as Record<string, unknown>[]}
+              maxHeight={360}
+              exportFilename="documents_export"
+              hideExport
+              getRowId={(row) => String(row.id)}
+              expandedRowIds={expandedDocIds}
+              onRowClick={(row) => {
+                const id = String(row.id);
+                setExpandedDocIds((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(id)) next.delete(id);
+                  else next.add(id);
+                  return next;
+                });
+              }}
+              rowActions={(row) => (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleDelete(String(row.id));
+                  }}
+                  className="p-1 text-surface-600 hover:text-red-400 transition-colors"
+                  title="Delete"
+                  aria-label={`Delete ${String(row.original_name ?? '')}`}
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              )}
+              renderExpandedRow={(row) => {
+                const doc = row as unknown as DocItem;
                 return (
-                  <div
-                    key={doc.id}
-                    className="bg-surface-800/40 border border-surface-700/50 rounded-lg overflow-hidden"
-                  >
-                    <button
-                      type="button"
-                      className="flex items-center gap-2 p-2.5 w-full text-left cursor-pointer hover:bg-surface-700/30 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deloitte-green"
-                      onClick={() => setExpandedDoc(isExpanded ? null : doc.id)}
-                      aria-expanded={isExpanded}
-                    >
-                      <Icon className="w-4 h-4 text-surface-400 shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-xs text-white font-medium truncate">
-                          {doc.original_name}
-                        </div>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className={`text-xs px-1.5 py-0.5 rounded border ${STATUS_STYLES[doc.status] || ''}`}>
-                            {doc.status}
-                          </span>
-                          <span className="text-xs text-surface-600">
-                            {doc.chunk_count} chunks
-                          </span>
-                          <span className="text-xs text-surface-600">
-                            {formatBytes(doc.file_size_bytes)}
-                          </span>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={e => { e.stopPropagation(); handleDelete(doc.id); }}
-                        className="p-1 text-surface-600 hover:text-red-400 transition-colors"
-                        title="Delete"
-                        aria-label={`Delete ${doc.original_name}`}
+                  <div className="space-y-1.5">
+                    {doc.description && (
+                      <p className="text-xs text-surface-400 italic">{doc.description}</p>
+                    )}
+                    <div className="flex flex-wrap gap-1.5 text-xs text-surface-500">
+                      <span className="flex items-center gap-0.5">
+                        <Tag className="w-2.5 h-2.5" /> {doc.file_type.toUpperCase()}
+                      </span>
+                      <span className="flex items-center gap-0.5">
+                        <Clock className="w-2.5 h-2.5" /> {formatDate(doc.created_at)}
+                      </span>
+                      <span className="px-1.5 py-0.5 bg-surface-700/50 rounded">
+                        {SCOPE_LABELS[doc.scope] || doc.scope}
+                      </span>
+                    </div>
+                    {doc.source_url && (
+                      <a
+                        href={doc.source_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1 text-xs text-sky-400 hover:underline"
                       >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                      {isExpanded ? (
-                        <ChevronUp className="w-3 h-3 text-surface-500" />
-                      ) : (
-                        <ChevronDown className="w-3 h-3 text-surface-500" />
-                      )}
-                    </button>
-                    {isExpanded && (
-                      <div className="px-3 pb-2.5 border-t border-surface-700/30 pt-2 space-y-1.5">
-                        {doc.description && (
-                          <p className="text-xs text-surface-400 italic">{doc.description}</p>
-                        )}
-                        <div className="flex flex-wrap gap-1.5 text-xs text-surface-500">
-                          <span className="flex items-center gap-0.5">
-                            <Tag className="w-2.5 h-2.5" /> {doc.file_type.toUpperCase()}
-                          </span>
-                          <span className="flex items-center gap-0.5">
-                            <Clock className="w-2.5 h-2.5" /> {formatDate(doc.created_at)}
-                          </span>
-                          <span className="px-1.5 py-0.5 bg-surface-700/50 rounded">
-                            {SCOPE_LABELS[doc.scope] || doc.scope}
-                          </span>
-                        </div>
-                        {doc.source_url && (
-                          <a
-                            href={doc.source_url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="flex items-center gap-1 text-xs text-sky-400 hover:underline"
+                        <ExternalLink className="w-2.5 h-2.5" /> {doc.source_url}
+                      </a>
+                    )}
+                    {doc.tags && doc.tags.length > 0 && (
+                      <div className="flex gap-1">
+                        {doc.tags.map((tag, i) => (
+                          <span
+                            key={i}
+                            className="text-xs px-1.5 py-0.5 bg-deloitte-green/10 text-deloitte-green rounded"
                           >
-                            <ExternalLink className="w-2.5 h-2.5" /> {doc.source_url}
-                          </a>
-                        )}
-                        {doc.tags && doc.tags.length > 0 && (
-                          <div className="flex gap-1">
-                            {doc.tags.map((tag, i) => (
-                              <span
-                                key={i}
-                                className="text-xs px-1.5 py-0.5 bg-deloitte-green/10 text-deloitte-green rounded"
-                              >
-                                {tag}
-                              </span>
-                            ))}
-                          </div>
-                        )}
+                            {tag}
+                          </span>
+                        ))}
                       </div>
                     )}
                   </div>
                 );
-              })}
-            </div>
+              }}
+            />
           )}
         </div>
       )}

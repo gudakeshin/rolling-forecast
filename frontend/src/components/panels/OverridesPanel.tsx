@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import { ArrowDown, ArrowUp, RotateCcw, ExternalLink, Loader2, Plus, Download } from 'lucide-react';
-import { downloadCsv } from '../ui/DataTable';
+import { useEffect, useMemo, useState } from 'react';
+import { ArrowDown, ArrowUp, RotateCcw, ExternalLink, Loader2, Plus } from 'lucide-react';
+import { DataTable, type DataTableColumn } from '../ui/DataTable';
 import { apiGet, apiPost } from '../../api/client';
 import { usePanelStore } from '../../store/panelStore';
 import { useCan } from '../../store/authStore';
@@ -123,23 +123,51 @@ export function OverridesPanel({ data, onRefresh }: Props) {
   const activeCount = items.filter((i: any) => i.status === 'active').length;
   const revertedCount = items.filter((i: any) => i.status === 'reverted').length;
 
-  const overrideColumns = [
-    { key: 'line_item_name', label: 'Line Item' },
-    { key: 'period', label: 'Period' },
-    { key: 'original_value', label: 'Original Value' },
-    { key: 'override_value', label: 'Override Value' },
-    { key: 'change_pct', label: 'Change %' },
-    { key: 'status', label: 'Status' },
-    { key: 'reason', label: 'Reason' },
-  ];
-
-  const handleExport = () => {
-    downloadCsv(
-      `overrides_${version?.name || 'export'}`,
-      overrideColumns,
-      items as Record<string, unknown>[],
-    );
-  };
+  const overrideColumns = useMemo<DataTableColumn<Record<string, unknown>>[]>(
+    () => [
+      { key: 'line_item_name', label: 'Line Item' },
+      { key: 'period', label: 'Period' },
+      {
+        key: 'original_value',
+        label: 'Original',
+        align: 'right',
+        render: (v) => `$${Number(v || 0).toLocaleString()}`,
+      },
+      {
+        key: 'override_value',
+        label: 'Override',
+        align: 'right',
+        render: (v) => `$${Number(v || 0).toLocaleString()}`,
+      },
+      {
+        key: 'change_pct',
+        label: 'Change',
+        align: 'right',
+        render: (v) => <ChangeIndicator pct={Number(v) || 0} />,
+      },
+      {
+        key: 'status',
+        label: 'Status',
+        render: (v) => (
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full ${
+              v === 'active'
+                ? 'bg-deloitte-green/15 text-deloitte-green'
+                : 'bg-surface-600/30 text-surface-400'
+            }`}
+          >
+            {String(v ?? '')}
+          </span>
+        ),
+      },
+      {
+        key: 'reason',
+        label: 'Reason',
+        render: (v) => <span className="text-surface-500 italic truncate max-w-[180px] block">{String(v ?? '')}</span>,
+      },
+    ],
+    [],
+  );
 
   return (
     <div className="space-y-4">
@@ -154,17 +182,6 @@ export function OverridesPanel({ data, onRefresh }: Props) {
           />
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
-          {items.length > 0 && (
-            <button
-              type="button"
-              onClick={handleExport}
-              className="inline-flex items-center gap-1.5 text-xs text-surface-300 hover:text-white px-2 py-1 rounded-md border border-surface-600 hover:border-deloitte-green/40"
-              title="Export overrides CSV"
-            >
-              <Download className="w-3.5 h-3.5" />
-              CSV
-            </button>
-          )}
           {canOverride && (
             <button
               type="button"
@@ -244,78 +261,53 @@ export function OverridesPanel({ data, onRefresh }: Props) {
         <p className="text-surface-500 text-sm text-center py-8">No overrides applied</p>
       )}
 
-      <div className="space-y-2">
-        {items.map((item: any, i: number) => (
-          <div
-            key={item.id || i}
-            className={`p-3 rounded-lg border ${
-              item.status === 'active'
-                ? 'bg-surface-800/50 border-surface-700'
-                : 'bg-surface-800/20 border-surface-700/30 opacity-60'
-            }`}
-          >
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-sm font-medium text-white">{item.line_item_name}</span>
-              <span
-                className={`text-xs px-2 py-0.5 rounded-full ${
-                  item.status === 'active'
-                    ? 'bg-deloitte-green/15 text-deloitte-green'
-                    : 'bg-surface-600/30 text-surface-400'
-                }`}
-              >
-                {item.status}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-3 text-xs text-surface-400">
-              <span className="font-mono">{item.period}</span>
-              <span className="text-surface-500">
-                ${item.original_value?.toLocaleString()} →
-              </span>
-              <span className="font-medium text-white">
-                ${item.override_value?.toLocaleString()}
-              </span>
-              <ChangeIndicator pct={item.change_pct} />
-            </div>
-
-            <p className="text-xs text-surface-500 mt-1 italic">{item.reason}</p>
-
-            {item.downstream_recalc > 0 && (
-              <div className="text-xs text-accent-500 mt-1">
-                {item.downstream_recalc} downstream items recalculated
-              </div>
-            )}
-
-            <div className="mt-2 flex items-center gap-2">
+      {items.length > 0 && (
+        <DataTable
+          title="Overrides"
+          columns={overrideColumns}
+          rows={items as Record<string, unknown>[]}
+          maxHeight={420}
+          exportFilename={`overrides_${version?.name || 'export'}`}
+          getRowId={(row) => String(row.id ?? `${row.line_item_id}-${row.period}`)}
+          getRowClassName={(row) => (row.status !== 'active' ? 'opacity-60' : '')}
+          rowActions={(item) => (
+            <>
               {version?.id && item.line_item_id != null && (
                 <button
                   type="button"
-                  onClick={() =>
+                  onClick={(e) => {
+                    e.stopPropagation();
                     openPanel('review_dashboard', {
                       version_id: version.id,
-                      focus_line_item_id: item.line_item_id,
-                    })
-                  }
+                      focus_line_item_id: item.line_item_id as number,
+                    });
+                  }}
                   className="inline-flex items-center gap-1 text-xs text-surface-400 hover:text-deloitte-green"
                 >
-                  <ExternalLink className="w-3 h-3" /> Open item
+                  <ExternalLink className="w-3 h-3" /> Open
                 </button>
               )}
               {item.status === 'active' && canOverride && (
                 confirmId === item.id ? (
-                  <div className="flex items-center gap-1.5 ml-auto">
+                  <div className="flex items-center gap-1.5">
                     <span className="text-xs text-amber-400">Revert?</span>
                     <button
                       type="button"
                       disabled={busyId === item.id}
-                      onClick={() => handleRevert(item.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleRevert(String(item.id));
+                      }}
                       className="px-2 py-0.5 bg-red-500/20 text-red-400 rounded text-xs disabled:opacity-50"
                     >
                       {busyId === item.id ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Confirm'}
                     </button>
                     <button
                       type="button"
-                      onClick={() => setConfirmId(null)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setConfirmId(null);
+                      }}
                       className="px-2 py-0.5 text-surface-500 text-xs"
                     >
                       Cancel
@@ -324,17 +316,20 @@ export function OverridesPanel({ data, onRefresh }: Props) {
                 ) : (
                   <button
                     type="button"
-                    onClick={() => setConfirmId(item.id)}
-                    className="ml-auto inline-flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setConfirmId(String(item.id));
+                    }}
+                    className="inline-flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300"
                   >
                     <RotateCcw className="w-3 h-3" /> Revert
                   </button>
                 )
               )}
-            </div>
-          </div>
-        ))}
-      </div>
+            </>
+          )}
+        />
+      )}
     </div>
   );
 }

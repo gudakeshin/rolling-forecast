@@ -92,10 +92,10 @@ async def enqueue_generate_baseline(
 
     record["status"] = "sync_required"
     record["backend"] = "local"
-    if settings.require_async_jobs:
+    if settings.async_jobs_required:
         record["message"] = (
-            "Async job queue unavailable — Redis/arq is required "
-            "(REQUIRE_ASYNC_JOBS=true). Start Redis and the arq worker."
+            "Async job queue unavailable — Redis/arq is required in production "
+            "(or when REQUIRE_ASYNC_JOBS=true). Start Redis and the arq worker."
         )
     else:
         record["message"] = (

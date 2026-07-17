@@ -47,7 +47,8 @@ class Settings(BaseSettings):
 
     # Redis (locks / rate-limit / OIDC store / arq job queue)
     redis_url: str = ""
-    # When true, generate_baseline must enqueue via arq; missing Redis → 503 (no silent sync)
+    # When true, generate_baseline must enqueue via arq; missing Redis → clear failure (no silent sync).
+    # Also forced on when APP_ENV=production via `async_jobs_required` (compose may still set the env).
     require_async_jobs: bool = False
 
     # Warehouse / ERP (legacy env fallbacks — prefer connection registry)
@@ -106,6 +107,11 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.app_env.lower() == "production"
+
+    @property
+    def async_jobs_required(self) -> bool:
+        """True when Redis/arq is mandatory (explicit flag or production)."""
+        return self.require_async_jobs or self.is_production
 
     @property
     def cors_origin_list(self) -> list[str]:

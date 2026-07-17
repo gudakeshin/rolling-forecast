@@ -185,17 +185,26 @@ export function ExecutiveLandingPage() {
             {data.kpis?.category_totals && data.kpis.category_totals.length > 0 && (
               <section>
                 <h2 className="text-sm font-semibold text-surface-300 mb-3">Category totals</h2>
-                <div className="space-y-2">
-                  {data.kpis.category_totals.map((row) => (
-                    <div
-                      key={row.category}
-                      className="flex justify-between items-center bg-surface-900/80 border border-surface-700/40 rounded-lg px-4 py-2.5"
-                    >
-                      <span className="text-sm text-surface-300">{row.category}</span>
-                      <span className="font-semibold">{formatCurrency(row.total)}</span>
-                    </div>
-                  ))}
-                </div>
+                <DataTable
+                  title="Category totals"
+                  maxHeight={280}
+                  exportFilename="category_totals"
+                  columns={
+                    [
+                      { key: 'category', label: 'Category' },
+                      {
+                        key: 'total',
+                        label: 'Total',
+                        align: 'right',
+                        render: (v) => (
+                          <span className="font-semibold">{formatCurrency(Number(v) || 0)}</span>
+                        ),
+                      },
+                    ] as DataTableColumn<Record<string, unknown>>[]
+                  }
+                  rows={data.kpis.category_totals as unknown as Record<string, unknown>[]}
+                  getRowId={(row) => String(row.category)}
+                />
               </section>
             )}
 

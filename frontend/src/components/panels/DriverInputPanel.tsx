@@ -1,12 +1,11 @@
 import { useState, useCallback, useMemo } from 'react';
 import {
-  Send, Clock, CheckCircle, AlertTriangle,
-  ChevronDown, ChevronUp, Plus, RefreshCw,
-  Sparkles, TrendingUp, Filter, Download,
+  Send, CheckCircle, AlertTriangle,
+  RefreshCw, Sparkles, TrendingUp, Filter, Download,
 } from 'lucide-react';
 import { apiPost } from '../../api/client';
 import { Tabs } from '../ui/Tabs';
-import { downloadCsv } from '../ui/DataTable';
+import { DataTable, downloadCsv, type DataTableColumn } from '../ui/DataTable';
 import { usePanelStore } from '../../store/panelStore';
 
 interface LineItemInput {
@@ -41,13 +40,42 @@ function formatCurrency(val: number): string {
 }
 
 export function DriverInputPanel({ data }: Props) {
-  const { version, inputs, form_configs, available_line_items } = data.data;
+  const { version, inputs, available_line_items } = data.data;
   const [activeTab, setActiveTab] = useState<'submit' | 'history'>('submit');
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [useModelDefaults, setUseModelDefaults] = useState(false);
+  const [expandedHistoryIds, setExpandedHistoryIds] = useState<Set<string>>(new Set());
+
+  const historyTableColumns = useMemo<DataTableColumn<Record<string, unknown>>[]>(
+    () => [
+      { key: 'business_unit', label: 'Business Unit' },
+      {
+        key: 'status',
+        label: 'Status',
+        render: (_v, row) => (
+          <StatusBadge status={String(row.status ?? '')} isLate={Boolean(row.is_late)} />
+        ),
+      },
+      {
+        key: 'submitted_at',
+        label: 'Submitted',
+        render: (v) => (v ? new Date(String(v)).toLocaleDateString() : 'N/A'),
+      },
+      {
+        key: 'review_comments',
+        label: 'Comments',
+        render: (v) => (
+          <span className="text-surface-400 italic truncate max-w-[180px] block">
+            {String(v ?? '')}
+          </span>
+        ),
+      },
+    ],
+    [],
+  );
 
   // Get unique categories
   const categories = useMemo(() => {
@@ -317,46 +345,52 @@ export function DriverInputPanel({ data }: Props) {
       )}
 
       {activeTab === 'history' && (
-        <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl overflow-hidden">
-          <div className="max-h-[400px] overflow-y-auto">
-            {inputs.length > 0 ? (
-              <div className="space-y-2 p-3">
-                {inputs.map((inp: any, i: number) => (
-                  <div key={i} className="bg-surface-800/40 border border-surface-700/30 rounded-lg p-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-medium text-white">{inp.business_unit}</span>
-                      <StatusBadge status={inp.status} isLate={inp.is_late} />
-                    </div>
-                    <div className="flex items-center justify-between text-xs text-surface-500">
-                      <span className="flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        {inp.submitted_at ? new Date(inp.submitted_at).toLocaleDateString() : 'N/A'}
+        inputs.length > 0 ? (
+          <DataTable
+            title="Submission History"
+            columns={historyTableColumns}
+            rows={inputs as Record<string, unknown>[]}
+            maxHeight={400}
+            exportFilename={`drivers_history_${version?.name || 'export'}`}
+            getRowId={(row) => String(row.id ?? `${row.business_unit}-${row.submitted_at}`)}
+            renderExpandedRow={(inp) => {
+              const values = inp.values;
+              if (!values || typeof values !== 'object') {
+                return <p className="text-xs text-surface-500">No field values</p>;
+              }
+              const entries = Object.entries(values as Record<string, unknown>);
+              return (
+                <div className="space-y-1">
+                  {entries.slice(0, 8).map(([key, val]) => (
+                    <div key={key} className="flex justify-between text-xs py-0.5">
+                      <span className="text-surface-400">{key}</span>
+                      <span className="text-surface-300 font-mono">
+                        {typeof val === 'object' && val != null
+                          ? String((val as { value?: unknown }).value ?? JSON.stringify(val))
+                          : String(val)}
                       </span>
-                      {inp.review_comments && (
-                        <span className="text-surface-400 italic max-w-[150px] truncate">{inp.review_comments}</span>
-                      )}
                     </div>
-                    {inp.values && typeof inp.values === 'object' && (
-                      <div className="mt-2 pt-2 border-t border-surface-700/30">
-                        {Object.entries(inp.values).slice(0, 3).map(([key, val]: [string, any]) => (
-                          <div key={key} className="flex justify-between text-xs py-0.5">
-                            <span className="text-surface-400">{key}</span>
-                            <span className="text-surface-300 font-mono">{typeof val === 'object' ? val?.value || JSON.stringify(val) : val}</span>
-                          </div>
-                        ))}
-                        {Object.keys(inp.values).length > 3 && (
-                          <p className="text-xs text-surface-500 mt-1">+{Object.keys(inp.values).length - 3} more fields</p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-surface-500 text-xs text-center py-8">No submissions yet</p>
-            )}
-          </div>
-        </div>
+                  ))}
+                  {entries.length > 8 && (
+                    <p className="text-xs text-surface-500 mt-1">+{entries.length - 8} more fields</p>
+                  )}
+                </div>
+              );
+            }}
+            expandedRowIds={expandedHistoryIds}
+            onRowClick={(row) => {
+              const id = String(row.id ?? `${row.business_unit}-${row.submitted_at}`);
+              setExpandedHistoryIds((prev) => {
+                const next = new Set(prev);
+                if (next.has(id)) next.delete(id);
+                else next.add(id);
+                return next;
+              });
+            }}
+          />
+        ) : (
+          <p className="text-surface-500 text-xs text-center py-8">No submissions yet</p>
+        )
       )}
     </div>
   );

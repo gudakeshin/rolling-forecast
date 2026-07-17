@@ -284,9 +284,17 @@ async def get_overrides_panel(
         .all()
     )
 
+    li_ids = {o.line_item_id for o in overrides}
+    line_items_by_id = {
+        li.id: li
+        for li in (
+            db.query(LineItem).filter(LineItem.id.in_(li_ids)).all() if li_ids else []
+        )
+    }
+
     items = []
     for o in overrides:
-        li = db.query(LineItem).filter(LineItem.id == o.line_item_id).first()
+        li = line_items_by_id.get(o.line_item_id)
         change_pct = ((o.override_value - o.original_model_value) / abs(o.original_model_value) * 100) if o.original_model_value != 0 else 0
         items.append({
             "id": o.id,
@@ -379,10 +387,13 @@ async def get_comparison_panel(
         variance = val_a - val_b
         pct = (variance / abs(val_b) * 100) if val_b != 0 else 0
 
+        ref = ra or rb
+        if ref is None:
+            continue
         rows.append({
             "line_item_id": lid,
-            "line_item_name": (ra or rb).line_name,
-            "category": (ra or rb).category,
+            "line_item_name": ref.line_name,
+            "category": ref.category,
             "value_a": round(val_a, 2),
             "value_b": round(val_b, 2),
             "variance": round(variance, 2),

@@ -28,7 +28,8 @@ class TestEnsembleMapeKey:
         values = pd.Series(np.linspace(100, 200, 24))
         dates = pd.DatetimeIndex(pd.date_range("2024-01", periods=24, freq="MS"))
         registry = get_model_registry()
-        out = registry.fit_and_predict("ets", values, dates, horizon=3)
+        # Use linear (no optional statsmodels dep) — same fit_metrics contract as ETS/ARIMA
+        out = registry.fit_and_predict("linear", values, dates, horizon=3)
         # Engines write in_sample_mape; the old "mape" key must not be the sole source
         assert "in_sample_mape" in out.fit_metrics
         assert out.fit_metrics.get("mape") is None or "in_sample_mape" in out.fit_metrics

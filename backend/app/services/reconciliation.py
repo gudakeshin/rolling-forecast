@@ -232,7 +232,8 @@ def build_summing_matrix(
             else:
                 # multiply / custom — skip in linear S
                 continue
-            vec = vec + sign * w * expand(pred_id)
+            updated = vec + sign * w * expand(pred_id)
+            vec = updated.reshape(n_leaves)  # keep 1-d shape for mypy
         memo[node_id] = vec
         return vec
 
