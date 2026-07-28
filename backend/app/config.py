@@ -77,8 +77,31 @@ class Settings(BaseSettings):
     confidence_threshold_low: int = 50
     confidence_threshold_medium: int = 70
     max_forecast_generation_minutes: int = 30
+    # arq worker: hard job timeout + progress stall watchdog
+    job_timeout_seconds: int = 3600
+    job_progress_stall_minutes: int = 10
+    # Model selection rollout (independent switches)
+    # mape = legacy MAPE-only; multi = MASE → pinball → complexity_rank
+    selection_metric: str = "multi"
+    enable_benchmark_models: bool = True
+    # Per-line-item wall-clock budget for model comparison (seconds)
+    selection_wall_clock_seconds: float = 90.0
+    # Trailing-actuals share of CoA total to treat a line as material (expensive models)
+    materiality_share: float = 0.005
+    # Max |Q·P − L| / |L| to admit identity Q×P decomposition (Phase 4/6b)
+    qp_coherence_tolerance: float = 0.02
+    # Phase 8: exogenous regressors (driver-based forecasting)
+    enable_driver_forecasting: bool = False
+    # Minimum effective training points per regressor for exog admit gate.
+    exog_min_points_per_regressor: int = 10
     # Soft per-conversation LLM token budget (approx chars/4). Soft-warn then hard-stop.
     conversation_token_budget: int = 200_000
+    # M1 core memory caps (chars)
+    core_memory_char_limit_persona: int = 1000
+    core_memory_char_limit_organization: int = 4000
+    core_memory_char_limit_user: int = 1500
+    core_memory_char_limit_business_unit: int = 2500
+    core_memory_prompt_char_budget: int = 6000
     min_history_months: int = 12
     ideal_history_months: int = 24
     panel_page_size: int = 100

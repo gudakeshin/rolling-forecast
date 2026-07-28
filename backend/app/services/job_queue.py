@@ -120,6 +120,13 @@ def get_job(job_id: str) -> dict[str, Any] | None:
 
 def update_job(job_id: str, **fields: Any) -> None:
     record = get_job(job_id) or {"job_id": job_id}
+    prev_progress = record.get("progress")
+    prev_step = record.get("step")
     record.update(fields)
-    record["updated_at"] = _now()
+    now = _now()
+    record["updated_at"] = now
+    # Watchdog key: only advance when progress or step actually changes
+    if "progress" in fields or "step" in fields:
+        if fields.get("progress") != prev_progress or fields.get("step") != prev_step:
+            record["progress_updated_at"] = now
     _save(record)

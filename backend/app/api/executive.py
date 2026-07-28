@@ -138,6 +138,8 @@ async def budget_bridge(
     materiality_pct: float = Query(5.0, ge=0),
     page: int = Query(1, ge=1),
     page_size: int | None = None,
+    attribute: bool = Query(False, description="Attach Phase 6a variance attribution"),
+    convention: str = Query("volume_first"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -234,8 +236,14 @@ async def budget_bridge(
         ):
             ytd_totals[int(lid)] = float(total or 0)
 
+    from app.services.variance_attribution import BridgeAttributionContext, attribute_bridge_row
+
+    attr_ctx = BridgeAttributionContext(db, version.id) if attribute else None
+    page_start = (page - 1) * page_size
+    page_end = page_start + page_size
+
     rows_out = []
-    for li in line_items:
+    for idx, li in enumerate(line_items):
         fc_total = fc_totals.get(li.id, 0.0)
         budget_total = budget_totals.get(li.id, 0.0)
         prior_total = prior_totals.get(li.id, 0.0)
@@ -246,7 +254,7 @@ async def budget_bridge(
         var_budget_pct = (var_budget / abs(budget_total) * 100) if budget_total else None
         material = abs(var_budget_pct or 0) >= materiality_pct if budget_total else False
 
-        rows_out.append({
+        row = {
             "line_item_id": li.id,
             "line_item": li.name,
             "category": li.category,
@@ -258,20 +266,57 @@ async def budget_bridge(
             "variance_vs_budget": var_budget,
             "variance_vs_budget_pct": var_budget_pct,
             "material": material,
-        })
+        }
+        if attribute and (material or (page_start <= idx < page_end)):
+            row["attribution"] = attribute_bridge_row(
+                db,
+                line_item_id=li.id,
+                version_id=version.id,
+                variance_vs_prior=var_prior if abs(var_prior) >= abs(var_budget) else var_budget,
+                convention=convention,
+                ctx=attr_ctx,
+            )
+        rows_out.append(row)
 
     total = len(rows_out)
     start = (page - 1) * page_size
     page_rows = rows_out[start : start + page_size]
+
+    # Aggregate waterfall for material rows when attribute=true
+    waterfall = None
+    if attribute:
+        material_rows = [r for r in rows_out if r.get("material") or r.get("attribution")]
+        buckets_sum: dict[str, float] = defaultdict(float)
+        for r in material_rows:
+            attr = r.get("attribution") or {}
+            for k, v in (attr.get("buckets") or {}).items():
+                buckets_sum[k] += float(v or 0)
+        if buckets_sum:
+            from app.services.variance_attribution import _bridge_waterfall
+
+            start_val = sum(r.get("prior_forecast", 0) for r in material_rows)
+            end_val = sum(r.get("current_forecast", 0) for r in material_rows)
+            waterfall = _bridge_waterfall(
+                title="Variance bridge (attributed)",
+                start_label="Prior",
+                start_value=start_val,
+                buckets=list(buckets_sum.items()),
+                end_label="Current",
+                end_value=end_val,
+            )
+
     return {
         "version_id": version.id,
         "budget_version_id": budget.id if budget else None,
         "prior_version_id": prior.id if prior else None,
         "materiality_pct": materiality_pct,
+        "attribute": attribute,
+        "convention": convention if attribute else None,
         "total": total,
         "page": page,
         "page_size": page_size,
         "rows": page_rows,
+        "waterfall": waterfall,
     }
 
 
@@ -279,11 +324,21 @@ async def budget_bridge(
 async def driver_drilldown(
     version_id: str,
     line_item_id: int | None = None,
+    period_from: str | None = None,
+    period_to: str | None = None,
+    basis: str = Query("auto"),
+    convention: str = Query("volume_first"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Volume / price / mix / FX style driver breakdown from overrides + driver inputs."""
+    """Honest variance attribution (Phase 6a) — no keyword bucketing.
+
+    Returns ``attribute_variance`` results per line. Override free-text is
+    surfaced under ``unattributed`` with ``explained_pct: 0``. Keyword
+    volume/price/mix heuristics have been retired.
+    """
     from app.models.driver_input import DriverInput
+    from app.services.variance_attribution import attribute_variance
 
     version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
     if not version:
@@ -300,47 +355,41 @@ async def driver_drilldown(
     overrides = overrides.all()
 
     drivers = db.query(DriverInput).filter(DriverInput.version_id == version_id).all()
-    # Driver forms are BU-tagged; restrict to caller's BU when scoped
     if not getattr(current_user.role, "can_view_all_bus", False) and not (
         current_user.role and current_user.role.can_admin
     ):
         bu = current_user.business_unit
         drivers = [d for d in drivers if not d.business_unit or d.business_unit == bu]
 
-    override_li_ids = list({o.line_item_id for o in overrides})
+    target_ids = sorted({o.line_item_id for o in overrides})
+    if line_item_id and line_item_id not in target_ids:
+        target_ids = [line_item_id]
+    if not target_ids and line_item_id:
+        target_ids = [line_item_id]
+
     li_map = {
         li.id: li
-        for li in db.query(LineItem).filter(LineItem.id.in_(override_li_ids)).all()
-    } if override_li_ids else {}
+        for li in db.query(LineItem).filter(LineItem.id.in_(target_ids)).all()
+    } if target_ids else {}
 
-    breakdown = []
-    for o in overrides:
-        li = li_map.get(o.line_item_id)
-        if not user_can_view_line_item(current_user, li):
+    attributions = []
+    for lid in target_ids:
+        li = li_map.get(lid)
+        if li is not None and not user_can_view_line_item(current_user, li):
             continue
-        delta = o.override_value - o.original_model_value
-        reason_l = (o.reason or "").lower()
-        # Heuristic attribution from reason text
-        attrs = {"volume": 0.0, "price": 0.0, "mix": 0.0, "fx": 0.0, "other": 0.0}
-        if "volume" in reason_l or "units" in reason_l:
-            attrs["volume"] = delta
-        elif "price" in reason_l or "asp" in reason_l or "rate" in reason_l:
-            attrs["price"] = delta
-        elif "mix" in reason_l:
-            attrs["mix"] = delta
-        elif "fx" in reason_l or "currency" in reason_l or "forex" in reason_l:
-            attrs["fx"] = delta
-        else:
-            attrs["other"] = delta
-        breakdown.append({
-            "line_item_id": o.line_item_id,
-            "line_item": li.name if li else str(o.line_item_id),
-            "period": o.period,
-            "model_value": o.original_model_value,
-            "override_value": o.override_value,
-            "delta": delta,
-            "reason": o.reason,
-            "drivers": attrs,
+        attr = attribute_variance(
+            db,
+            line_item_id=lid,
+            period_from=period_from,
+            period_to=period_to,
+            basis=basis,
+            convention=convention,
+            version_id=version_id,
+        )
+        attributions.append({
+            "line_item_id": lid,
+            "line_item": li.name if li else str(lid),
+            **attr,
         })
 
     driver_fields = []
@@ -355,8 +404,14 @@ async def driver_drilldown(
 
     return {
         "version_id": version_id,
-        "override_breakdown": breakdown,
+        "attributions": attributions,
+        # Backward-compatible empty shape — keyword buckets retired
+        "override_breakdown": [],
         "submitted_driver_fields": driver_fields,
+        "note": (
+            "Keyword volume/price/mix bucketing has been retired. "
+            "See attributions[].method (fx_only | override_reason_text)."
+        ),
     }
 
 

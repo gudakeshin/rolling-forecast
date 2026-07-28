@@ -51,7 +51,7 @@ class TestModelRegistry:
     """Test the model registry and auto-selection."""
 
     def test_default_models_registered(self):
-        """All default models should be registered."""
+        """Core models should be registered; benchmarks optional via settings."""
         registry = ModelRegistry()
         models = registry.list_models()
         assert "linear" in models
@@ -96,7 +96,9 @@ class TestModelRegistry:
 
         model_name, mape, _selection = registry.auto_select(values, dates)
         # Should not select arima (needs 18 points)
-        assert model_name in ["linear", "ets", "prophet"]
+        assert model_name is not None
+        assert model_name not in ["arima"]
+        assert model_name in registry.list_models()
 
     def test_tie_breaking_prefers_simpler(self):
         """EC8: When models tie, prefer the simpler one."""

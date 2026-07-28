@@ -6,6 +6,7 @@ from app.models.line_item import LineItem, LineItemDependency
 from app.models.forecast import ForecastVersion, ForecastLineResult, ModelMetadata
 from app.models.override import Override
 from app.models.driver_input import DriverInput, DriverFormConfig
+from app.models.driver import Driver, DriverValue, DriverLink, DriverDiscoveryRun
 from app.models.conversation import Conversation, Message
 from app.models.document import Document, DocumentChunk
 from app.models.audit import AuditEvent
@@ -14,6 +15,7 @@ from app.models.approval import ApprovalWorkflow, ApprovalStep
 from app.models.integration import IntegrationConnection
 from app.models.fx import FxRate, SystemSetting, ForecastAccuracyRecord
 from app.models.auth_tokens import RefreshToken, TokenDenylist
+from app.models.memory import MemoryBlock
 
 __all__ = [
     "User",
@@ -28,6 +30,10 @@ __all__ = [
     "Override",
     "DriverInput",
     "DriverFormConfig",
+    "Driver",
+    "DriverValue",
+    "DriverLink",
+    "DriverDiscoveryRun",
     "Conversation",
     "Message",
     "Document",
@@ -43,4 +49,5 @@ __all__ = [
     "ForecastAccuracyRecord",
     "RefreshToken",
     "TokenDenylist",
+    "MemoryBlock",
 ]

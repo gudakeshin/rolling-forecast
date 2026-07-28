@@ -1,0 +1,398 @@
+"""Causal driver CRUD API — separate from BU assumption driver forms."""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.models.driver import Driver, DriverLink
+from app.models.line_item import LineItem
+from app.models.user import User
+from app.services.audit import record_audit
+from app.services.driver_series import (
+    assert_link,
+    create_driver,
+    materialize_driver_series,
+    promote_link,
+    upsert_driver_values,
+    validate_aggregation,
+    validate_driver_type,
+)
+from app.services.permissions import (
+    driver_scope_filter,
+    require_permission,
+    scoped_drivers,
+    user_can_view_driver,
+    user_can_view_line_item,
+    user_has_permission,
+)
+
+router = APIRouter(prefix="/drivers", tags=["drivers"])
+
+
+class DriverCreate(BaseModel):
+    key: str = Field(..., min_length=1, max_length=100)
+    name: str = Field(..., min_length=1, max_length=255)
+    driver_type: str = "other"
+    unit: str | None = None
+    currency: str | None = None
+    aggregation: str = "sum"
+    business_unit: str | None = None
+    geography: str | None = None
+    product_line: str | None = None
+    description: str | None = None
+    source: str | None = "manual"
+
+
+class DriverUpdate(BaseModel):
+    name: str | None = None
+    driver_type: str | None = None
+    unit: str | None = None
+    currency: str | None = None
+    aggregation: str | None = None
+    business_unit: str | None = None
+    geography: str | None = None
+    product_line: str | None = None
+    description: str | None = None
+
+
+class DriverValueRow(BaseModel):
+    period: str
+    value: float
+    p10: float | None = None
+    p90: float | None = None
+    currency: str | None = None
+
+
+class DriverValuesIngest(BaseModel):
+    rows: list[DriverValueRow]
+    value_type: str = "actual"
+    version_id: str | None = None
+
+
+class DriverLinkCreate(BaseModel):
+    driver_id: int
+    line_item_id: int
+    relation: str = "level"
+    transform: str = "level"
+    lag: int = 0
+    coefficient: float | None = None
+    composition_group: str | None = None
+    status: str = "candidate"
+    notes: str | None = None
+
+
+def _driver_dict(d: Driver, freshness: dict | None = None) -> dict:
+    out = {
+        "id": d.id,
+        "key": d.key,
+        "name": d.name,
+        "driver_type": d.driver_type,
+        "unit": d.unit,
+        "currency": d.currency,
+        "aggregation": d.aggregation,
+        "business_unit": d.business_unit,
+        "geography": d.geography,
+        "product_line": d.product_line,
+        "description": d.description,
+        "source": d.source,
+        "created_at": d.created_at.isoformat() if d.created_at else None,
+        "updated_at": d.updated_at.isoformat() if d.updated_at else None,
+    }
+    if freshness is not None:
+        out["freshness"] = freshness
+    return out
+
+
+
+def _link_dict(link: DriverLink) -> dict:
+    return {
+        "id": link.id,
+        "driver_id": link.driver_id,
+        "line_item_id": link.line_item_id,
+        "link_type": link.link_type,
+        "relation": link.relation,
+        "lag": link.lag,
+        "coefficient": link.coefficient,
+        "coefficient_se": link.coefficient_se,
+        "elasticity": link.elasticity,
+        "t_stat": link.t_stat,
+        "p_value": link.p_value,
+        "p_value_adj": link.p_value_adj,
+        "r2": link.r2,
+        "n_obs": link.n_obs,
+        "transform": link.transform,
+        "fit_method": link.fit_method,
+        "hac_lags": link.hac_lags,
+        "diagnostics": link.diagnostics,
+        "discovery_run_id": link.discovery_run_id,
+        "status": link.status,
+        "composition_group": link.composition_group,
+        "notes": link.notes,
+        "created_by": link.created_by,
+        "created_at": link.created_at.isoformat() if link.created_at else None,
+        "updated_at": link.updated_at.isoformat() if link.updated_at else None,
+    }
+
+
+def _get_scoped_driver(db: Session, user: User, driver_id: int) -> Driver:
+    d = db.query(Driver).filter(Driver.id == driver_id).first()
+    if not d or not user_can_view_driver(user, d):
+        raise HTTPException(404, "Driver not found")
+    return d
+
+
+@router.get("")
+async def list_drivers(
+    driver_type: str | None = None,
+    include_freshness: bool = Query(False),
+    current_user: User = Depends(require_permission("manage_drivers")),
+    db: Session = Depends(get_db),
+):
+    from app.services.driver_ingest import driver_freshness
+
+    filters = []
+    if driver_type:
+        filters.append(Driver.driver_type == driver_type)
+    q = scoped_drivers(db, current_user, *filters).order_by(Driver.key)
+    out = []
+    for d in q.all():
+        fresh = driver_freshness(db, d.id) if include_freshness else None
+        out.append(_driver_dict(d, freshness=fresh))
+    return out
+
+
+@router.get("/{driver_id}/freshness")
+async def get_driver_freshness(
+    driver_id: int,
+    current_user: User = Depends(require_permission("manage_drivers")),
+    db: Session = Depends(get_db),
+):
+    from app.services.driver_ingest import driver_freshness
+
+    _get_scoped_driver(db, current_user, driver_id)
+    return driver_freshness(db, driver_id)
+
+
+@router.post("", status_code=201)
+async def create_driver_endpoint(
+    body: DriverCreate,
+    current_user: User = Depends(require_permission("manage_drivers")),
+    db: Session = Depends(get_db),
+):
+    existing = db.query(Driver).filter(Driver.key == body.key.strip()).first()
+    if existing:
+        raise HTTPException(409, f"Driver key '{body.key}' already exists")
+    bu = body.business_unit
+    if not user_has_permission(current_user, "admin") and current_user.business_unit:
+        if bu and bu != current_user.business_unit:
+            raise HTTPException(403, "Cannot create driver for another business unit")
+        if bu is None:
+            bu = current_user.business_unit
+    try:
+        driver = create_driver(
+            db,
+            key=body.key,
+            name=body.name,
+            driver_type=body.driver_type,
+            unit=body.unit,
+            currency=body.currency,
+            aggregation=body.aggregation,
+            business_unit=bu,
+            geography=body.geography,
+            product_line=body.product_line,
+            description=body.description,
+            source=body.source,
+            actor=current_user,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    db.commit()
+    db.refresh(driver)
+    return _driver_dict(driver)
+
+
+# Static paths before /{driver_id} so "links" / "by-line" are not parsed as ints
+@router.post("/links", status_code=201)
+async def create_link_endpoint(
+    body: DriverLinkCreate,
+    current_user: User = Depends(require_permission("manage_drivers")),
+    db: Session = Depends(get_db),
+):
+    _get_scoped_driver(db, current_user, body.driver_id)
+    li = db.query(LineItem).filter(LineItem.id == body.line_item_id).first()
+    if not li or not user_can_view_line_item(current_user, li):
+        raise HTTPException(404, "Line item not found")
+    try:
+        link = assert_link(
+            db,
+            driver_id=body.driver_id,
+            line_item_id=body.line_item_id,
+            relation=body.relation,
+            transform=body.transform,
+            lag=body.lag,
+            coefficient=body.coefficient,
+            composition_group=body.composition_group,
+            status=body.status,
+            notes=body.notes,
+            actor=current_user,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    db.commit()
+    db.refresh(link)
+    return _link_dict(link)
+
+
+@router.post("/links/{link_id}/promote")
+async def promote_link_endpoint(
+    link_id: int,
+    current_user: User = Depends(require_permission("override")),
+    db: Session = Depends(get_db),
+):
+    """Promote candidate → active. Gated at can_override minimum."""
+    link = db.query(DriverLink).filter(DriverLink.id == link_id).first()
+    if not link:
+        raise HTTPException(404, "Link not found")
+    driver = db.query(Driver).filter(Driver.id == link.driver_id).first()
+    if not driver or not user_can_view_driver(current_user, driver):
+        raise HTTPException(404, "Link not found")
+    try:
+        promote_link(db, link=link, actor=current_user)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    db.commit()
+    db.refresh(link)
+    return _link_dict(link)
+
+
+@router.get("/by-line/{line_item_id}/links")
+async def links_for_line_item(
+    line_item_id: int,
+    status: str | None = Query(None),
+    current_user: User = Depends(require_permission("manage_drivers")),
+    db: Session = Depends(get_db),
+):
+    li = db.query(LineItem).filter(LineItem.id == line_item_id).first()
+    if not li or not user_can_view_line_item(current_user, li):
+        raise HTTPException(404, "Line item not found")
+    q = (
+        db.query(DriverLink)
+        .join(Driver, Driver.id == DriverLink.driver_id)
+        .filter(DriverLink.line_item_id == line_item_id)
+    )
+    q = driver_scope_filter(q, current_user, Driver)
+    if status:
+        q = q.filter(DriverLink.status == status)
+    return [_link_dict(l) for l in q.all()]
+
+
+@router.get("/{driver_id}")
+async def get_driver(
+    driver_id: int,
+    current_user: User = Depends(require_permission("manage_drivers")),
+    db: Session = Depends(get_db),
+):
+    return _driver_dict(_get_scoped_driver(db, current_user, driver_id))
+
+
+@router.patch("/{driver_id}")
+async def update_driver(
+    driver_id: int,
+    body: DriverUpdate,
+    current_user: User = Depends(require_permission("manage_drivers")),
+    db: Session = Depends(get_db),
+):
+    driver = _get_scoped_driver(db, current_user, driver_id)
+    data = body.model_dump(exclude_unset=True)
+    if "driver_type" in data and data["driver_type"] is not None:
+        try:
+            validate_driver_type(data["driver_type"])
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+    if "aggregation" in data and data["aggregation"] is not None:
+        try:
+            validate_aggregation(data["aggregation"])
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+    for k, v in data.items():
+        setattr(driver, k, v)
+    record_audit(
+        db,
+        action="driver.update",
+        entity_type="driver",
+        entity_id=str(driver.id),
+        actor_id=current_user.id,
+        actor_username=current_user.username,
+        details=data,
+    )
+    db.commit()
+    db.refresh(driver)
+    return _driver_dict(driver)
+
+
+@router.get("/{driver_id}/values")
+async def get_driver_values(
+    driver_id: int,
+    value_type: str = Query("actual"),
+    version_id: str | None = None,
+    period_from: str | None = None,
+    period_to: str | None = None,
+    current_user: User = Depends(require_permission("manage_drivers")),
+    db: Session = Depends(get_db),
+):
+    _get_scoped_driver(db, current_user, driver_id)
+    try:
+        series = materialize_driver_series(
+            db,
+            driver_id=driver_id,
+            value_type=value_type,
+            version_id=version_id,
+            period_from=period_from,
+            period_to=period_to,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return {
+        "driver_id": driver_id,
+        "value_type": value_type,
+        "version_id": version_id or "",
+        "periods": list(series.index.astype(str)),
+        "values": [float(v) for v in series.values],
+    }
+
+
+@router.post("/{driver_id}/values")
+async def ingest_driver_values(
+    driver_id: int,
+    body: DriverValuesIngest,
+    current_user: User = Depends(require_permission("manage_drivers")),
+    db: Session = Depends(get_db),
+):
+    _get_scoped_driver(db, current_user, driver_id)
+    try:
+        n = upsert_driver_values(
+            db,
+            driver_id=driver_id,
+            rows=[r.model_dump() for r in body.rows],
+            value_type=body.value_type,
+            version_id=body.version_id,
+            actor=current_user,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    db.commit()
+    return {"ingested": n, "driver_id": driver_id}
+
+
+@router.get("/{driver_id}/links")
+async def list_driver_links(
+    driver_id: int,
+    current_user: User = Depends(require_permission("manage_drivers")),
+    db: Session = Depends(get_db),
+):
+    _get_scoped_driver(db, current_user, driver_id)
+    links = db.query(DriverLink).filter(DriverLink.driver_id == driver_id).all()
+    return [_link_dict(l) for l in links]

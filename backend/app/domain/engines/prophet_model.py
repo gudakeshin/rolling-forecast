@@ -5,7 +5,7 @@ import pandas as pd
 from typing import Any
 import logging
 
-from app.domain.engines.base_model import IForecastModel, ForecastOutput
+from app.domain.engines.base_model import IForecastModel, ForecastOutput, ModelCapabilities
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,18 @@ class ProphetModel(IForecastModel):
     @property
     def min_data_points(self) -> int:
         return 18
+
+    @property
+    def capabilities(self) -> ModelCapabilities:
+        return ModelCapabilities(
+            complexity_rank=40,
+            min_data_points=18,
+            max_folds_short_series=2,
+            short_series_threshold=36,
+            base_confidence=65.0,
+            cost_class="expensive",
+            display_label="Prophet",
+        )
 
     def fit(self, series: pd.Series, dates: pd.DatetimeIndex) -> dict[str, Any]:
         from prophet import Prophet

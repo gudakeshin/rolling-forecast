@@ -5,7 +5,7 @@ import pandas as pd
 from typing import Any
 from sklearn.linear_model import LinearRegression
 
-from app.domain.engines.base_model import IForecastModel, ForecastOutput
+from app.domain.engines.base_model import IForecastModel, ForecastOutput, ModelCapabilities
 
 
 class LinearTrendModel(IForecastModel):
@@ -18,6 +18,17 @@ class LinearTrendModel(IForecastModel):
     @property
     def min_data_points(self) -> int:
         return 6  # Needs very little data
+
+    @property
+    def capabilities(self) -> ModelCapabilities:
+        return ModelCapabilities(
+            complexity_rank=10,
+            min_data_points=6,
+            base_confidence=40.0,
+            is_benchmark=False,
+            cost_class="cheap",
+            display_label="Linear trend",
+        )
 
     def fit(self, series: pd.Series, dates: pd.DatetimeIndex) -> dict[str, Any]:
         X = np.arange(len(series), dtype=float)

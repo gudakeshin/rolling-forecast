@@ -23,14 +23,21 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
-from app.domain.engines.model_registry import get_model_registry
+from app.domain.engines.model_registry import (
+    effective_selection_rule,
+    get_model_registry,
+    reset_model_registry,
+)
 from app.models.actuals import ActualsDataset, ActualsRecord
 from app.models.line_item import LineItem
 from app.models.forecast import ForecastVersion, ForecastLineResult, ModelMetadata
 from app.config import settings
+from app.services.confidence import (
+    MODEL_BASE_SCORES as _MODEL_BASE_SCORES,
+    compute_confidence_score as _compute_confidence_score,
+    classify_confidence as _classify_confidence,
+)
 from app.services.error_handlers import (
-    HistoryAnalysis,
-    clamp_forecast_values,
     check_generation_timeout,
     ForecastTimeoutError,
 )
@@ -38,66 +45,13 @@ from app.services.error_handlers import (
 logger = logging.getLogger(__name__)
 
 
+# Re-export for any lingering importers; prefer app.services.confidence.
+__all__ = ["GenerateBaselineSkill", "_compute_confidence_score", "_classify_confidence", "_MODEL_BASE_SCORES"]
+
+
 # ──────────────────────────────────────────────────────
-# Inline confidence scoring & remediation logic
+# Remediation / recommendation helpers (scoring in confidence.py)
 # ──────────────────────────────────────────────────────
-
-# Model type base confidence scores (simpler models = lower base)
-_MODEL_BASE_SCORES = {"prophet": 65, "arima": 60, "ets": 55, "linear": 40, "average": 25, "zero": 0}
-
-
-def _compute_confidence_score(result: ForecastLineResult) -> float:
-    """Compute composite confidence score (0-100) for a single forecast line.
-
-    # Blends CV MAPE (not in-sample fit residual) when available:
-    # - Model CV MAPE (40%): lower MAPE = higher confidence
-    - Prediction interval width (25%): narrower = more confident
-    - R-squared goodness of fit (20%): higher = better
-    - Model type base score (15%): sophisticated models get higher base
-    """
-    scores: list[float] = []
-    weights: list[float] = []
-
-    # 1. MAPE (40%)
-    if result.model_mape is not None and result.model_mape > 0:
-        mape_score = max(0, 100 - result.model_mape * 5)  # 20% MAPE -> score 0
-        scores.append(mape_score)
-        weights.append(0.40)
-
-    # 2. Prediction interval width (25%)
-    if result.p10 is not None and result.p90 is not None and result.p50 != 0:
-        interval_width = abs(result.p90 - result.p10)
-        relative_width = interval_width / (abs(result.p50) + 1e-10)
-        width_score = max(0, 100 - relative_width * 100)
-        scores.append(width_score)
-        weights.append(0.25)
-
-    # 3. R-squared (20%)
-    if result.model_r_squared is not None:
-        r2_score = max(0, result.model_r_squared * 100)
-        scores.append(r2_score)
-        weights.append(0.20)
-
-    # 4. Model type base score (15%)
-    base = _MODEL_BASE_SCORES.get(result.model_type or "linear", 50)
-    scores.append(base)
-    weights.append(0.15)
-
-    if not scores:
-        return 50.0
-
-    total_weight = sum(weights)
-    weighted_score = sum(s * w for s, w in zip(scores, weights)) / total_weight
-    return round(max(0, min(100, weighted_score)), 1)
-
-
-def _classify_confidence(score: float, threshold_low: int = 50, threshold_medium: int = 70) -> str:
-    """Classify confidence score into high / medium / low."""
-    if score >= threshold_medium:
-        return "high"
-    elif score >= threshold_low:
-        return "medium"
-    return "low"
 
 
 def _generate_remediation(
@@ -197,6 +151,110 @@ def _generate_remediation(
     }
 
 
+def forecast_linked_drivers(
+    db: Session,
+    *,
+    version_id: str,
+    horizon: int,
+    random_seed: int,
+    model_registry,
+    cal_cfg,
+) -> dict[str, Any]:
+    """Stage 0 (Phase 8): forecast linked drivers into driver_values(value_type='forecast').
+
+    This keeps driver->driver recursion out of scope by using only non-exog models.
+    Forecast horizon is extended by each driver's max active lag so line models can
+    consume lagged future exog columns safely.
+    """
+    from app.models.driver import DriverLink
+    from app.services.driver_series import materialize_driver_series, upsert_driver_values
+    from app.services.period_calendar import period_to_date
+
+    links = (
+        db.query(DriverLink)
+        .filter(DriverLink.status == "active")
+        .all()
+    )
+    if not links:
+        return {"drivers_considered": 0, "drivers_forecasted": 0, "rows_written": 0, "warnings": []}
+
+    lag_by_driver: dict[int, int] = {}
+    for link in links:
+        lag_by_driver[link.driver_id] = max(lag_by_driver.get(link.driver_id, 0), int(link.lag or 0))
+
+    candidate_models = [
+        n
+        for n in model_registry.list_models_by_complexity()
+        if (
+            (m := model_registry.get(n))
+            and m.capabilities.auto_selectable
+            and not m.capabilities.supports_exog
+        )
+    ]
+    warnings: list[str] = []
+    rows_written = 0
+    done = 0
+    min_points = 12
+
+    for driver_id, max_lag in lag_by_driver.items():
+        series = materialize_driver_series(db, driver_id=driver_id, value_type="actual")
+        if series.empty or len(series) < min_points:
+            continue
+        periods = [str(p) for p in series.index]
+        values = pd.Series(series.values.astype(float))
+        dates = pd.DatetimeIndex([pd.Timestamp(period_to_date(p, cal_cfg)) for p in periods])
+
+        try:
+            best_model, _, _ = model_registry.auto_select(
+                values,
+                dates,
+                random_seed=random_seed,
+                models_to_test=candidate_models,
+                selection_rule=effective_selection_rule(),
+                two_stage=True,
+                is_material=True,
+            )
+            if not best_model:
+                warnings.append(f"driver {driver_id}: no eligible model")
+                continue
+            out = model_registry.fit_and_predict(
+                best_model,
+                values,
+                dates,
+                horizon + max_lag,
+                random_seed=random_seed,
+            )
+            payload = []
+            for i, period in enumerate(out.periods):
+                payload.append(
+                    {
+                        "period": period,
+                        "value": float(out.point_forecast[i]),
+                        "p10": float(out.lower_bound[i]) if out.lower_bound is not None else None,
+                        "p90": float(out.upper_bound[i]) if out.upper_bound is not None else None,
+                    }
+                )
+            n = upsert_driver_values(
+                db,
+                driver_id=driver_id,
+                rows=payload,
+                value_type="forecast",
+                version_id=version_id,
+                actor=None,
+            )
+            rows_written += int(n)
+            done += 1
+        except Exception as e:
+            warnings.append(f"driver {driver_id}: {str(e)[:120]}")
+
+    return {
+        "drivers_considered": len(lag_by_driver),
+        "drivers_forecasted": done,
+        "rows_written": rows_written,
+        "warnings": warnings,
+    }
+
+
 class GenerateBaselineSkill(BaseSkill):
     """Skill to generate a statistical baseline forecast for all P&L line items."""
 
@@ -231,14 +289,20 @@ class GenerateBaselineSkill(BaseSkill):
                 },
                 "model_type": {
                     "type": "string",
-                    "description": "Force a single model type for ALL line items. Default 'auto' runs walk-forward cross-validation to pick the BEST model per line item (ARIMA, ETS, Prophet, or Linear). Only use a specific model if the user explicitly requests it.",
-                    "enum": ["auto", "arima", "prophet", "ets", "linear"],
+                    "description": (
+                        "Force a single model for ALL line items, or 'auto' (default) to "
+                        "run walk-forward CV per line. Valid names come from the model "
+                        "registry (validated at execute time)."
+                    ),
                     "default": "auto",
                 },
                 "models_to_test": {
                     "type": "array",
-                    "items": {"type": "string", "enum": ["arima", "prophet", "ets", "linear"]},
-                    "description": "Subset of models to test during auto-selection. If not specified, all 4 models are tested. Use this when the user wants to limit which algorithms are compared.",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Subset of registry models to test during auto-selection. "
+                        "If omitted, all registered models (subject to cost screen) are tested."
+                    ),
                 },
                 "random_seed": {
                     "type": "integer",
@@ -313,6 +377,22 @@ class GenerateBaselineSkill(BaseSkill):
         models_to_test = params.get("models_to_test", None)  # None = all models
         random_seed = params.get("random_seed", 42)
 
+        # Settings flips (benchmarks / metric) must refresh the singleton
+        reset_model_registry()
+        model_registry = get_model_registry()
+        registered = set(model_registry.list_models())
+        if model_type != "auto" and model_type not in registered:
+            return SkillResult.fail(
+                f"Unknown model_type '{model_type}'. Registered: {sorted(registered)}"
+            )
+        if models_to_test:
+            unknown = [m for m in models_to_test if m not in registered]
+            if unknown:
+                return SkillResult.fail(
+                    f"Unknown models_to_test {unknown}. Registered: {sorted(registered)}"
+                )
+        selection_rule = effective_selection_rule()
+
         # Soft gate: prefer plan_forecast before baseline (warn, do not hard-block)
         plan_done = context.context_manager.get_memory("last_plan_id") or context.context_manager.get_memory("plan_forecast_complete")
         plan_warning = None
@@ -360,6 +440,7 @@ class GenerateBaselineSkill(BaseSkill):
             horizon_months=horizon,
             base_period=dataset.period_end,
             random_seed=random_seed,
+            selection_rule=selection_rule,
             created_by=context.user_id,  # SoD: creator cannot self-approve
         )
         # FX: resolve reporting currency up front
@@ -370,14 +451,13 @@ class GenerateBaselineSkill(BaseSkill):
         db.flush()
         fx_hashes: list[str] = []
 
-        from app.domain.engines.base_model import make_period_labels
         from app.services.period_calendar import (
             get_calendar_config,
             period_to_date,
             push_calendar,
             reset_calendar,
         )
-        from app.services.reconciliation import BOUNDS_METHOD_MODEL, reconcile_version
+        from app.services.reconciliation import reconcile_version
 
         cal_cfg = get_calendar_config(db)
         cal_token = push_calendar(cal_cfg)
@@ -395,7 +475,6 @@ class GenerateBaselineSkill(BaseSkill):
             actuals_by_li[rec.line_item_id].append(rec)
 
         # Generate forecast for each line item
-        model_registry = get_model_registry()
         summary: dict[str, Any] = {
             "total": 0,
             "success": 0,
@@ -406,14 +485,40 @@ class GenerateBaselineSkill(BaseSkill):
             "negative_clamped": 0,
             "model_distribution": {},
             "model_comparisons": {},  # line_item_name -> comparison results
+            "selection_rule": selection_rule,
+            "n_downgraded": 0,
+            "driver_forecasts_written": 0,
+            "drivers_forecasted": 0,
         }
         all_warnings: list[str] = []
         all_flags: list[dict] = []
         pending_line_rows: list[dict[str, Any]] = []
         pending_metadata: list[ModelMetadata] = []
 
+        # Materiality vs CoA total trailing actuals (for two-stage expensive admit)
+        trailing_abs = {
+            li_id: float(sum(abs(r.value) for r in recs))
+            for li_id, recs in actuals_by_li.items()
+        }
+        grand_abs = sum(trailing_abs.values()) or 1.0
+        materiality_share = float(settings.materiality_share)
+
         job_id = params.get("_job_id")
         n_line_items = len(line_items)
+
+        # Phase 8 stage 0: materialize forecasted driver paths for this version.
+        if settings.enable_driver_forecasting:
+            driver_stage = forecast_linked_drivers(
+                db,
+                version_id=version.id,
+                horizon=horizon,
+                random_seed=random_seed,
+                model_registry=model_registry,
+                cal_cfg=cal_cfg,
+            )
+            summary["driver_forecasts_written"] = int(driver_stage.get("rows_written", 0) or 0)
+            summary["drivers_forecasted"] = int(driver_stage.get("drivers_forecasted", 0) or 0)
+            all_warnings.extend(driver_stage.get("warnings") or [])
 
         try:
             for li in line_items:
@@ -465,258 +570,62 @@ class GenerateBaselineSkill(BaseSkill):
                     pd.Timestamp(period_to_date(p, cal_cfg)) for p in periods
                 ])
 
-                # Run history analysis (EC1, EC2, EC4, EC12)
-                analysis = HistoryAnalysis(values, dates, li.name)
-                analysis_result = analysis.analyze()
+                is_material = (trailing_abs.get(li.id, 0.0) / grand_abs) >= materiality_share
+                from app.services.forecast_pipeline import LineForecastContext, forecast_line_item
 
-                for w in analysis_result["warnings"]:
-                    all_warnings.append(w)
-
-                if analysis_result["flags"]:
-                    all_flags.append({
-                        "line_item": li.name,
-                        "flags": analysis_result["flags"],
-                    })
-
-                # EC2: All zeros -- skip modeling
-                if analysis.is_all_zeros:
-                    summary["zero_lines"] += 1
-                    for period in make_period_labels(dates[-1], horizon):
-                        line_result = ForecastLineResult(
-                            version_id=version.id,
-                            line_item_id=li.id,
-                            period=period,
-                            p10=0.0, p50=0.0, p90=0.0,
-                            confidence_score=0,
-                            confidence_level="low",
-                            model_type="zero",
-                            bounds_method=BOUNDS_METHOD_MODEL,
-                        )
-                        db.add(line_result)
-                    summary["success"] += 1
-                    continue
-
-                # EC1: Very sparse data -- use simple average
-                if analysis.is_very_sparse:
-                    summary["sparse_lines"] += 1
-                    avg_val = float(values.mean())
-                    std_val = float(values.std()) if len(values) > 1 else avg_val * 0.2
-                    for period in make_period_labels(dates[-1], horizon):
-                        p50 = max(0, avg_val) if not li.allow_negative else avg_val
-                        line_result = ForecastLineResult(
-                            version_id=version.id,
-                            line_item_id=li.id,
-                            period=period,
-                            p10=max(0, p50 - 1.28 * std_val) if not li.allow_negative else p50 - 1.28 * std_val,
-                            p50=p50,
-                            p90=p50 + 1.28 * std_val,
-                            confidence_score=0,
-                            confidence_level="low",
-                            model_type="average",
-                            bounds_method=BOUNDS_METHOD_MODEL,
-                        )
-                        db.add(line_result)
-                    summary["success"] += 1
-                    continue
-
-                # EC12: Structural break -- truncate only with enough post-break history
-                effective_values = values
-                effective_dates = dates
-                min_post = settings.structural_break_min_post_points
-                if analysis.has_structural_break:
-                    summary["structural_breaks"] += 1
-                    break_idx = analysis.structural_break_index
-                    if break_idx is None and analysis.structural_break_period:
-                        for idx, d in enumerate(dates):
-                            if d.strftime("%Y-%m") == analysis.structural_break_period:
-                                break_idx = idx
-                                break
-                    if break_idx is not None and (len(values) - break_idx) >= min_post:
-                        effective_values = values[break_idx:]
-                        effective_dates = dates[break_idx:]
-                    else:
-                        all_warnings.append(
-                            f"Structural break flagged for '{li.name}' but post-break "
-                            f"history < {min_post} periods — retaining full series."
-                        )
-
-                # Pre-fit outlier cleaning (winsorize; never delete)
-                from app.services.outlier_cleaning import clean_series_for_fit
-
-                cleaning = clean_series_for_fit(
-                    effective_values,
-                    effective_dates,
-                    enabled=settings.outlier_cleaning_enabled,
-                    mad_z=settings.outlier_mad_z,
-                )
-                effective_values = cleaning.cleaned
-                if cleaning.n_cleaned:
-                    all_warnings.append(
-                        f"Winsorized {cleaning.n_cleaned} outlier(s) for '{li.name}' "
-                        f"({', '.join(cleaning.cleaned_periods[:5])}"
-                        f"{'…' if cleaning.n_cleaned > 5 else ''})."
-                    )
-
-                # Select and run model
-                try:
-                    # EC1: Force simpler model for sparse data
-                    effective_model_type = model_type
-                    if analysis.is_sparse and model_type == "auto":
-                        effective_model_type = "linear"
-
-                    if effective_model_type == "auto":
-                        selected_model, selection_mape, comparison = model_registry.auto_select(
-                            effective_values, effective_dates,
-                            random_seed=random_seed,
-                            models_to_test=models_to_test,
-                        )
-                        # Store comparison results per line item
-                        summary["model_comparisons"][li.name] = comparison.to_dict()
-                    else:
-                        selected_model = effective_model_type
-                        # Always run rolling-origin CV for the chosen model —
-                        # never feed in-sample MAPE into confidence scoring.
-                        try:
-                            model = model_registry.get(selected_model)
-                            if model is None:
-                                raise ValueError(f"Unknown model '{selected_model}'")
-                            cv = model.evaluate_cv(
-                                effective_values, effective_dates, n_folds=3, fold_horizon=3
-                            )
-                            selection_mape = float(cv.get("mean_mape") or 0.0)
-                            summary["model_comparisons"][li.name] = {
-                                "best_model": selected_model,
-                                "best_mape": selection_mape,
-                                "selection_method": "rolling_origin_cv",
-                                "comparisons": [{
-                                    "model": selected_model,
-                                    "model_name": selected_model,
-                                    "mape": selection_mape,
-                                    "fold_mapes": cv.get("fold_mapes") or [],
-                                    "n_folds": cv.get("n_folds_used") or 0,
-                                    "selected": True,
-                                    "eligible": True,
-                                }],
-                            }
-                        except Exception as cv_err:
-                            logger.warning(
-                                "CV MAPE failed for forced model %s on %s: %s",
-                                selected_model, li.name, cv_err,
-                            )
-                            selection_mape = None
-
-                    forecast_output = model_registry.fit_and_predict(
-                        selected_model, effective_values, effective_dates, horizon,
+                line_out = forecast_line_item(
+                    db,
+                    li,
+                    values,
+                    dates,
+                    periods,
+                    LineForecastContext(
+                        version_id=version.id,
+                        horizon=horizon,
                         random_seed=random_seed,
-                    )
+                        model_type=model_type,
+                        models_to_test=models_to_test,
+                        selection_rule=selection_rule,
+                        is_material=is_material,
+                        cal_cfg=cal_cfg,
+                        model_registry=model_registry,
+                        enable_driver_forecasting=settings.enable_driver_forecasting,
+                    ),
+                )
 
-                    # Prefer CV MAPE for confidence; never use in-sample for scoring.
-                    # Store in-sample separately for diagnostics only.
-                    cv_mape = selection_mape if selection_mape is not None else None
-                    in_sample = (
-                        forecast_output.fit_metrics.get("in_sample_mape")
-                        or forecast_output.fit_metrics.get("mape")
-                    )
-                    if cv_mape is not None and cv_mape != float("inf"):
-                        honest_mape = cv_mape
-                    else:
-                        # No usable CV — leave model_mape null so confidence
-                        # does not claim an optimistic in-sample score.
-                        honest_mape = None
-                        if in_sample is not None:
-                            forecast_output.fit_metrics["in_sample_mape"] = in_sample
-                            all_warnings.append(
-                                f"{li.name}: CV MAPE unavailable; confidence uses "
-                                "non-MAPE signals only (in-sample MAPE withheld)"
-                            )
+                all_warnings.extend(line_out.warnings)
+                if line_out.flags:
+                    all_flags.append({"line_item": li.name, "flags": line_out.flags})
+                if line_out.was_zero:
+                    summary["zero_lines"] += 1
+                if line_out.was_sparse:
+                    summary["sparse_lines"] += 1
+                if line_out.had_structural_break:
+                    summary["structural_breaks"] += 1
+                if line_out.was_clamped:
+                    summary["negative_clamped"] += 1
 
-                    # EC9: Clamp negative values
-                    point_forecast = forecast_output.point_forecast.copy()
-                    lower_bound = forecast_output.lower_bound.copy() if forecast_output.lower_bound is not None else None
-
-                    point_forecast, clamp_warnings = clamp_forecast_values(
-                        point_forecast, li.allow_negative, li.name
-                    )
-                    if clamp_warnings:
-                        summary["negative_clamped"] += 1
-                        all_warnings.extend(clamp_warnings)
-
-                    if lower_bound is not None and not li.allow_negative:
-                        lower_bound = np.maximum(lower_bound, 0)
-
-                    # Track model distribution
-                    summary["model_distribution"][selected_model] = (
-                        summary["model_distribution"].get(selected_model, 0) + 1
-                    )
-
-                    # Batch line results (pre-assign UUIDs; no per-row flush)
-                    import uuid as _uuid
-
-                    for i, period in enumerate(forecast_output.periods):
-                        p50 = float(point_forecast[i])
-                        p10 = float(lower_bound[i]) if lower_bound is not None else None
-                        p90 = (
-                            float(forecast_output.upper_bound[i])
-                            if forecast_output.upper_bound is not None
-                            else None
-                        )
-                        result_id = str(_uuid.uuid4())
-                        pending_line_rows.append({
-                            "id": result_id,
-                            "version_id": version.id,
-                            "line_item_id": li.id,
-                            "period": period,
-                            "p10": p10,
-                            "p50": p50,
-                            "p90": p90,
-                            "model_p50": p50,
-                            "confidence_score": 0,
-                            "confidence_level": "pending",
-                            "model_type": selected_model,
-                            "model_mape": honest_mape,
-                            "model_r_squared": forecast_output.fit_metrics.get("r_squared"),
-                            "bounds_method": BOUNDS_METHOD_MODEL,
-                            "is_overridden": False,
-                            "is_calculated": False,
-                        })
-                        if i == 0:
-                            pending_metadata.append(
-                                ModelMetadata(
-                                    line_result_id=result_id,
-                                    model_type=selected_model,
-                                    parameters=forecast_output.parameters,
-                                    training_window_start=periods[0],
-                                    training_window_end=periods[-1],
-                                    training_points=len(effective_values),
-                                    mape=honest_mape,
-                                    r_squared=forecast_output.fit_metrics.get("r_squared"),
-                                    aic=forecast_output.fit_metrics.get("aic"),
-                                    seasonality_detected=forecast_output.diagnostics.get(
-                                        "seasonality_detected", False
-                                    ),
-                                    seasonality_period=forecast_output.diagnostics.get(
-                                        "seasonality_period"
-                                    ),
-                                    structural_break_detected=analysis.has_structural_break,
-                                    structural_break_period=analysis.structural_break_period,
-                                    cleaned_periods=cleaning.cleaned_periods or None,
-                                    outliers_cleaned=cleaning.n_cleaned,
-                                    random_seed=random_seed,
-                                )
-                            )
-
-                    # Flush in chunks to bound memory
-                    if len(pending_line_rows) >= 1000:
-                        self._flush_forecast_batch(db, pending_line_rows, pending_metadata)
-                        pending_line_rows.clear()
-                        pending_metadata.clear()
-
-                    summary["success"] += 1
-
-                except Exception as e:
-                    logger.error(f"Forecast failed for {li.account_code}: {e}", exc_info=True)
+                if line_out.skipped:
                     summary["skipped"] += 1
-                    all_warnings.append(f"Model failed for '{li.name}': {str(e)[:100]}")
+                    continue
+
+                if line_out.comparison:
+                    summary["model_comparisons"][li.name] = line_out.comparison
+                summary["n_downgraded"] += line_out.n_downgraded
+                if line_out.selected_model:
+                    summary["model_distribution"][line_out.selected_model] = (
+                        summary["model_distribution"].get(line_out.selected_model, 0) + 1
+                    )
+
+                pending_line_rows.extend(line_out.line_rows)
+                pending_metadata.extend(line_out.metadata_rows)
+
+                if len(pending_line_rows) >= 1000:
+                    self._flush_forecast_batch(db, pending_line_rows, pending_metadata)
+                    pending_line_rows.clear()
+                    pending_metadata.clear()
+
+                summary["success"] += 1
 
         except Exception as e:
             logger.error(f"Forecast generation error: {e}", exc_info=True)
@@ -884,6 +793,8 @@ class GenerateBaselineSkill(BaseSkill):
                     {"metric": "Base period", "value": dataset.period_end},
                     {"metric": "Generation time", "value": f"{elapsed:.1f}s"},
                     {"metric": "Model selection", "value": "Auto (walk-forward CV)" if model_type == "auto" else model_type},
+                    {"metric": "Drivers forecasted (stage 0)", "value": str(summary.get("drivers_forecasted", 0))},
+                    {"metric": "Driver forecast rows written", "value": str(summary.get("driver_forecasts_written", 0))},
                 ],
             ),
         ])
@@ -1132,6 +1043,8 @@ class GenerateBaselineSkill(BaseSkill):
                 "sparse_lines": summary["sparse_lines"],
                 "structural_breaks": summary["structural_breaks"],
                 "model_distribution": summary["model_distribution"],
+                "drivers_forecasted": summary.get("drivers_forecasted", 0),
+                "driver_forecasts_written": summary.get("driver_forecasts_written", 0),
                 "generation_time": elapsed,
                 "warnings_count": len(warnings),
                 "confidence": {
@@ -1172,6 +1085,8 @@ class GenerateBaselineSkill(BaseSkill):
                 "confidence_level",
                 "model_type",
                 "model_mape",
+                "model_mase",
+                "model_pinball",
                 "model_r_squared",
                 "bounds_method",
                 "is_overridden",

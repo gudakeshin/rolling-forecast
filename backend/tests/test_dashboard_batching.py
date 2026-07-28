@@ -6,11 +6,26 @@ import asyncio
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import event
+from sqlalchemy import event, inspect, text
 from sqlalchemy.engine import Engine
 
 from app.models.actuals import ActualsRecord
 from app.models.forecast import ForecastLineResult, ForecastVersion
+
+
+def _ensure_phase1_columns() -> None:
+    """Persistent test_app.db may predate migration 013; create_all won't ALTER."""
+    from app.database import engine
+
+    fv_cols = {c["name"] for c in inspect(engine).get_columns("forecast_versions")}
+    flr_cols = {c["name"] for c in inspect(engine).get_columns("forecast_line_results")}
+    with engine.begin() as conn:
+        if "selection_rule" not in fv_cols:
+            conn.execute(text("ALTER TABLE forecast_versions ADD COLUMN selection_rule VARCHAR(64)"))
+        if "model_mase" not in flr_cols:
+            conn.execute(text("ALTER TABLE forecast_line_results ADD COLUMN model_mase FLOAT"))
+        if "model_pinball" not in flr_cols:
+            conn.execute(text("ALTER TABLE forecast_line_results ADD COLUMN model_pinball FLOAT"))
 
 
 def _count_queries(engine: Engine):
@@ -42,6 +57,7 @@ def client():
 
     os.environ["SEED_DEMO_USERS"] = "true"
     os.environ["APP_ENV"] = "test"
+    _ensure_phase1_columns()
     from app.main import app
     from app.rate_limit import limiter
 

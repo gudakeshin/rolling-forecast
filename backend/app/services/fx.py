@@ -65,6 +65,11 @@ def _lookup_rate(db: Session, frm: str, to: str, period: str) -> float | None:
     return None
 
 
+def lookup_rate(db: Session, frm: str, to: str, period: str) -> float | None:
+    """Public FX rate lookup (direct or inverse). None if missing."""
+    return _lookup_rate(db, frm, to, period)
+
+
 def convert_series_values(
     db: Session,
     values: list[float],

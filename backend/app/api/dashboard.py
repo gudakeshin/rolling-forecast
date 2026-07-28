@@ -14,23 +14,38 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.api.auth import get_current_user
 from app.models.user import User
-from app.models.forecast import ForecastVersion, ForecastLineResult
+from app.models.forecast import ForecastVersion, ForecastLineResult, ModelMetadata
 from app.models.line_item import LineItem, LineItemDependency
 from app.models.actuals import ActualsRecord
 from app.models.override import Override
 from app.schemas.forecast import PanelDataResponse
 from app.services.permissions import line_item_scope_filter, require_permission, scoped_line_items
 
-# Import inline scoring utilities from generate_baseline
-from app.domain.skills.generate_baseline import (
-    _compute_confidence_score,
-    _classify_confidence,
-    _generate_remediation,
+# Scoring lives in services.confidence; remediation stays on the skill module.
+from app.services.confidence import (
+    compute_confidence_score as _compute_confidence_score,
+    classify_confidence as _classify_confidence,
 )
+from app.domain.skills.generate_baseline import _generate_remediation
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/panel", tags=["dashboard"])
+
+
+def _extract_exog_payload(parameters: dict | None) -> dict | None:
+    """Return a compact exog payload for review UI, if present."""
+    if not isinstance(parameters, dict):
+        return None
+    exog_spec = parameters.get("exog_spec")
+    if not isinstance(exog_spec, dict):
+        return None
+    return {
+        "mode": exog_spec.get("mode"),
+        "columns": exog_spec.get("columns") or [],
+        "drivers": exog_spec.get("drivers") or [],
+        "exog_mode_scores": exog_spec.get("exog_mode_scores"),
+    }
 
 
 def _scoped_results_query(db: Session, user: User, version_id: str):
@@ -251,18 +266,24 @@ def _build_driver_context(
         }
 
     # ── 3. Driver inputs for this line item ───────────────────
+    # Values are keyed by line_item_id (REST/UI) or field name (skill). Match
+    # the dict key first — field_data["line_item_id"] is absent on legacy rows.
     for di in cache.get("driver_rows") or []:
         if di.values and isinstance(di.values, dict):
             for field_name, field_data in di.values.items():
-                if isinstance(field_data, dict) and field_data.get("line_item_id") == li.id:
-                    context["driver_inputs"].append({
-                        "business_unit": di.business_unit,
-                        "field": field_name,
-                        "value": field_data.get("value"),
-                        "reason": field_data.get("reason", ""),
-                        "prior_value": field_data.get("prior_value"),
-                        "submitted_at": di.submitted_at.isoformat() if di.submitted_at else None,
-                    })
+                payload = field_data if isinstance(field_data, dict) else {"value": field_data}
+                key_matches = str(field_name).isdigit() and int(field_name) == li.id
+                nested_matches = payload.get("line_item_id") == li.id
+                if not (key_matches or nested_matches):
+                    continue
+                context["driver_inputs"].append({
+                    "business_unit": di.business_unit,
+                    "field": field_name,
+                    "value": payload.get("value"),
+                    "reason": payload.get("reason", ""),
+                    "prior_value": payload.get("prior_value"),
+                    "submitted_at": di.submitted_at.isoformat() if di.submitted_at else None,
+                })
 
     # ── 4. Active overrides ───────────────────────────────────
     for ov in cache.get("overrides_by_li", {}).get(li.id, []):
@@ -1152,10 +1173,24 @@ async def get_review_dashboard(
 
     driver_cache = _preload_driver_context(db, version_id, list(line_item_groups.keys()))
 
+    metadata_by_result_id: dict[str, dict] = {}
+    result_ids = [str(r.id) for r in results]
+    if result_ids:
+        metadata_rows = (
+            db.query(ModelMetadata.line_result_id, ModelMetadata.parameters)
+            .filter(ModelMetadata.line_result_id.in_(result_ids))
+            .all()
+        )
+        metadata_by_result_id = {
+            str(line_result_id): (parameters if isinstance(parameters, dict) else {})
+            for line_result_id, parameters in metadata_rows
+        }
+
     for li_id, group in line_item_groups.items():
         # Pick the worst-case period for this line item
         worst = min(group, key=lambda x: x.confidence_score)
         ai_result = _ai_analyze_item(worst, actuals_map, category_stats, total_p50=total_p50_sum)
+        exog_payload = _extract_exog_payload(metadata_by_result_id.get(str(worst.id)))
 
         # Persist AI analysis
         for r in group:
@@ -1209,6 +1244,8 @@ async def get_review_dashboard(
             "review_status": worst.review_status,
             "review_comment": worst.review_comment,
             "reviewed_by": worst.reviewed_by,
+            "exog_used": bool(exog_payload),
+            "exog": exog_payload,
         }
 
         if worst.review_status in ("approved", "rejected"):
@@ -1931,8 +1968,8 @@ async def submit_driver_inputs(
     db: Session = Depends(get_db),
 ):
     """Submit BU driver assumptions for a forecast version."""
-    from app.models.driver_input import DriverInput, DriverFormConfig
-    from app.services.audit import record_audit
+    from app.models.driver_input import DriverFormConfig
+    from app.services.driver_submission import apply_driver_submission
 
     version = db.query(ForecastVersion).filter(ForecastVersion.id == request.version_id).first()
     if not version:
@@ -1969,56 +2006,39 @@ async def submit_driver_inputs(
             business_unit=bu,
             name=f"{bu} Driver Form",
             description="Auto-generated driver form",
-            fields_schema=fields or [{"name": "value", "label": "Value", "type": "number"}],
+            fields_schema={"fields": fields or [{"name": "value", "label": "Value", "type": "number"}]},
             is_active=True,
         )
         db.add(form)
         db.flush()
 
-    normalized: dict[str, Any] = {}
-    for key, payload in (request.values or {}).items():
-        if key.startswith("_"):
-            continue
-        if isinstance(payload, dict):
-            normalized[str(key)] = {
-                "value": payload.get("value"),
-                "source": payload.get("source", "manual"),
-                "reason": payload.get("reason") or request.notes,
-            }
-        else:
-            normalized[str(key)] = {"value": payload, "source": "manual"}
+    try:
+        result = apply_driver_submission(
+            db,
+            version_id=version.id,
+            form=form,
+            values=request.values or {},
+            user_id=current_user.id,
+            business_unit=bu,
+            notes=request.notes,
+            apply_overrides=True,
+            actor_username=current_user.username,
+            audit=True,
+            commit=True,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
-    if not normalized:
-        raise HTTPException(status_code=400, detail="No driver values provided")
-
-    di = DriverInput(
-        version_id=version.id,
-        form_config_id=form.id,
-        user_id=current_user.id,
-        business_unit=bu,
-        values=normalized,
-        status="submitted",
-        submitted_at=datetime.now(timezone.utc),
-        is_late=False,
-    )
-    db.add(di)
-    record_audit(
-        db,
-        action="driver.submit",
-        entity_type="driver_input",
-        entity_id=None,
-        actor_id=current_user.id,
-        actor_username=current_user.username,
-        details={"version_id": version.id, "business_unit": bu, "field_count": len(normalized)},
-    )
-    db.commit()
-    db.refresh(di)
-
+    di = result.driver_input
     return {
         "success": True,
         "id": di.id,
         "status": di.status,
-        "message": f"Submitted {len(normalized)} driver value(s) for {bu}",
+        "overrides_applied": result.overrides_applied,
+        "message": (
+            f"Submitted {len(result.enriched_values)} driver value(s) for {bu}"
+            + (f", {result.overrides_applied} applied as overrides" if result.overrides_applied else "")
+        ),
     }
 
 
@@ -2029,19 +2049,34 @@ async def submit_driver_inputs(
 @router.post("/rescore-forecasts/{version_id}")
 async def rescore_forecasts(
     version_id: str,
+    force: bool = False,
     current_user: User = Depends(require_permission("generate")),
     db: Session = Depends(get_db),
 ):
     """Re-score confidence and generate remediation for an existing forecast version.
 
-    This fixes forecasts that were generated before inline scoring was added,
-    where all items show confidence_score=0.
+    Honors the version's pinned ``selection_rule``. When the live
+    ``settings.selection_metric`` disagrees, refuse unless ``force=true``
+    (audited) so FVA trends are not restamped by a rule change.
     """
     from app.services.audit import record_audit
+    from app.domain.engines.model_registry import effective_selection_rule
 
     version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
     if not version:
         raise HTTPException(status_code=404, detail="Forecast version not found")
+
+    live_rule = effective_selection_rule()
+    pinned = version.selection_rule
+    if pinned and pinned != live_rule and not force:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Version selection_rule={pinned!r} differs from live rule={live_rule!r}. "
+                "Pass force=true to rescore under the live confidence formula anyway "
+                "(does not re-run model selection)."
+            ),
+        )
 
     results = (
         db.query(ForecastLineResult)
@@ -2091,7 +2126,15 @@ async def rescore_forecasts(
         entity_id=version_id,
         actor_id=current_user.id,
         actor_username=current_user.username,
-        details={"lines": len(results), "high": high, "medium": medium, "low": low},
+        details={
+            "lines": len(results),
+            "high": high,
+            "medium": medium,
+            "low": low,
+            "forced": force,
+            "pinned_rule": pinned,
+            "live_rule": live_rule,
+        },
     )
     db.commit()
 
@@ -2101,19 +2144,29 @@ async def rescore_forecasts(
         "high_confidence": high,
         "medium_confidence": medium,
         "low_confidence": low,
+        "selection_rule": pinned,
+        "forced": force,
     }
 
 
 @router.post("/rescore-all")
 async def rescore_all_forecasts(
+    force: bool = False,
     current_user: User = Depends(require_permission("generate")),
     db: Session = Depends(get_db),
 ):
-    """Re-score all forecast versions at once."""
-    from app.services.audit import record_audit
+    """Re-score all forecast versions at once.
 
+    Skips versions whose pinned ``selection_rule`` disagrees with the live
+    rule unless ``force=true`` (audited).
+    """
+    from app.services.audit import record_audit
+    from app.domain.engines.model_registry import effective_selection_rule
+
+    live_rule = effective_selection_rule()
     versions = db.query(ForecastVersion).all()
     total_rescored = 0
+    skipped: list[dict[str, Any]] = []
     version_ids = [v.id for v in versions]
     results_by_version: dict[str, list] = {vid: [] for vid in version_ids}
     if version_ids:
@@ -2126,23 +2179,23 @@ async def rescore_all_forecasts(
             results_by_version.setdefault(r.version_id, []).append(r)
 
     for version in versions:
+        pinned = version.selection_rule
+        if pinned and pinned != live_rule and not force:
+            skipped.append({"version_id": version.id, "selection_rule": pinned})
+            continue
         results = results_by_version.get(version.id, [])
-
         high = medium = low = 0
-
         for r in results:
             score = _compute_confidence_score(r)
             level = _classify_confidence(score)
             r.confidence_score = score
             r.confidence_level = level
-
             if level == "high":
                 high += 1
             elif level == "medium":
                 medium += 1
             else:
                 low += 1
-
             remed = _generate_remediation(r)
             r.ai_recommendation = remed["action"]
             r.ai_reasoning = remed["reason"]
@@ -2151,7 +2204,6 @@ async def rescore_all_forecasts(
                 else 40.0 if remed["severity"] == "warning"
                 else 75.0
             )
-
         version.high_confidence_count = high
         version.medium_confidence_count = medium
         version.low_confidence_count = low
@@ -2164,15 +2216,28 @@ async def rescore_all_forecasts(
         entity_id=None,
         actor_id=current_user.id,
         actor_username=current_user.username,
-        details={"versions_updated": len(versions), "total_lines_rescored": total_rescored},
+        details={
+            "versions_updated": len(versions) - len(skipped),
+            "versions_skipped": len(skipped),
+            "total_lines_rescored": total_rescored,
+            "forced": force,
+            "live_rule": live_rule,
+            "skipped": skipped[:50],
+        },
     )
     db.commit()
 
     return {
         "success": True,
-        "message": f"Re-scored {total_rescored} forecast lines across {len(versions)} versions",
-        "versions_updated": len(versions),
+        "message": (
+            f"Re-scored {total_rescored} forecast lines across "
+            f"{len(versions) - len(skipped)} versions"
+            + (f" (skipped {len(skipped)} mismatched)" if skipped else "")
+        ),
         "total_lines_rescored": total_rescored,
+        "versions_skipped": len(skipped),
+        "forced": force,
+        "live_rule": live_rule,
     }
 
 

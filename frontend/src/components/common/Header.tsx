@@ -17,6 +17,9 @@ import {
   Target,
   FileInput,
   AlertTriangle,
+  Activity,
+  Sparkles,
+  GitBranch,
 } from 'lucide-react';
 import { useAuthStore, useCan } from '../../store/authStore';
 import { usePanelStore } from '../../store/panelStore';
@@ -61,6 +64,7 @@ export function Header() {
   const canInput = useCan('can_input');
   const canPublish = useCan('can_publish');
   const canAdmin = useCan('can_admin');
+  const canManageDrivers = useCan('can_manage_drivers');
 
   const cycleLocale = () => {
     const next: Locale = locale === 'en' ? 'es' : 'en';
@@ -116,6 +120,27 @@ export function Header() {
       labelKey: 'nav.drivers',
       icon: FileInput,
       show: canInput,
+    },
+    {
+      kind: 'panel',
+      panel: 'drivers',
+      labelKey: 'nav.causalDrivers',
+      icon: Activity,
+      show: canManageDrivers || canAdmin || user?.role_name === 'admin',
+    },
+    {
+      kind: 'panel',
+      panel: 'explainability',
+      labelKey: 'nav.explain',
+      icon: Sparkles,
+      show: canReview || canGenerate,
+    },
+    {
+      kind: 'panel',
+      panel: 'what_if',
+      labelKey: 'nav.whatIf',
+      icon: GitBranch,
+      show: canGenerate,
     },
     {
       kind: 'panel',

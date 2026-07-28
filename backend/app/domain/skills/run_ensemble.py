@@ -80,8 +80,17 @@ class RunEnsembleSkill(BaseSkill):
 
         weighting = params.get("weighting_method", "inverse_mape")
         top_k = params.get("top_k", 3)
-        model_names = params.get("models") or ["arima", "ets", "linear"]  # prophet excluded for speed in ensemble
         model_registry = get_model_registry()
+        model_names = params.get("models")
+        if not model_names:
+            # Prefer cheap/moderate cost classes — skip expensive (prophet) by default
+            model_names = [
+                n for n in model_registry.list_models()
+                if (m := model_registry.get(n)) is not None
+                and m.capabilities.cost_class in ("trivial", "cheap", "moderate")
+                and not m.capabilities.is_benchmark
+                and m.capabilities.auto_selectable
+            ] or ["arima", "ets", "linear"]
 
         # Determine target line items
         line_item_name = params.get("line_item_name")

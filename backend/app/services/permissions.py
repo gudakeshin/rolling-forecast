@@ -15,6 +15,7 @@ PERMISSION_ATTR = {
     "review": "can_review",
     "publish": "can_publish",
     "admin": "can_admin",
+    "manage_drivers": "can_manage_drivers",
 }
 
 # Roles allowed to approve/reject at version level (aligned with seeded roles)
@@ -101,6 +102,45 @@ def user_can_view_line_item(user: User | None, line_item) -> bool:
     if li_bu is None:
         return True  # shared
     return li_bu == user.business_unit
+
+
+def driver_scope_filter(query: Query, user: User, driver_model) -> Query:
+    """Restrict a Driver query to the caller's BU unless they can view all.
+
+    Drivers with NULL business_unit are treated as shared (visible to all).
+    """
+    if can_view_all_bus(user):
+        return query
+    bu = user.business_unit
+    if not bu:
+        return query.filter(driver_model.business_unit.is_(None))
+    return query.filter(
+        (driver_model.business_unit == bu) | (driver_model.business_unit.is_(None))
+    )
+
+
+def scoped_drivers(db: Session, user: User | None, *filters) -> Query:
+    """Driver query restricted to the caller's BU scope when user is known."""
+    from app.models.driver import Driver
+
+    q = db.query(Driver)
+    for f in filters:
+        q = q.filter(f)
+    if user is None:
+        return q
+    return driver_scope_filter(q, user, Driver)
+
+
+def user_can_view_driver(user: User | None, driver) -> bool:
+    """True if the user may read this driver under BU scope."""
+    if user is None or driver is None:
+        return True
+    if can_view_all_bus(user):
+        return True
+    d_bu = getattr(driver, "business_unit", None)
+    if d_bu is None:
+        return True
+    return d_bu == user.business_unit
 
 
 def require_permission(permission: str):

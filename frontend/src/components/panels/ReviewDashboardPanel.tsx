@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   BarChart, Bar, LineChart, Line, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip,
@@ -10,7 +10,7 @@ import {
   ThumbsDown, MessageSquare, Loader2,
   Bot, Eye, ArrowRight, Zap, RefreshCw, TrendingUp,
   TrendingDown, Activity, GitBranch, Edit3, Save, X,
-  DollarSign, BarChart3, PieChart, FileText, Download,
+  DollarSign, BarChart3, PieChart, FileText, Download, Filter,
 } from 'lucide-react';
 import { apiPost } from '../../api/client';
 import { batchReview } from '../../api/dashboard';
@@ -73,6 +73,24 @@ interface DriverContext {
   active_overrides: ActiveOverride[];
 }
 
+interface ExogModeScores {
+  n_folds: number;
+  mase_forecast: number | null;
+  mase_known: number | null;
+}
+
+interface ExogInfo {
+  mode?: string;
+  columns?: string[];
+  drivers?: Array<{
+    driver_id?: number;
+    driver_key?: string;
+    relation?: string;
+    lag?: number;
+  }>;
+  exog_mode_scores?: ExogModeScores | null;
+}
+
 interface ReviewItem {
   id: string;
   line_item_id: number;
@@ -104,6 +122,8 @@ interface ReviewItem {
   review_comment: string | null;
   reviewed_by: string | null;
   history?: { period: string; actual?: number; forecast?: number }[];
+  exog_used?: boolean;
+  exog?: ExogInfo | null;
 }
 
 interface Props {
@@ -134,6 +154,15 @@ function formatCurrency(value: number | null | undefined): string {
   if (Math.abs(value) >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
   if (Math.abs(value) >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
   return `$${value.toFixed(0)}`;
+}
+
+function exogGapForItem(item: ReviewItem): number | null {
+  const s = item.exog?.exog_mode_scores;
+  if (!s) return null;
+  const forecast = typeof s.mase_forecast === 'number' ? s.mase_forecast : null;
+  const known = typeof s.mase_known === 'number' ? s.mase_known : null;
+  if (forecast == null || known == null) return null;
+  return forecast - known;
 }
 
 function RiskBar({ score }: { score: number }) {
@@ -206,6 +235,44 @@ const ChartTooltip = ({ active, payload, label }: any) => {
     </div>
   );
 };
+
+function ExogModeScoresCard({ exog }: { exog?: ExogInfo | null }) {
+  const scores = exog?.exog_mode_scores;
+  if (!exog || !scores) return null;
+  const formatMase = (value: number | null | undefined) =>
+    value == null || !Number.isFinite(value) ? 'n/a' : value.toFixed(3);
+  const forecastScore = typeof scores.mase_forecast === 'number' ? scores.mase_forecast : null;
+  const knownScore = typeof scores.mase_known === 'number' ? scores.mase_known : null;
+  const delta = forecastScore != null && knownScore != null ? forecastScore - knownScore : null;
+
+  return (
+    <div className="bg-surface-800/60 border border-deloitte-teal/20 rounded-lg p-2.5 space-y-1.5">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs font-semibold text-deloitte-teal uppercase tracking-wider">
+          Exogenous Validation
+        </span>
+        <span className="text-xs text-surface-500">folds: {scores.n_folds ?? 0}</span>
+        <span className="text-xs text-surface-500">mode: {exog.mode || 'forecast'}</span>
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        <div className="bg-surface-900/50 rounded px-2 py-1">
+          <div className="text-xs text-surface-500">MASE (forecast exog)</div>
+          <div className="text-xs font-mono text-surface-200">{formatMase(scores.mase_forecast)}</div>
+        </div>
+        <div className="bg-surface-900/50 rounded px-2 py-1">
+          <div className="text-xs text-surface-500">MASE (known exog)</div>
+          <div className="text-xs font-mono text-surface-200">{formatMase(scores.mase_known)}</div>
+        </div>
+        <div className="bg-surface-900/50 rounded px-2 py-1">
+          <div className="text-xs text-surface-500">Gap (forecast-known)</div>
+          <div className={`text-xs font-mono ${delta != null && delta > 0 ? 'text-amber-400' : 'text-deloitte-green'}`}>
+            {delta == null ? 'n/a' : `${delta > 0 ? '+' : ''}${delta.toFixed(3)}`}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ─── Business Analysis Summary ─────────────────────
 
@@ -747,6 +814,8 @@ function ReviewItemRow({
             </div>
           </div>
 
+          <ExogModeScoresCard exog={item.exog} />
+
           {/* Structured actions */}
           {item.ai_actions && item.ai_actions.length > 0 && item.ai_recommendation !== 'approve' && (
             <div className="bg-surface-800/50 border border-cyan-500/15 rounded-lg p-2.5">
@@ -910,6 +979,8 @@ export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props
   const [batchComment, setBatchComment] = useState('');
   const [batchRejecting, setBatchRejecting] = useState(false);
   const [batchBusy, setBatchBusy] = useState(false);
+  const [filterExog, setFilterExog] = useState<string>('all');
+  const [sortBy, setSortBy] = useState<string>('default');
   const focusRowRef = useRef<HTMLDivElement | null>(null);
   const focusApplied = useRef(false);
 
@@ -1027,6 +1098,26 @@ export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props
   const selectableBucket = activeBucket === 'flagged' || activeBucket === 'needs_review';
   const activeItems = localBuckets[activeBucket].items;
 
+  const displayItems = useMemo(() => {
+    let items = activeItems as ReviewItem[];
+    if (filterExog === 'with_exog') {
+      items = items.filter((i) => Boolean(i.exog_used));
+    } else if (filterExog === 'with_scores') {
+      items = items.filter((i) => exogGapForItem(i) != null);
+    }
+    if (sortBy === 'exog_gap_desc') {
+      return [...items].sort(
+        (a, b) => Math.abs(exogGapForItem(b) ?? -1) - Math.abs(exogGapForItem(a) ?? -1),
+      );
+    }
+    if (sortBy === 'risk_desc') {
+      return [...items].sort((a, b) => b.ai_risk_score - a.ai_risk_score);
+    }
+    return items;
+  }, [activeItems, filterExog, sortBy]);
+
+  const exogFilterActive = filterExog !== 'all' || sortBy !== 'default';
+
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -1037,10 +1128,10 @@ export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.size === activeItems.length) {
+    if (selectedIds.size === displayItems.length) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(activeItems.map((i: ReviewItem) => i.id)));
+      setSelectedIds(new Set(displayItems.map((i: ReviewItem) => i.id)));
     }
   };
 
@@ -1105,7 +1196,7 @@ export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props
     downloadCsv(
       `review_${activeBucket}_${version?.name || 'export'}`,
       reviewExportColumns,
-      activeItems.map((item: ReviewItem) => ({
+      displayItems.map((item: ReviewItem) => ({
         line_item_name: item.line_item_name,
         category: item.category,
         business_unit: item.business_unit || '',
@@ -1203,7 +1294,13 @@ export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props
         {bucketConfig.map(({ key, label, icon: Icon, color, bg }) => (
           <button
             key={key}
-            onClick={() => { setActiveBucket(key); setSelectedIds(new Set()); setBatchRejecting(false); }}
+            onClick={() => {
+              setActiveBucket(key);
+              setSelectedIds(new Set());
+              setBatchRejecting(false);
+              setFilterExog('all');
+              setSortBy('default');
+            }}
             className={`p-2 border rounded-xl text-center transition-all ${bg} ${
               activeBucket === key ? 'ring-1 ring-white/20 scale-[1.02]' : 'opacity-70 hover:opacity-100'
             }`}
@@ -1221,15 +1318,16 @@ export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props
           <div className="flex items-center gap-2">
             <Sparkles className="w-3 h-3 text-deloitte-green" />
             <span className="text-xs font-semibold text-white">
-              {bucketConfig.find(b => b.key === activeBucket)?.label} ({activeBucketData.total})
+              {bucketConfig.find(b => b.key === activeBucket)?.label}{' '}
+              ({exogFilterActive ? `${displayItems.length} of ${activeBucketData.total}` : activeBucketData.total})
             </span>
-            {selectableBucket && activeItems.length > 0 && (
+            {selectableBucket && displayItems.length > 0 && (
               <button
                 type="button"
                 onClick={toggleSelectAll}
                 className="text-xs text-surface-400 hover:text-white ml-2"
               >
-                {selectedIds.size === activeItems.length ? 'Deselect all' : 'Select all'}
+                {selectedIds.size === displayItems.length ? 'Deselect all' : 'Select all'}
               </button>
             )}
           </div>
@@ -1239,6 +1337,33 @@ export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props
             </span>
           )}
         </div>
+
+        {activeBucketData.items.length > 0 && (
+          <div className="px-3 py-2 border-b border-surface-700/40 flex items-center gap-2 flex-wrap">
+            <Filter className="w-3.5 h-3.5 text-surface-500" />
+            <select
+              value={filterExog}
+              onChange={(e) => {
+                setFilterExog(e.target.value);
+                setSelectedIds(new Set());
+              }}
+              className="text-xs bg-surface-800 border border-surface-700 text-surface-300 rounded-lg px-2 py-1.5 focus:border-deloitte-green/50 focus:outline-none"
+            >
+              <option value="all">All Exog Modes</option>
+              <option value="with_exog">Exog Enabled</option>
+              <option value="with_scores">Exog Scores Available</option>
+            </select>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              className="text-xs bg-surface-800 border border-surface-700 text-surface-300 rounded-lg px-2 py-1.5 focus:border-deloitte-green/50 focus:outline-none"
+            >
+              <option value="default">Default Order</option>
+              <option value="risk_desc">Risk: High → Low</option>
+              <option value="exog_gap_desc">Exog Gap: Largest First</option>
+            </select>
+          </div>
+        )}
 
         {selectableBucket && selectedIds.size > 0 && (
           <div className="px-3 py-2 bg-surface-900/60 border-b border-surface-700/40 flex items-center gap-2 flex-wrap">
@@ -1288,7 +1413,7 @@ export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props
         )}
 
         {/* Column headers */}
-        {activeBucketData.items.length > 0 && (
+        {displayItems.length > 0 && (
           <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-800/80 border-b border-surface-700/30 text-xs text-surface-500 uppercase tracking-wider font-semibold">
             {selectableBucket && <span className="w-4" />}
             <span className="w-4" />
@@ -1302,8 +1427,8 @@ export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props
         )}
 
         <div className="max-h-[320px] overflow-y-auto">
-          {activeBucketData.items.length > 0 ? (
-            activeBucketData.items.map((item: ReviewItem) => {
+          {displayItems.length > 0 ? (
+            displayItems.map((item: ReviewItem) => {
               const isFocus =
                 focusIdNum != null &&
                 (item.line_item_id === focusIdNum || String(item.line_item_id) === String(focusLineItemId));
@@ -1324,7 +1449,11 @@ export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props
           ) : (
             <div className="py-8 text-center">
               <CheckCircle className="w-6 h-6 text-deloitte-green/40 mx-auto mb-2" />
-              <p className="text-xs text-surface-500">No items in this bucket</p>
+              <p className="text-xs text-surface-500">
+                {exogFilterActive && activeBucketData.items.length > 0
+                  ? 'No items match the exog filter'
+                  : 'No items in this bucket'}
+              </p>
             </div>
           )}
         </div>

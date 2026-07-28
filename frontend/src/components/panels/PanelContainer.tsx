@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   Loader2, Table, GitCompare, Edit, ClipboardList, Settings2,
   LayoutDashboard, Shield, Target, FileInput, AlertTriangle, FolderOpen,
-  CheckSquare,
+  CheckSquare, Activity, Sparkles, GitBranch,
 } from 'lucide-react';
 import { usePanelStore } from '../../store/panelStore';
 import { toast } from '../../store/toastStore';
@@ -19,6 +19,9 @@ import { DriverInputPanel } from './DriverInputPanel';
 import { AnomalyPanel } from './AnomalyPanel';
 import { DocumentLibraryPanel } from './DocumentLibraryPanel';
 import { ApprovalsPanel } from './ApprovalsPanel';
+import { DriversPanel } from './DriversPanel';
+import { ExplainabilityPanel } from './ExplainabilityPanel';
+import { WhatIfPanel } from './WhatIfPanel';
 
 const panelIcons: Record<string, any> = {
   forecast_table: Table,
@@ -30,6 +33,9 @@ const panelIcons: Record<string, any> = {
   review_dashboard: Shield,
   accuracy_tracking: Target,
   driver_inputs: FileInput,
+  drivers: Activity,
+  explainability: Sparkles,
+  what_if: GitBranch,
   anomaly_dashboard: AlertTriangle,
   document_library: FolderOpen,
   approvals: CheckSquare,
@@ -53,10 +59,23 @@ export function PanelContainer() {
   useEffect(() => {
     if (!panelType || !panelParams) return;
 
-    if (panelType === 'skill_editor' || panelType === 'approvals') {
+    if (
+      panelType === 'skill_editor'
+      || panelType === 'approvals'
+      || panelType === 'drivers'
+      || panelType === 'explainability'
+      || panelType === 'what_if'
+    ) {
+      const titles: Record<string, string> = {
+        skill_editor: 'Skill Editor',
+        approvals: 'Approvals',
+        drivers: 'Driver Series',
+        explainability: 'Explain Variance',
+        what_if: 'What-if Scenario',
+      };
       setPanelData({
         panel_type: panelType,
-        title: panelType === 'approvals' ? 'Approvals' : 'Skill Editor',
+        title: titles[panelType] || panelType,
         data: {},
       });
       return;
@@ -173,6 +192,48 @@ export function PanelContainer() {
         onToggleWidth={toggleWidth}
       >
         <ApprovalsPanel />
+      </SlidePanel>
+    );
+  }
+
+  if (panelType === 'drivers') {
+    return (
+      <SlidePanel
+        title="Driver Series"
+        icon={<Activity className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
+        onClose={closePanel}
+        widthExpanded={widthMode === 'wide'}
+        onToggleWidth={toggleWidth}
+      >
+        <DriversPanel />
+      </SlidePanel>
+    );
+  }
+
+  if (panelType === 'explainability') {
+    return (
+      <SlidePanel
+        title="Explain Variance"
+        icon={<Sparkles className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
+        onClose={closePanel}
+        widthExpanded={widthMode === 'wide'}
+        onToggleWidth={toggleWidth}
+      >
+        <ExplainabilityPanel />
+      </SlidePanel>
+    );
+  }
+
+  if (panelType === 'what_if') {
+    return (
+      <SlidePanel
+        title="What-if Scenario"
+        icon={<GitBranch className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
+        onClose={closePanel}
+        widthExpanded={widthMode === 'wide'}
+        onToggleWidth={toggleWidth}
+      >
+        <WhatIfPanel />
       </SlidePanel>
     );
   }

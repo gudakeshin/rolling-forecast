@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import type { ChatMessage, Conversation, ContentBlock } from '../types/chat';
 
 interface ChatState {
@@ -29,134 +30,120 @@ interface ChatState {
   truncateForRegenerate: () => string | null;
 }
 
-const SIDEBAR_KEY = 'rf_chat_sidebar_expanded';
+export const useChatStore = create<ChatState>()(
+  persist(
+    (set) => ({
+      conversations: [],
+      activeConversationId: null,
+      messages: [],
+      sidebarExpanded: true,
+      isStreaming: false,
+      streamingMessage: null,
+      currentToolName: null,
 
-function readSidebarExpanded(): boolean {
-  try {
-    const v = localStorage.getItem(SIDEBAR_KEY);
-    if (v === null) return true;
-    return v === '1';
-  } catch {
-    return true;
-  }
-}
+      setConversations: (conversations) => set({ conversations }),
 
-export const useChatStore = create<ChatState>((set) => ({
-  conversations: [],
-  activeConversationId: null,
-  messages: [],
-  sidebarExpanded: readSidebarExpanded(),
-  isStreaming: false,
-  streamingMessage: null,
-  currentToolName: null,
+      removeConversation: (id) =>
+        set((state) => ({
+          conversations: state.conversations.filter((c) => c.id !== id),
+          ...(state.activeConversationId === id
+            ? { activeConversationId: null, messages: [] }
+            : {}),
+        })),
 
-  setConversations: (conversations) => set({ conversations }),
+      setActiveConversation: (id) => set({ activeConversationId: id }),
 
-  removeConversation: (id) =>
-    set((state) => ({
-      conversations: state.conversations.filter((c) => c.id !== id),
-      ...(state.activeConversationId === id
-        ? { activeConversationId: null, messages: [] }
-        : {}),
-    })),
+      setMessages: (messages) => set({ messages }),
 
-  setActiveConversation: (id) => set({ activeConversationId: id }),
+      addMessage: (message) =>
+        set((state) => ({
+          messages: [...state.messages, message],
+        })),
 
-  setMessages: (messages) => set({ messages }),
+      setSidebarExpanded: (expanded) => set({ sidebarExpanded: expanded }),
 
-  addMessage: (message) =>
-    set((state) => ({
-      messages: [...state.messages, message],
-    })),
+      toggleSidebar: () =>
+        set((state) => ({
+          sidebarExpanded: !state.sidebarExpanded,
+        })),
 
-  setSidebarExpanded: (expanded) => {
-    try {
-      localStorage.setItem(SIDEBAR_KEY, expanded ? '1' : '0');
-    } catch {
-      /* ignore */
-    }
-    set({ sidebarExpanded: expanded });
-  },
+      startStreaming: (conversationId) =>
+        set({
+          isStreaming: true,
+          streamingMessage: {
+            id: 'streaming',
+            conversation_id: conversationId,
+            role: 'assistant',
+            content: '',
+            content_blocks: [],
+            created_at: new Date().toISOString(),
+            isStreaming: true,
+          },
+        }),
 
-  toggleSidebar: () =>
-    set((state) => {
-      const expanded = !state.sidebarExpanded;
-      try {
-        localStorage.setItem(SIDEBAR_KEY, expanded ? '1' : '0');
-      } catch {
-        /* ignore */
-      }
-      return { sidebarExpanded: expanded };
-    }),
+      appendStreamContent: (text) =>
+        set((state) => {
+          if (!state.streamingMessage) return {};
+          return {
+            streamingMessage: {
+              ...state.streamingMessage,
+              content: state.streamingMessage.content + text,
+            },
+          };
+        }),
 
-  startStreaming: (conversationId) =>
-    set({
-      isStreaming: true,
-      streamingMessage: {
-        id: 'streaming',
-        conversation_id: conversationId,
-        role: 'assistant',
-        content: '',
-        content_blocks: [],
-        created_at: new Date().toISOString(),
-        isStreaming: true,
+      addStreamContentBlock: (block) =>
+        set((state) => {
+          if (!state.streamingMessage) return {};
+          return {
+            streamingMessage: {
+              ...state.streamingMessage,
+              content_blocks: [...state.streamingMessage.content_blocks, block],
+            },
+          };
+        }),
+
+      setToolInProgress: (toolName) => set({ currentToolName: toolName }),
+
+      finishStreaming: (finalMessage) =>
+        set((state) => ({
+          isStreaming: false,
+          streamingMessage: null,
+          currentToolName: null,
+          messages: [...state.messages, finalMessage],
+        })),
+
+      cancelStreaming: () =>
+        set({
+          isStreaming: false,
+          streamingMessage: null,
+          currentToolName: null,
+        }),
+
+      truncateForRegenerate: () => {
+        let prompt: string | null = null;
+        set((state) => {
+          const msgs = [...state.messages];
+          // Remove trailing assistant message(s)
+          while (msgs.length && msgs[msgs.length - 1].role === 'assistant') {
+            msgs.pop();
+          }
+          // Capture and remove the user prompt that produced them
+          if (msgs.length && msgs[msgs.length - 1].role === 'user') {
+            prompt = msgs[msgs.length - 1].content;
+            msgs.pop();
+          }
+          return { messages: msgs };
+        });
+        return prompt;
       },
     }),
-
-  appendStreamContent: (text) =>
-    set((state) => {
-      if (!state.streamingMessage) return {};
-      return {
-        streamingMessage: {
-          ...state.streamingMessage,
-          content: state.streamingMessage.content + text,
-        },
-      };
-    }),
-
-  addStreamContentBlock: (block) =>
-    set((state) => {
-      if (!state.streamingMessage) return {};
-      return {
-        streamingMessage: {
-          ...state.streamingMessage,
-          content_blocks: [...state.streamingMessage.content_blocks, block],
-        },
-      };
-    }),
-
-  setToolInProgress: (toolName) => set({ currentToolName: toolName }),
-
-  finishStreaming: (finalMessage) =>
-    set((state) => ({
-      isStreaming: false,
-      streamingMessage: null,
-      currentToolName: null,
-      messages: [...state.messages, finalMessage],
-    })),
-
-  cancelStreaming: () =>
-    set({
-      isStreaming: false,
-      streamingMessage: null,
-      currentToolName: null,
-    }),
-
-  truncateForRegenerate: () => {
-    let prompt: string | null = null;
-    set((state) => {
-      const msgs = [...state.messages];
-      // Remove trailing assistant message(s)
-      while (msgs.length && msgs[msgs.length - 1].role === 'assistant') {
-        msgs.pop();
-      }
-      // Capture and remove the user prompt that produced them
-      if (msgs.length && msgs[msgs.length - 1].role === 'user') {
-        prompt = msgs[msgs.length - 1].content;
-        msgs.pop();
-      }
-      return { messages: msgs };
-    });
-    return prompt;
-  },
-}));
+    {
+      name: 'rf_chat_store',
+      partialize: (s) => ({
+        activeConversationId: s.activeConversationId,
+        sidebarExpanded: s.sidebarExpanded,
+      }),
+    },
+  ),
+);

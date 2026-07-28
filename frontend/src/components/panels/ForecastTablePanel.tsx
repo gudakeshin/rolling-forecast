@@ -11,15 +11,6 @@ import { usePanelStore } from '../../store/panelStore';
 import { toast } from '../../store/toastStore';
 import { DataTable, type DataTableColumn } from '../ui/DataTable';
 
-// ── Deloitte Colors ──────────────────────────
-const COLORS = {
-  green: '#86BC25',
-  darkGreen: '#2C5234',
-  blue: '#012169',
-  cyan: '#00A3E0',
-  teal: '#009A44',
-};
-
 // ── Types ────────────────────────────────────
 interface QualitySummary {
   avg_confidence: number;
@@ -80,6 +71,24 @@ interface DriverContext {
   active_overrides: ActiveOverride[];
 }
 
+interface ExogModeScores {
+  n_folds: number;
+  mase_forecast: number | null;
+  mase_known: number | null;
+}
+
+interface ExogInfo {
+  mode?: string;
+  columns?: string[];
+  drivers?: Array<{
+    driver_id?: number;
+    driver_key?: string;
+    relation?: string;
+    lag?: number;
+  }>;
+  exog_mode_scores?: ExogModeScores | null;
+}
+
 interface ForecastRow {
   id: string;
   line_item_id: number;
@@ -115,6 +124,8 @@ interface ForecastRow {
   root_cause?: string;
   driver_context?: DriverContext;
   review_status?: string;
+  exog_used?: boolean;
+  exog?: ExogInfo | null;
 }
 
 interface VersionInfo {
@@ -161,8 +172,17 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
   const pageLimit = data.data.limit || 100;
 
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
-  const [filterCategory, setFilterCategory] = useState<string>('all');
-  const [filterConfidence, setFilterConfidence] = useState<string>('all');
+  const [filterCategory, setFilterCategory] = useState<string>(
+    typeof usePanelStore.getState().panelParams?.category === 'string'
+      ? usePanelStore.getState().panelParams.category
+      : 'all',
+  );
+  const [filterConfidence, setFilterConfidence] = useState<string>(
+    typeof usePanelStore.getState().panelParams?.confidence_level === 'string'
+      ? usePanelStore.getState().panelParams.confidence_level
+      : 'all',
+  );
+  const [filterExog, setFilterExog] = useState<string>('all');
   const [sortBy, setSortBy] = useState<string>('default');
   const [actioningId, setActioningId] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -203,22 +223,58 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
     });
   }, []);
 
-  // ── Filtering ──
-  const filteredRows = rows.filter(row => {
-    if (filterCategory !== 'all' && row.category !== filterCategory) return false;
-    if (filterConfidence === 'high' && row.confidence_level !== 'high') return false;
-    if (filterConfidence === 'medium' && row.confidence_level !== 'medium') return false;
-    if (filterConfidence === 'low' && row.confidence_level !== 'low') return false;
-    if (filterConfidence === 'action' && (!row.ai_recommendation || row.ai_recommendation === 'approve')) return false;
-    return true;
-  });
+  const applyServerFilters = useCallback(
+    (nextCategory: string, nextConfidence: string) => {
+      const category =
+        nextCategory !== 'all' ? nextCategory : undefined;
+      const confidence_level =
+        nextConfidence !== 'all' && nextConfidence !== 'action'
+          ? nextConfidence
+          : undefined;
+      setPanelParams({
+        ...panelParams,
+        version_id: version?.id ?? panelParams.version_id,
+        category,
+        confidence_level,
+        offset: 0,
+        _append: false,
+        _refresh: Date.now(),
+      });
+    },
+    [panelParams, setPanelParams, version?.id],
+  );
 
   // ── Sorting ──
-  const sortedRows = [...filteredRows].sort((a, b) => {
+  const exogGap = (row: ForecastRow): number | null => {
+    const s = row.exog?.exog_mode_scores;
+    if (!s) return null;
+    const forecast = typeof s.mase_forecast === 'number' ? s.mase_forecast : null;
+    const known = typeof s.mase_known === 'number' ? s.mase_known : null;
+    if (forecast == null || known == null) return null;
+    return forecast - known;
+  };
+
+  const displayRows =
+    filterConfidence === 'action'
+      ? rows.filter(
+          (row) =>
+            Boolean(row.ai_recommendation) && row.ai_recommendation !== 'approve',
+        )
+      : rows;
+
+  const filteredByExog =
+    filterExog === 'with_exog'
+      ? displayRows.filter((row) => Boolean(row.exog_used))
+      : filterExog === 'with_scores'
+        ? displayRows.filter((row) => exogGap(row) != null)
+        : displayRows;
+
+  const sortedRows = [...filteredByExog].sort((a, b) => {
     if (sortBy === 'confidence_asc') return (a.min_confidence ?? a.confidence_score ?? 0) - (b.min_confidence ?? b.confidence_score ?? 0);
     if (sortBy === 'confidence_desc') return (b.min_confidence ?? b.confidence_score ?? 0) - (a.min_confidence ?? a.confidence_score ?? 0);
     if (sortBy === 'risk_desc') return (b.ai_risk_score ?? 0) - (a.ai_risk_score ?? 0);
     if (sortBy === 'value_desc') return Math.abs(b.total_p50 ?? b.p50 ?? 0) - Math.abs(a.total_p50 ?? a.p50 ?? 0);
+    if (sortBy === 'exog_gap_desc') return Math.abs(exogGap(b) ?? -1) - Math.abs(exogGap(a) ?? -1);
     return 0; // default order from API
   });
 
@@ -314,6 +370,26 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
         ),
       },
       {
+        key: isSummaryView ? 'p10_range' : 'p10',
+        label: 'P10',
+        align: 'right',
+        render: (_, row) => (
+          <span className="font-mono text-surface-300">
+            {formatCurrency(isSummaryView ? row.p10_range : row.p10)}
+          </span>
+        ),
+      },
+      {
+        key: isSummaryView ? 'p90_range' : 'p90',
+        label: 'P90',
+        align: 'right',
+        render: (_, row) => (
+          <span className="font-mono text-surface-300">
+            {formatCurrency(isSummaryView ? row.p90_range : row.p90)}
+          </span>
+        ),
+      },
+      {
         key: 'confidence_level',
         label: 'Confidence',
         align: 'center',
@@ -352,7 +428,7 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
     <div className="space-y-3">
       {/* ── Quality Summary Banner ── */}
       {quality && (
-        <QualitySummaryBanner quality={quality} version={version} onOpenReview={handleOpenReview} />
+        <QualitySummaryBanner quality={quality} onOpenReview={handleOpenReview} />
       )}
 
       {/* ── Version Stats (fallback when no quality_summary) ── */}
@@ -370,7 +446,11 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
 
         <select
           value={filterCategory}
-          onChange={(e) => setFilterCategory(e.target.value)}
+          onChange={(e) => {
+            const next = e.target.value;
+            setFilterCategory(next);
+            applyServerFilters(next, filterConfidence);
+          }}
           className="text-xs bg-surface-800 border border-surface-700 text-surface-300 rounded-lg px-2 py-1.5 focus:border-deloitte-green/50 focus:outline-none"
         >
           <option value="all">All Categories</option>
@@ -379,7 +459,11 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
 
         <select
           value={filterConfidence}
-          onChange={(e) => setFilterConfidence(e.target.value)}
+          onChange={(e) => {
+            const next = e.target.value;
+            setFilterConfidence(next);
+            applyServerFilters(filterCategory, next);
+          }}
           className="text-xs bg-surface-800 border border-surface-700 text-surface-300 rounded-lg px-2 py-1.5 focus:border-deloitte-green/50 focus:outline-none"
         >
           <option value="all">All Confidence</option>
@@ -387,6 +471,16 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
           <option value="medium">Medium Only</option>
           <option value="low">Low Only</option>
           <option value="action">Needs Action</option>
+        </select>
+
+        <select
+          value={filterExog}
+          onChange={(e) => setFilterExog(e.target.value)}
+          className="text-xs bg-surface-800 border border-surface-700 text-surface-300 rounded-lg px-2 py-1.5 focus:border-deloitte-green/50 focus:outline-none"
+        >
+          <option value="all">All Exog Modes</option>
+          <option value="with_exog">Exog Enabled</option>
+          <option value="with_scores">Exog Scores Available</option>
         </select>
 
         <select
@@ -399,10 +493,11 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
           <option value="confidence_desc">Confidence: High → Low</option>
           <option value="risk_desc">Risk: High → Low</option>
           <option value="value_desc">Value: High → Low</option>
+          <option value="exog_gap_desc">Exog Gap: Largest First</option>
         </select>
 
         <span className="text-xs text-surface-500 ml-auto">
-          {sortedRows.length} of {rows.length} items
+          {sortedRows.length} items
         </span>
       </div>
 
@@ -461,11 +556,9 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
 // ── Quality Summary Banner ──────────────────
 function QualitySummaryBanner({
   quality,
-  version,
   onOpenReview,
 }: {
   quality: QualitySummary;
-  version?: VersionInfo;
   onOpenReview: () => void;
 }) {
   const hasCritical = quality.critical_count > 0;
@@ -678,7 +771,7 @@ function ForecastValueCell({
   const wasOverridden = savedValue !== null;
 
   return (
-    <div className="whitespace-normal" onMouseDown={(e) => e.stopPropagation()}>
+    <div className="whitespace-normal">
       {isEditing ? (
         <div className="space-y-1.5">
           <div className="flex items-center gap-1 justify-end">
@@ -778,9 +871,12 @@ function ForecastRowActions({
 
   if (hasIssue) {
     return (
-      <div className="flex items-center gap-1 justify-center" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="flex items-center gap-1 justify-center">
         <button
-          onClick={() => onAction(row.id, 'approve')}
+          onClick={(e) => {
+            e.stopPropagation();
+            onAction(row.id, 'approve');
+          }}
           disabled={isActioning}
           className="p-1 rounded-md hover:bg-deloitte-green/20 text-deloitte-green transition-colors"
           title="Approve as-is"
@@ -788,7 +884,10 @@ function ForecastRowActions({
           <CheckCircle2 className="w-3.5 h-3.5" />
         </button>
         <button
-          onClick={() => onAction(row.id, 'flag')}
+          onClick={(e) => {
+            e.stopPropagation();
+            onAction(row.id, 'flag');
+          }}
           disabled={isActioning}
           className="p-1 rounded-md hover:bg-amber-500/20 text-amber-400 transition-colors"
           title="Flag for later"
@@ -796,7 +895,10 @@ function ForecastRowActions({
           <Eye className="w-3.5 h-3.5" />
         </button>
         <button
-          onClick={onToggle}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggle();
+          }}
           className="p-1 rounded-md hover:bg-cyan-500/20 text-cyan-400 transition-colors"
           title="View AI recommendations"
         >
@@ -807,9 +909,12 @@ function ForecastRowActions({
   }
 
   return (
-    <div className="flex items-center gap-1 justify-center" onMouseDown={(e) => e.stopPropagation()}>
+    <div className="flex items-center gap-1 justify-center">
       <button
-        onClick={() => onAction(row.id, 'approve')}
+        onClick={(e) => {
+          e.stopPropagation();
+          onAction(row.id, 'approve');
+        }}
         disabled={isActioning}
         className="p-1 rounded-md hover:bg-deloitte-green/20 text-surface-500 hover:text-deloitte-green transition-colors"
         title="Approve"
@@ -818,7 +923,10 @@ function ForecastRowActions({
       </button>
       {reasoning && (
         <button
-          onClick={onToggle}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggle();
+          }}
           className="p-1 rounded-md hover:bg-surface-700 text-surface-600 hover:text-surface-300 transition-colors"
           title="View details"
         >
@@ -914,6 +1022,50 @@ function MaterialityBadge({ level }: { level: string }) {
     <span className={`text-xs font-semibold uppercase ${colors[level] || colors.low}`}>
       {level} materiality
     </span>
+  );
+}
+
+function ExogModeScoresCard({ exog }: { exog?: ExogInfo | null }) {
+  const scores = exog?.exog_mode_scores;
+  if (!exog || !scores) return null;
+  const formatMase = (value: number | null | undefined) =>
+    value == null || !Number.isFinite(value) ? 'n/a' : value.toFixed(3);
+  const forecastScore = typeof scores.mase_forecast === 'number' ? scores.mase_forecast : null;
+  const knownScore = typeof scores.mase_known === 'number' ? scores.mase_known : null;
+  const delta = forecastScore != null && knownScore != null ? forecastScore - knownScore : null;
+
+  return (
+    <div className="pl-7">
+      <div className="bg-surface-800/60 border border-deloitte-teal/20 rounded-lg p-2.5 space-y-1.5">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-semibold text-deloitte-teal uppercase tracking-wider">
+            Exogenous Validation
+          </span>
+          <span className="text-xs text-surface-500">
+            folds: {scores.n_folds ?? 0}
+          </span>
+          <span className="text-xs text-surface-500">
+            mode: {exog.mode || 'forecast'}
+          </span>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <div className="bg-surface-900/50 rounded px-2 py-1">
+            <div className="text-xs text-surface-500">MASE (forecast exog)</div>
+            <div className="text-xs font-mono text-surface-200">{formatMase(scores.mase_forecast)}</div>
+          </div>
+          <div className="bg-surface-900/50 rounded px-2 py-1">
+            <div className="text-xs text-surface-500">MASE (known exog)</div>
+            <div className="text-xs font-mono text-surface-200">{formatMase(scores.mase_known)}</div>
+          </div>
+          <div className="bg-surface-900/50 rounded px-2 py-1">
+            <div className="text-xs text-surface-500">Gap (forecast-known)</div>
+            <div className={`text-xs font-mono ${delta != null && delta > 0 ? 'text-amber-400' : 'text-deloitte-green'}`}>
+              {delta == null ? 'n/a' : `${delta > 0 ? '+' : ''}${delta.toFixed(3)}`}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1087,6 +1239,9 @@ function ExpandedRemediation({
               </div>
             </div>
           )}
+
+          {/* Reasoning — the actual AI finding */}
+          <ExogModeScoresCard exog={row.exog} />
 
           {/* Reasoning — the actual AI finding */}
           <div className="pl-7">

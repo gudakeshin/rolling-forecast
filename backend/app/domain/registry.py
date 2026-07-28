@@ -349,5 +349,24 @@ def register_all_skills() -> SkillsRegistry:
     registry.register(FetchURLSkill())
     registry.register(FinancialLookupSkill())
 
+    # U2 — driver surfaces / attribution / what-if
+    from app.domain.skills.manage_drivers import ManageDriversSkill
+    from app.domain.skills.explain_variance import ExplainVarianceSkill
+    from app.domain.skills.run_what_if import RunWhatIfSkill
+    from app.domain.skills.core_memory import (
+        CoreMemoryAppendSkill,
+        CoreMemoryReplaceSkill,
+        CoreMemoryListSkill,
+        ConversationSearchSkill,
+    )
+
+    registry.register(ManageDriversSkill())
+    registry.register(ExplainVarianceSkill())
+    registry.register(RunWhatIfSkill())
+    registry.register(CoreMemoryAppendSkill())
+    registry.register(CoreMemoryReplaceSkill())
+    registry.register(CoreMemoryListSkill())
+    registry.register(ConversationSearchSkill())
+
     logger.info(f"Registered {len(registry.list_names())} skills: {registry.list_names()}")
     return registry

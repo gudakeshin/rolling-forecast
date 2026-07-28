@@ -16,6 +16,17 @@ interface VersionState {
   refresh: () => Promise<void>;
 }
 
+interface PanelBridgeState {
+  isOpen: boolean;
+  panelParams: Record<string, any>;
+  setPanelParams: (params: Record<string, any>) => void;
+  setLoading: (loading: boolean) => void;
+}
+
+interface PanelBridgeStore {
+  getState?: () => PanelBridgeState;
+}
+
 export const useVersionStore = create<VersionState>()(
   persist(
     (set, get) => ({
@@ -31,6 +42,18 @@ export const useVersionStore = create<VersionState>()(
           activeVersionId: id,
           ...(v?.scenario ? { activeScenario: v.scenario } : {}),
         });
+        const panelBridge = (globalThis as { __RF_PANEL_STORE__?: PanelBridgeStore })
+          .__RF_PANEL_STORE__;
+        const panel = panelBridge?.getState?.();
+        if (panel?.isOpen && panel?.panelParams?.version_id) {
+          panel.setPanelParams({
+            ...panel.panelParams,
+            version_id: id,
+            offset: 0,
+            _refresh: Date.now(),
+          });
+          panel.setLoading(true);
+        }
       },
 
       setActiveScenario: (scenario) => {

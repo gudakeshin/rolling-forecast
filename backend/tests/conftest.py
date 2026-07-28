@@ -69,10 +69,10 @@ def seed_roles(db_session):
     specs = [
         dict(name="admin", description="Admin", can_input=True, can_generate=True,
              can_override=True, can_review=True, can_publish=True, can_admin=True,
-             can_view_all_bus=True),
+             can_view_all_bus=True, can_manage_drivers=True),
         dict(name="analyst", description="Analyst", can_input=True, can_generate=True,
              can_override=True, can_review=False, can_publish=False, can_admin=False,
-             can_view_all_bus=False),
+             can_view_all_bus=False, can_manage_drivers=True),
     ]
     out = {}
     for spec in specs:

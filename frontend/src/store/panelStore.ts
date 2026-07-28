@@ -118,3 +118,7 @@ export const usePanelStore = create<PanelState>((set) => ({
 
   setPanelParams: (params) => set({ panelParams: params }),
 }));
+
+// Expose store reference for cross-store refresh without import cycles.
+(globalThis as { __RF_PANEL_STORE__?: typeof usePanelStore }).__RF_PANEL_STORE__ =
+  usePanelStore;

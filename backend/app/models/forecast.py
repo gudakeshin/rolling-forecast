@@ -62,6 +62,8 @@ class ForecastVersion(Base):
     )  # Last actuals period (YYYY-MM or FY2026-P01)
     model_versions: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     random_seed: Mapped[int] = mapped_column(Integer, default=42)
+    # Selection rule pinned at version creation (mape | mase_pinball_complexity)
+    selection_rule: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(
@@ -148,9 +150,11 @@ class ForecastLineResult(Base):
 
     # Model info
     model_type: Mapped[str | None] = mapped_column(
-        String(50), nullable=True
-    )  # "arima", "prophet", "ets", "linear", "ensemble"
+        String(120), nullable=True
+    )  # arima / prophet / ets / linear / naive / seasonal_naive / …
     model_mape: Mapped[float | None] = mapped_column(Float, nullable=True)
+    model_mase: Mapped[float | None] = mapped_column(Float, nullable=True)
+    model_pinball: Mapped[float | None] = mapped_column(Float, nullable=True)
     model_r_squared: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # Override tracking
@@ -195,7 +199,7 @@ class ModelMetadata(Base):
         ForeignKey("forecast_line_results.id"), nullable=False
     )
 
-    model_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    model_type: Mapped[str] = mapped_column(String(120), nullable=False)
     parameters: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     training_window_start: Mapped[str | None] = mapped_column(
         String(7), nullable=True

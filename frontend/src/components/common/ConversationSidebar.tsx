@@ -37,7 +37,18 @@ export function ConversationSidebar() {
       setError(null);
       try {
         const list = await getConversations();
-        if (!cancelled) setConversations(list);
+        if (!cancelled) {
+          setConversations(list);
+          // Rehydrate active conversation messages on app boot/reload.
+          if (activeConversationId && list.some((c) => c.id === activeConversationId)) {
+            try {
+              const detail = await getConversation(activeConversationId);
+              if (!cancelled) setMessages(detail.messages || []);
+            } catch (e) {
+              if (!cancelled) console.error(e);
+            }
+          }
+        }
       } catch (e) {
         if (!cancelled) setError(t('sidebar.loadError'));
         console.error(e);
@@ -48,7 +59,7 @@ export function ConversationSidebar() {
     return () => {
       cancelled = true;
     };
-  }, [setConversations, t]);
+  }, [activeConversationId, setConversations, setMessages, t]);
 
   const startNew = () => {
     setActiveConversation(null);

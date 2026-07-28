@@ -25,6 +25,9 @@ class Role(Base):
     can_view_all_bus: Mapped[bool] = mapped_column(
         Boolean, default=False
     )  # Cross-BU read access (admins default True)
+    can_manage_drivers: Mapped[bool] = mapped_column(
+        Boolean, default=False
+    )  # Causal driver CRUD / ingest
 
     users: Mapped[list["User"]] = relationship(back_populates="role")
 
@@ -78,3 +81,7 @@ class User(Base):
     @property
     def can_admin(self) -> bool:
         return bool(self.role and self.role.can_admin)
+
+    @property
+    def can_manage_drivers(self) -> bool:
+        return bool(self.role and getattr(self.role, "can_manage_drivers", False))

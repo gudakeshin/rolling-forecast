@@ -12,6 +12,7 @@ export interface User {
   can_review?: boolean;
   can_publish?: boolean;
   can_admin?: boolean;
+  can_manage_drivers?: boolean;
 }
 
 export interface LoginRequest {

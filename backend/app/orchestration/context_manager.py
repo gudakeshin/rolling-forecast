@@ -2,8 +2,11 @@
 
 from typing import Any
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 from app.models.conversation import Conversation, Message
+from app.models.memory import MemoryBlock
 from app.models.user import User
+from app.config import settings
 
 
 class ContextManager:
@@ -166,7 +169,48 @@ class ContextManager:
         if last_dataset:
             context_parts.append(f"Last Loaded Dataset: {last_dataset}")
 
+        blocks = self._get_core_memory_blocks()
+        if blocks:
+            rendered = "\n".join(
+                f"- [{b.scope}] {b.label}: {b.content}" for b in blocks if (b.content or "").strip()
+            )
+            if rendered:
+                context_parts.append("Core Memory:\n" + rendered)
+
         return "\n".join(context_parts)
+
+    def _get_core_memory_blocks(self) -> list[MemoryBlock]:
+        """Return core-memory blocks visible to this user."""
+        q = self.db.query(MemoryBlock)
+        clauses = [
+            (MemoryBlock.scope == "persona") & (MemoryBlock.owner_id.is_(None)),
+            (MemoryBlock.scope == "organization") & (MemoryBlock.owner_id.is_(None)),
+            (MemoryBlock.scope == "user") & (MemoryBlock.owner_id == self.user.id),
+        ]
+        if self.user.business_unit:
+            clauses.append(
+                (MemoryBlock.scope == "business_unit")
+                & (MemoryBlock.owner_id == self.user.business_unit)
+            )
+        rows = (
+            q.filter(or_(*clauses))
+            .order_by(MemoryBlock.scope.asc(), MemoryBlock.label.asc())
+            .all()
+        )
+        # Keep prompt growth bounded even if stored blocks are larger.
+        budget = max(0, int(settings.core_memory_prompt_char_budget))
+        if budget <= 0:
+            return []
+        kept: list[MemoryBlock] = []
+        used = 0
+        for b in rows:
+            text = (b.content or "").strip()
+            cost = len(text) + len(b.scope) + len(b.label) + 8
+            if used + cost > budget and kept:
+                break
+            kept.append(b)
+            used += cost
+        return kept
 
     # ---------- Document Context (RAG) ----------
 
@@ -197,5 +241,6 @@ class ContextManager:
             "review": role.can_review,
             "publish": role.can_publish,
             "admin": role.can_admin,
+            "manage_drivers": getattr(role, "can_manage_drivers", False),
         }
         return permission_map.get(permission, False)

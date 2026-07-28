@@ -9,7 +9,8 @@ export type Capability =
   | 'can_override'
   | 'can_review'
   | 'can_publish'
-  | 'can_admin';
+  | 'can_admin'
+  | 'can_manage_drivers';
 
 interface AuthState {
   token: string | null;

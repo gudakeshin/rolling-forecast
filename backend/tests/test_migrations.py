@@ -39,7 +39,7 @@ def test_single_base_and_single_head():
     bases = script.get_bases()
     heads = script.get_heads()
     assert bases == ["001_initial"], f"expected single base, got {bases}"
-    assert heads == ["012_forecast_scenario"], f"expected single head, got {heads}"
+    assert heads == ["014_driver_model"], f"expected single head, got {heads}"
 
 
 def test_linear_chain_reachable():

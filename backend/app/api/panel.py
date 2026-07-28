@@ -7,13 +7,28 @@ from app.config import settings
 from app.database import get_db
 from app.api.auth import get_current_user
 from app.models.user import User
-from app.models.forecast import ForecastVersion, ForecastLineResult
+from app.models.forecast import ForecastVersion, ForecastLineResult, ModelMetadata
 from app.models.line_item import LineItem
 from app.models.override import Override
 from app.schemas.forecast import PanelDataResponse
 from app.services.permissions import require_permission
 
 router = APIRouter(prefix="/panel", tags=["panel"])
+
+
+def _extract_exog_payload(parameters: dict | None) -> dict | None:
+    """Return a compact exog payload for panel UI, if present."""
+    if not isinstance(parameters, dict):
+        return None
+    exog_spec = parameters.get("exog_spec")
+    if not isinstance(exog_spec, dict):
+        return None
+    return {
+        "mode": exog_spec.get("mode"),
+        "columns": exog_spec.get("columns") or [],
+        "drivers": exog_spec.get("drivers") or [],
+        "exog_mode_scores": exog_spec.get("exog_mode_scores"),
+    }
 
 
 def _version_payload(v: ForecastVersion) -> dict:
@@ -107,6 +122,18 @@ async def get_forecast_table(
 
     # Full filtered set for aggregates + grouping; only a page of rows is returned
     all_filtered = query.order_by(LineItem.display_order, ForecastLineResult.period).all()
+    metadata_by_result_id: dict[str, dict] = {}
+    result_ids = [str(r.id) for r in all_filtered]
+    if result_ids:
+        metadata_rows = (
+            db.query(ModelMetadata.line_result_id, ModelMetadata.parameters)
+            .filter(ModelMetadata.line_result_id.in_(result_ids))
+            .all()
+        )
+        metadata_by_result_id = {
+            str(line_result_id): (parameters if isinstance(parameters, dict) else {})
+            for line_result_id, parameters in metadata_rows
+        }
 
     all_scores = [r.confidence_score for r in all_filtered]
     avg_score = sum(all_scores) / len(all_scores) if all_scores else 0
@@ -120,6 +147,7 @@ async def get_forecast_table(
     if view == "detail":
         rows = []
         for r in all_filtered:
+            exog_payload = _extract_exog_payload(metadata_by_result_id.get(str(r.id)))
             rows.append({
                 "id": r.id,
                 "line_item_id": r.line_item_id,
@@ -142,6 +170,8 @@ async def get_forecast_table(
                 "ai_reasoning": r.ai_reasoning,
                 "ai_risk_score": r.ai_risk_score,
                 "review_status": r.review_status,
+                "exog_used": bool(exog_payload),
+                "exog": exog_payload,
             })
     else:
         from collections import defaultdict
@@ -153,6 +183,7 @@ async def get_forecast_table(
         for li_id, group in groups.items():
             li = group[0].line_item
             worst = min(group, key=lambda x: x.confidence_score)
+            exog_payload = _extract_exog_payload(metadata_by_result_id.get(str(worst.id)))
             avg_conf = sum(r.confidence_score for r in group) / len(group) if group else 0
             total_p50 = sum(r.p50 for r in group)
             overridden_count = sum(1 for r in group if r.is_overridden)
@@ -182,6 +213,8 @@ async def get_forecast_table(
                 "ai_reasoning": worst.ai_reasoning,
                 "ai_risk_score": worst.ai_risk_score,
                 "review_status": worst.review_status,
+                "exog_used": bool(exog_payload),
+                "exog": exog_payload,
             })
 
         rows.sort(key=lambda x: (x.get("indent_level", 0), x.get("line_item_name", "")))

@@ -58,23 +58,23 @@ def seed_roles_and_admin(db):
         {"name": "admin", "description": "System administrator",
          "can_input": True, "can_generate": True, "can_override": True,
          "can_review": True, "can_publish": True, "can_admin": True,
-         "can_view_all_bus": True},
+         "can_view_all_bus": True, "can_manage_drivers": True},
         {"name": "analyst", "description": "FP&A Analyst",
          "can_input": True, "can_generate": True, "can_override": True,
          "can_review": False, "can_publish": False, "can_admin": False,
-         "can_view_all_bus": False},
+         "can_view_all_bus": False, "can_manage_drivers": True},
         {"name": "reviewer", "description": "Finance Director / Reviewer",
          "can_input": True, "can_generate": True, "can_override": True,
          "can_review": True, "can_publish": False, "can_admin": False,
-         "can_view_all_bus": True},
+         "can_view_all_bus": True, "can_manage_drivers": True},
         {"name": "publisher", "description": "Can publish forecasts",
          "can_input": True, "can_generate": True, "can_override": True,
          "can_review": True, "can_publish": True, "can_admin": False,
-         "can_view_all_bus": True},
+         "can_view_all_bus": True, "can_manage_drivers": True},
         {"name": "input_provider", "description": "BU Head / Input Provider",
          "can_input": True, "can_generate": False, "can_override": False,
          "can_review": False, "can_publish": False, "can_admin": False,
-         "can_view_all_bus": False},
+         "can_view_all_bus": False, "can_manage_drivers": False},
     ]
 
     for role_data in roles_data:
@@ -82,9 +82,11 @@ def seed_roles_and_admin(db):
         if not existing:
             db.add(Role(**role_data))
         else:
-            # Keep can_view_all_bus in sync for seeded roles on upgrade
+            # Keep can_view_all_bus / can_manage_drivers in sync for seeded roles
             if hasattr(existing, "can_view_all_bus"):
                 existing.can_view_all_bus = role_data.get("can_view_all_bus", False)
+            if hasattr(existing, "can_manage_drivers"):
+                existing.can_manage_drivers = role_data.get("can_manage_drivers", False)
 
     db.commit()
 
@@ -238,6 +240,9 @@ from app.api.approvals import router as approvals_router
 from app.api.integrations import router as integrations_router
 from app.api.locks import router as locks_router
 from app.api.jobs import router as jobs_router
+from app.api.drivers import router as drivers_router
+from app.api.scenarios import router as scenarios_router
+from app.api.memory import router as memory_router
 
 app.include_router(health_router)
 app.include_router(auth_router, prefix="/api")
@@ -255,6 +260,9 @@ app.include_router(approvals_router, prefix="/api")
 app.include_router(integrations_router, prefix="/api")
 app.include_router(locks_router, prefix="/api")
 app.include_router(jobs_router, prefix="/api")
+app.include_router(drivers_router, prefix="/api")
+app.include_router(scenarios_router, prefix="/api")
+app.include_router(memory_router, prefix="/api")
 
 # Prometheus metrics (skip in tests — instrumentator breaks on Starlette Mount routes)
 if settings.app_env != "test":

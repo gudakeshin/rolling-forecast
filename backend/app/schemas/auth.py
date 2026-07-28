@@ -48,5 +48,6 @@ class UserResponse(BaseModel):
     can_review: bool = False
     can_publish: bool = False
     can_admin: bool = False
+    can_manage_drivers: bool = False
 
     model_config = {"from_attributes": True}

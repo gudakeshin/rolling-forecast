@@ -95,6 +95,18 @@ export async function apiPut<T>(url: string, body?: any): Promise<T> {
   return response.json();
 }
 
+export async function apiPatch<T>(url: string, body?: any): Promise<T> {
+  const response = await fetchApi(url, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Request failed' }));
+    throw new Error(error.detail || 'Request failed');
+  }
+  return response.json();
+}
+
 export async function apiDelete<T = void>(url: string): Promise<T | void> {
   const response = await fetchApi(url, { method: 'DELETE' });
   if (!response.ok) {
