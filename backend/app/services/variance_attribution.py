@@ -264,8 +264,14 @@ def _line_series(
     *,
     line_item_id: int,
     version_id: str | None,
+    prefer_pre_reconcile: bool = False,
 ) -> pd.Series:
-    """Return period-indexed line series from forecast version or actuals."""
+    """Return period-indexed line series from forecast version or actuals.
+
+    When ``prefer_pre_reconcile`` is True and a forecast version is given, use
+    ``pre_reconcile_p50`` when present (value before the latest full MinT write);
+    otherwise fall back to the published point (override or p50).
+    """
     if version_id:
         rows = (
             db.query(ForecastLineResult)
@@ -280,7 +286,13 @@ def _line_series(
             return pd.Series(dtype=float)
         vals = {}
         for r in rows:
-            vals[r.period] = float(r.override_value if r.is_overridden and r.override_value is not None else r.p50)
+            published = float(
+                r.override_value if r.is_overridden and r.override_value is not None else r.p50
+            )
+            if prefer_pre_reconcile and getattr(r, "pre_reconcile_p50", None) is not None:
+                vals[r.period] = float(r.pre_reconcile_p50)
+            else:
+                vals[r.period] = published
         return pd.Series(vals, dtype=float).sort_index()
 
     rows = (
@@ -295,6 +307,117 @@ def _line_series(
     for p, v in rows:
         out[p] = out.get(p, 0.0) + float(v)
     return pd.Series(out, dtype=float).sort_index()
+
+
+def _reconciliation_delta(
+    db: Session,
+    *,
+    line_item_id: int,
+    period_from: str,
+    period_to: str,
+    version_id: str | None,
+) -> float | None:
+    """How much of period-to-period Δ is MinT/coherence vs pre-reconcile figures.
+
+    Returns ``None`` when pre-reconcile snapshots are missing (no bucket).
+    """
+    if not version_id:
+        return None
+    rows = (
+        db.query(ForecastLineResult)
+        .filter(
+            ForecastLineResult.version_id == version_id,
+            ForecastLineResult.line_item_id == line_item_id,
+            ForecastLineResult.period.in_([period_from, period_to]),
+        )
+        .all()
+    )
+    by_period = {r.period: r for r in rows}
+    r0, r1 = by_period.get(period_from), by_period.get(period_to)
+    if r0 is None or r1 is None:
+        return None
+    if r0.pre_reconcile_p50 is None or r1.pre_reconcile_p50 is None:
+        return None
+
+    def _pub(r: ForecastLineResult) -> float:
+        if r.is_overridden and r.override_value is not None:
+            return float(r.override_value)
+        return float(r.p50)
+
+    pub_delta = _pub(r1) - _pub(r0)
+    pre_delta = float(r1.pre_reconcile_p50) - float(r0.pre_reconcile_p50)
+    recon = pub_delta - pre_delta
+    if abs(recon) < 1e-9:
+        return 0.0
+    return recon
+
+
+def _attach_reconciliation_bucket(
+    result: dict[str, Any],
+    *,
+    db: Session,
+    line_item_id: int,
+    period_from: str,
+    period_to: str,
+    version_id: str | None,
+    l0_pub: float,
+    l1_pub: float,
+) -> dict[str, Any]:
+    """Move MinT coherence delta out of residual into an explicit bucket."""
+    recon = _reconciliation_delta(
+        db,
+        line_item_id=line_item_id,
+        period_from=period_from,
+        period_to=period_to,
+        version_id=version_id,
+    )
+    buckets = dict(result.get("buckets") or {})
+    if recon is None:
+        buckets.setdefault("reconciliation", None)
+        result["buckets"] = buckets
+        return result
+
+    # Recompute Q×P residual against published Δ after peeling MinT.
+    total_delta = l1_pub - l0_pub
+    volume = float(buckets.get("volume") or 0.0)
+    price = float(buckets.get("price") or 0.0)
+    mix_raw = buckets.get("mix")
+    mix = float(mix_raw) if mix_raw is not None else 0.0
+    residual = total_delta - volume - price - mix - float(recon)
+    buckets["reconciliation"] = round(float(recon), 4)
+    buckets["unattributed"] = round(residual, 4)
+    result["buckets"] = buckets
+    result["total_delta"] = round(total_delta, 4)
+
+    explained = abs(volume) + abs(price) + (abs(mix) if mix_raw is not None else 0.0) + abs(float(recon))
+    result["explained_pct"] = (
+        round(min(float(explained / abs(total_delta) * 100), 100.0), 2)
+        if abs(total_delta) > 1e-9
+        else 100.0
+    )
+
+    step_buckets: list[tuple[str, float]] = []
+    if buckets.get("volume") is not None:
+        step_buckets.append(("Volume", float(buckets["volume"])))
+    if buckets.get("mix") is not None:
+        step_buckets.append(("Mix", float(buckets["mix"])))
+    if buckets.get("price") is not None:
+        step_buckets.append(("Price", float(buckets["price"])))
+    step_buckets.append(("Reconciliation", float(recon)))
+    step_buckets.append(("Unattributed", residual))
+    title = f"Identity decomposition {period_from} → {period_to}"
+    wf = result.get("waterfall")
+    if isinstance(wf, dict) and isinstance(wf.get("title"), str) and wf["title"]:
+        title = wf["title"]
+    result["waterfall"] = _bridge_waterfall(
+        title=title,
+        start_label=period_from,
+        start_value=l0_pub,
+        buckets=step_buckets,
+        end_label=period_to,
+        end_value=l1_pub,
+    )
+    return result
 
 
 def _line_qp_points(
@@ -328,7 +451,12 @@ def _line_qp_points(
         None,
     )
 
-    line = _line_series(db, line_item_id=line_item_id, version_id=version_id)
+    line = _line_series(
+        db,
+        line_item_id=line_item_id,
+        version_id=version_id,
+        prefer_pre_reconcile=bool(version_id),
+    )
     if period_from not in line.index or period_to not in line.index:
         return None
 
@@ -407,12 +535,23 @@ def _identity_qp_mix_for_parent(
     l0_children = sum(p[4] for p in child_points)
     l1_children = sum(p[5] for p in child_points)
 
-    parent_line = _line_series(db, line_item_id=line_item_id, version_id=version_id)
-    if period_from in parent_line.index and period_to in parent_line.index:
-        l0 = float(parent_line.loc[period_from])
-        l1 = float(parent_line.loc[period_to])
+    parent_line_pre = _line_series(
+        db, line_item_id=line_item_id, version_id=version_id, prefer_pre_reconcile=True
+    )
+    parent_line_pub = _line_series(
+        db, line_item_id=line_item_id, version_id=version_id, prefer_pre_reconcile=False
+    )
+    if period_from in parent_line_pre.index and period_to in parent_line_pre.index:
+        l0 = float(parent_line_pre.loc[period_from])
+        l1 = float(parent_line_pre.loc[period_to])
     else:
         l0, l1 = l0_children, l1_children
+
+    if period_from in parent_line_pub.index and period_to in parent_line_pub.index:
+        l0_pub = float(parent_line_pub.loc[period_from])
+        l1_pub = float(parent_line_pub.loc[period_to])
+    else:
+        l0_pub, l1_pub = l0, l1
 
     total_delta = l1 - l0
     if abs(sum_q0) < 1e-12 or abs(sum_q1) < 1e-12:
@@ -435,9 +574,10 @@ def _identity_qp_mix_for_parent(
         "volume": round(volume, 4),
         "mix": round(mix, 4),
         "price": round(price, 4),
+        "reconciliation": None,
         "unattributed": round(residual, 4),
     }
-    return {
+    out = {
         "method": "identity_qp_mix",
         "convention": conv,
         "period_from": period_from,
@@ -461,6 +601,16 @@ def _identity_qp_mix_for_parent(
             end_value=l1,
         ),
     }
+    return _attach_reconciliation_bucket(
+        out,
+        db=db,
+        line_item_id=line_item_id,
+        period_from=period_from,
+        period_to=period_to,
+        version_id=version_id,
+        l0_pub=l0_pub,
+        l1_pub=l1_pub,
+    )
 
 
 def _identity_qp_attribution(
@@ -502,6 +652,15 @@ def _identity_qp_attribution(
         return None
 
     q0, q1, p0, p1, l0, l1, price_meta = pts
+    # Q×P uses pre-reconcile L when available; published Δ may differ by MinT.
+    pub = _line_series(
+        db, line_item_id=line_item_id, version_id=version_id, prefer_pre_reconcile=False
+    )
+    if version_id and period_from in pub.index and period_to in pub.index:
+        l0_pub, l1_pub = float(pub.loc[period_from]), float(pub.loc[period_to])
+    else:
+        l0_pub, l1_pub = l0, l1
+
     total_delta = l1 - l0
 
     conv = convention if convention in {"volume_first", "price_first"} else "volume_first"
@@ -520,9 +679,10 @@ def _identity_qp_attribution(
         "volume": round(volume, 4),
         "price": round(price, 4),
         "mix": None,
+        "reconciliation": None,
         "unattributed": round(residual, 4),
     }
-    return {
+    out = {
         "method": "identity_qp",
         "convention": conv,
         "period_from": period_from,
@@ -545,6 +705,16 @@ def _identity_qp_attribution(
             end_value=l1,
         ),
     }
+    return _attach_reconciliation_bucket(
+        out,
+        db=db,
+        line_item_id=line_item_id,
+        period_from=period_from,
+        period_to=period_to,
+        version_id=version_id,
+        l0_pub=l0_pub,
+        l1_pub=l1_pub,
+    )
 
 
 def attribute_variance(

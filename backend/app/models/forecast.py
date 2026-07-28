@@ -136,6 +136,8 @@ class ForecastLineResult(Base):
     p90: Mapped[float | None] = mapped_column(Float, nullable=True)  # 90th percentile
     # Immutable model point at generation time (survives overrides; p50 is published)
     model_p50: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Point forecast immediately before the latest full MinT write (attribution)
+    pre_reconcile_p50: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # How interval bounds were produced (model | linear_aggregation | mint_diagonal | mint_full)
     bounds_method: Mapped[str | None] = mapped_column(String(40), nullable=True)

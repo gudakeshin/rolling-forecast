@@ -521,6 +521,9 @@ def _reconcile_mint_full(
             result = by_key.get((nid, period))
             if result is None:
                 continue
+            # Snapshot pre-MinT published point for variance attribution
+            if hasattr(result, "pre_reconcile_p50"):
+                result.pre_reconcile_p50 = float(result.p50 or 0.0)
             result.p50 = float(y_tilde[i])
 
             # Interval from row variance: s_i' W_leaf s_i under bottom-error model

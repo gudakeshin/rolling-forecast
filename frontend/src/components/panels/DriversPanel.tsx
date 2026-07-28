@@ -12,6 +12,7 @@ import {
   type Driver,
   type DriverLink,
 } from '../../api/drivers';
+import { useI18n } from '../../i18n/useI18n';
 import { toast } from '../../store/toastStore';
 import { DataTable, type DataTableColumn } from '../ui/DataTable';
 
@@ -20,6 +21,7 @@ const DRIVER_TYPES = [
 ];
 
 export function DriversPanel() {
+  const { t } = useI18n();
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -53,11 +55,11 @@ export function DriversPanel() {
         setLinks([]);
       }
     } catch (e: any) {
-      toast.error(e?.message || 'Failed to load drivers');
+      toast.error(e?.message || t('drivers.error.load'));
     } finally {
       setLoading(false);
     }
-  }, [selectedId]);
+  }, [selectedId, t]);
 
   useEffect(() => {
     void load();
@@ -68,12 +70,12 @@ export function DriversPanel() {
     try {
       setLinks(await listDriverLinks(driverId));
     } catch (e: any) {
-      toast.error(e?.message || 'Failed to load links');
+      toast.error(e?.message || t('drivers.error.links'));
       setLinks([]);
     } finally {
       setLinksLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (selectedId != null) void loadLinks(selectedId);
@@ -86,7 +88,7 @@ export function DriversPanel() {
 
   const handleCreate = async () => {
     if (!form.key.trim() || !form.name.trim()) {
-      toast.error('Key and name are required');
+      toast.error(t('drivers.error.keyName'));
       return;
     }
     setCreating(true);
@@ -99,12 +101,12 @@ export function DriversPanel() {
         business_unit: form.business_unit.trim() || undefined,
         source: 'manual',
       });
-      toast.success(`Created driver ${created.key}`);
+      toast.success(t('drivers.success.created', { key: created.key }));
       setForm({ key: '', name: '', driver_type: 'other', unit: '', business_unit: '' });
       await load();
       setSelectedId(created.id);
     } catch (e: any) {
-      toast.error(e?.message || 'Create failed');
+      toast.error(e?.message || t('drivers.error.create'));
     } finally {
       setCreating(false);
     }
@@ -114,10 +116,10 @@ export function DriversPanel() {
     setUploading(true);
     try {
       const result = await uploadDriversFile(file);
-      toast.success(result?.message || 'Drivers uploaded');
+      toast.success(result?.message || t('drivers.success.uploaded'));
       await load();
     } catch (e: any) {
-      toast.error(e?.message || 'Upload failed');
+      toast.error(e?.message || t('drivers.error.upload'));
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = '';
@@ -128,7 +130,7 @@ export function DriversPanel() {
     if (!selected) return;
     const lineItemId = Number(linkForm.line_item_id);
     if (!Number.isFinite(lineItemId) || lineItemId <= 0) {
-      toast.error('Enter a valid line item id');
+      toast.error(t('drivers.error.lineItem'));
       return;
     }
     try {
@@ -140,21 +142,21 @@ export function DriversPanel() {
         coefficient: linkForm.coefficient ? Number(linkForm.coefficient) : undefined,
         status: 'candidate',
       });
-      toast.success('Link created');
+      toast.success(t('drivers.success.link'));
       setLinkForm({ line_item_id: '', relation: 'level', lag: '0', coefficient: '' });
       await loadLinks(selected.id);
     } catch (e: any) {
-      toast.error(e?.message || 'Link create failed');
+      toast.error(e?.message || t('drivers.error.link'));
     }
   };
 
   const handlePromote = async (linkId: number) => {
     try {
       await promoteDriverLink(linkId);
-      toast.success('Link promoted to active');
+      toast.success(t('drivers.success.promote'));
       if (selected) await loadLinks(selected.id);
     } catch (e: any) {
-      toast.error(e?.message || 'Promote failed');
+      toast.error(e?.message || t('drivers.error.promote'));
     }
   };
 
@@ -162,7 +164,7 @@ export function DriversPanel() {
     () => [
       {
         key: 'key',
-        label: 'Key',
+        label: t('drivers.col.key'),
         render: (_, row) => (
           <button
             type="button"
@@ -173,16 +175,16 @@ export function DriversPanel() {
           </button>
         ),
       },
-      { key: 'name', label: 'Name' },
-      { key: 'driver_type', label: 'Type' },
+      { key: 'name', label: t('drivers.col.name') },
+      { key: 'driver_type', label: t('drivers.col.type') },
       {
         key: 'business_unit',
-        label: 'BU',
+        label: t('drivers.col.bu'),
         render: (v) => String(v ?? '—'),
       },
       {
         key: 'freshness',
-        label: 'Freshness',
+        label: t('drivers.col.freshness'),
         render: (_v, row) => {
           const f = row.freshness;
           if (!f) return <span className="text-surface-500">—</span>;
@@ -193,14 +195,14 @@ export function DriversPanel() {
               }`}
             >
               {f.stale ? <AlertTriangle className="w-3 h-3" /> : <Activity className="w-3 h-3" />}
-              {f.last_period || 'no data'}
-              {f.stale ? ' (stale)' : ''}
+              {f.last_period || t('drivers.freshness.noData')}
+              {f.stale ? ` ${t('drivers.freshness.stale')}` : ''}
             </span>
           );
         },
       },
     ],
-    [],
+    [t],
   );
 
   return (
@@ -212,7 +214,7 @@ export function DriversPanel() {
           className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-surface-600 text-surface-300 hover:border-deloitte-green/40"
         >
           <RefreshCw className="w-3.5 h-3.5" />
-          Refresh
+          {t('drivers.refresh')}
         </button>
         <button
           type="button"
@@ -221,7 +223,7 @@ export function DriversPanel() {
           className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-deloitte-green/15 text-deloitte-green border border-deloitte-green/25 hover:bg-deloitte-green/25 disabled:opacity-50"
         >
           {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-          Upload CSV/XLSX
+          {t('drivers.upload')}
         </button>
         <input
           ref={fileRef}
@@ -234,24 +236,24 @@ export function DriversPanel() {
           }}
         />
         <span className="text-xs text-surface-500 ml-auto">
-          {drivers.length} drivers
+          {t('drivers.count', { count: drivers.length })}
         </span>
       </div>
 
       <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl p-3 space-y-2">
         <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
           <Plus className="w-3.5 h-3.5 text-deloitte-green" />
-          Create driver
+          {t('drivers.createTitle')}
         </div>
         <div className="grid grid-cols-2 gap-2">
           <input
-            placeholder="key (e.g. headcount_na)"
+            placeholder={t('drivers.keyPlaceholder')}
             value={form.key}
             onChange={(e) => setForm((s) => ({ ...s, key: e.target.value }))}
             className="text-xs bg-surface-900 border border-surface-700 rounded-lg px-2 py-1.5 text-surface-200"
           />
           <input
-            placeholder="display name"
+            placeholder={t('drivers.namePlaceholder')}
             value={form.name}
             onChange={(e) => setForm((s) => ({ ...s, name: e.target.value }))}
             className="text-xs bg-surface-900 border border-surface-700 rounded-lg px-2 py-1.5 text-surface-200"
@@ -261,18 +263,18 @@ export function DriversPanel() {
             onChange={(e) => setForm((s) => ({ ...s, driver_type: e.target.value }))}
             className="text-xs bg-surface-900 border border-surface-700 rounded-lg px-2 py-1.5 text-surface-200"
           >
-            {DRIVER_TYPES.map((t) => (
-              <option key={t} value={t}>{t}</option>
+            {DRIVER_TYPES.map((dt) => (
+              <option key={dt} value={dt}>{dt}</option>
             ))}
           </select>
           <input
-            placeholder="unit"
+            placeholder={t('drivers.unitPlaceholder')}
             value={form.unit}
             onChange={(e) => setForm((s) => ({ ...s, unit: e.target.value }))}
             className="text-xs bg-surface-900 border border-surface-700 rounded-lg px-2 py-1.5 text-surface-200"
           />
           <input
-            placeholder="business unit"
+            placeholder={t('drivers.buPlaceholder')}
             value={form.business_unit}
             onChange={(e) => setForm((s) => ({ ...s, business_unit: e.target.value }))}
             className="text-xs bg-surface-900 border border-surface-700 rounded-lg px-2 py-1.5 text-surface-200 col-span-2"
@@ -284,7 +286,7 @@ export function DriversPanel() {
           disabled={creating}
           className="text-xs font-medium px-3 py-1.5 rounded-lg bg-deloitte-green text-white hover:bg-deloitte-green/90 disabled:opacity-50"
         >
-          {creating ? 'Creating…' : 'Create'}
+          {creating ? t('drivers.creating') : t('drivers.create')}
         </button>
       </div>
 
@@ -294,12 +296,11 @@ export function DriversPanel() {
         </div>
       ) : drivers.length === 0 ? (
         <p className="text-sm text-surface-500 text-center py-8">
-          No causal drivers yet. Create one or upload a CSV with columns
-          driver_key, period, value.
+          {t('drivers.empty')}
         </p>
       ) : (
         <DataTable
-          title="Causal drivers"
+          title={t('drivers.tableTitle')}
           columns={columns}
           rows={drivers as Array<Driver & Record<string, unknown>>}
           getRowId={(r) => String(r.id)}
@@ -313,14 +314,14 @@ export function DriversPanel() {
           <div className="flex items-center gap-2">
             <Link2 className="w-4 h-4 text-cyan-400" />
             <span className="text-sm font-semibold text-white">
-              Links — {selected.name}
+              {t('drivers.linksTitle', { name: selected.name })}
             </span>
             <span className="text-xs text-surface-500 font-mono">{selected.key}</span>
           </div>
 
           <div className="grid grid-cols-2 gap-2">
             <input
-              placeholder="line item id"
+              placeholder={t('drivers.lineItemId')}
               value={linkForm.line_item_id}
               onChange={(e) => setLinkForm((s) => ({ ...s, line_item_id: e.target.value }))}
               className="text-xs bg-surface-900 border border-surface-700 rounded-lg px-2 py-1.5 text-surface-200"
@@ -336,13 +337,13 @@ export function DriversPanel() {
               <option value="elasticity">elasticity</option>
             </select>
             <input
-              placeholder="lag"
+              placeholder={t('drivers.lag')}
               value={linkForm.lag}
               onChange={(e) => setLinkForm((s) => ({ ...s, lag: e.target.value }))}
               className="text-xs bg-surface-900 border border-surface-700 rounded-lg px-2 py-1.5 text-surface-200"
             />
             <input
-              placeholder="coefficient (optional)"
+              placeholder={t('drivers.coefficient')}
               value={linkForm.coefficient}
               onChange={(e) => setLinkForm((s) => ({ ...s, coefficient: e.target.value }))}
               className="text-xs bg-surface-900 border border-surface-700 rounded-lg px-2 py-1.5 text-surface-200"
@@ -353,13 +354,13 @@ export function DriversPanel() {
             onClick={() => void handleCreateLink()}
             className="text-xs font-medium px-3 py-1.5 rounded-lg border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
           >
-            Assert link
+            {t('drivers.assertLink')}
           </button>
 
           {linksLoading ? (
             <Loader2 className="w-4 h-4 animate-spin text-surface-500" />
           ) : links.length === 0 ? (
-            <p className="text-xs text-surface-500">No links for this driver.</p>
+            <p className="text-xs text-surface-500">{t('drivers.noLinks')}</p>
           ) : (
             <ul className="space-y-1.5">
               {links.map((l) => (
@@ -387,7 +388,7 @@ export function DriversPanel() {
                         onClick={() => void handlePromote(l.id)}
                         className="text-deloitte-green hover:underline"
                       >
-                        Promote
+                        {t('drivers.promote')}
                       </button>
                     )}
                   </span>

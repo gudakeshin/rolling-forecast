@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, GitBranch, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import { getBudgetBridge, getDriverDrilldown } from '../../api/scenarios';
+import { useI18n } from '../../i18n/useI18n';
+import type { MessageKey } from '../../i18n';
 import { usePanelStore } from '../../store/panelStore';
 import { useVersionStore } from '../../store/versionStore';
 import { toast } from '../../store/toastStore';
@@ -19,7 +21,18 @@ function formatNum(v: number | null | undefined): string {
   return `$${v.toFixed(0)}`;
 }
 
+const BUCKET_KEYS: Record<string, MessageKey> = {
+  volume: 'explain.bucket.volume',
+  price: 'explain.bucket.price',
+  mix: 'explain.bucket.mix',
+  fx: 'explain.bucket.fx',
+  constant_currency: 'explain.bucket.constant_currency',
+  reconciliation: 'explain.bucket.reconciliation',
+  unattributed: 'explain.bucket.unattributed',
+};
+
 export function ExplainabilityPanel() {
+  const { t } = useI18n();
   const activeVersionId = useVersionStore((s) => s.activeVersionId);
   const openPanel = usePanelStore((s) => s.openPanel);
   const [loading, setLoading] = useState(false);
@@ -32,7 +45,7 @@ export function ExplainabilityPanel() {
 
   const load = useCallback(async () => {
     if (!activeVersionId) {
-      toast.error('Select a forecast version first');
+      toast.error(t('explain.error.version'));
       return;
     }
     setLoading(true);
@@ -48,12 +61,12 @@ export function ExplainabilityPanel() {
         if (first?.line_item_id) setSelectedLineId(first.line_item_id);
       }
     } catch (e: any) {
-      toast.error(e?.message || 'Failed to load bridge');
+      toast.error(e?.message || t('explain.error.bridge'));
       setBridge(null);
     } finally {
       setLoading(false);
     }
-  }, [activeVersionId, convention, selectedLineId]);
+  }, [activeVersionId, convention, selectedLineId, t]);
 
   useEffect(() => {
     void load();
@@ -72,10 +85,10 @@ export function ExplainabilityPanel() {
       });
       setDrill(data);
     } catch (e: any) {
-      toast.error(e?.message || 'Drilldown failed');
+      toast.error(e?.message || t('explain.error.drill'));
       setDrill(null);
     }
-  }, [activeVersionId, selectedLineId, periodFrom, periodTo, convention]);
+  }, [activeVersionId, selectedLineId, periodFrom, periodTo, convention, t]);
 
   useEffect(() => {
     void loadDrill();
@@ -87,7 +100,7 @@ export function ExplainabilityPanel() {
   const columns: DataTableColumn<Record<string, unknown>>[] = [
     {
       key: 'line_item',
-      label: 'Line',
+      label: t('explain.col.line'),
       render: (_, row) => (
         <button
           type="button"
@@ -102,26 +115,28 @@ export function ExplainabilityPanel() {
     },
     {
       key: 'variance_vs_prior',
-      label: 'Δ Prior',
+      label: t('explain.col.prior'),
       align: 'right',
       render: (v) => formatNum(Number(v)),
     },
     {
       key: 'variance_vs_budget',
-      label: 'Δ Budget',
+      label: t('explain.col.budget'),
       align: 'right',
       render: (v) => formatNum(Number(v)),
     },
     {
       key: 'attribution',
-      label: 'Method',
+      label: t('explain.col.method'),
       render: (_v, row) => {
         const a = row.attribution as Record<string, unknown> | undefined;
         if (!a) return <span className="text-surface-500">—</span>;
         return (
           <span className="text-xs text-surface-300">
             {String(a.method || '—')}
-            {a.explained_pct != null ? ` · ${formatPct(Number(a.explained_pct))} explained` : ''}
+            {a.explained_pct != null
+              ? ` · ${formatPct(Number(a.explained_pct))} ${t('explain.explained').toLowerCase()}`
+              : ''}
           </span>
         );
       },
@@ -132,7 +147,7 @@ export function ExplainabilityPanel() {
     return (
       <div className="flex flex-col items-center justify-center py-12 gap-2 text-center">
         <AlertTriangle className="w-6 h-6 text-amber-400" />
-        <p className="text-sm text-surface-400">Select a forecast version to explain variance.</p>
+        <p className="text-sm text-surface-400">{t('explain.selectVersion')}</p>
       </div>
     );
   }
@@ -145,17 +160,17 @@ export function ExplainabilityPanel() {
           onChange={(e) => setConvention(e.target.value as 'volume_first' | 'price_first')}
           className="text-xs bg-surface-800 border border-surface-700 rounded-lg px-2 py-1.5 text-surface-300"
         >
-          <option value="volume_first">Convention: volume first</option>
-          <option value="price_first">Convention: price first</option>
+          <option value="volume_first">{t('explain.convention.volume')}</option>
+          <option value="price_first">{t('explain.convention.price')}</option>
         </select>
         <input
-          placeholder="period from"
+          placeholder={t('explain.periodFrom')}
           value={periodFrom}
           onChange={(e) => setPeriodFrom(e.target.value)}
           className="text-xs bg-surface-800 border border-surface-700 rounded-lg px-2 py-1.5 text-surface-300 w-28"
         />
         <input
-          placeholder="period to"
+          placeholder={t('explain.periodTo')}
           value={periodTo}
           onChange={(e) => setPeriodTo(e.target.value)}
           className="text-xs bg-surface-800 border border-surface-700 rounded-lg px-2 py-1.5 text-surface-300 w-28"
@@ -166,7 +181,7 @@ export function ExplainabilityPanel() {
           className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-surface-600 text-surface-300 hover:border-deloitte-green/40"
         >
           <GitBranch className="w-3.5 h-3.5" />
-          What-if builder
+          {t('explain.whatIf')}
         </button>
         <button
           type="button"
@@ -174,7 +189,7 @@ export function ExplainabilityPanel() {
           className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-surface-600 text-surface-300"
         >
           <RefreshCw className="w-3.5 h-3.5" />
-          Refresh
+          {t('explain.refresh')}
         </button>
       </div>
 
@@ -195,14 +210,17 @@ export function ExplainabilityPanel() {
               <div className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-deloitte-green" />
                 <span className="text-xs font-semibold text-white">
-                  Why did {attribution.line_item || 'this line'} move?
+                  {t('explain.whyMoved', {
+                    line: attribution.line_item || t('explain.thisLine'),
+                  })}
                 </span>
               </div>
               <p className="text-xs text-surface-400">
-                Method: <span className="text-surface-200">{attribution.method}</span>
+                {t('explain.method')}: <span className="text-surface-200">{attribution.method}</span>
                 {attribution.convention ? ` · ${attribution.convention}` : ''}
                 {' · '}
-                Explained: <span className="text-surface-200">{formatPct(attribution.explained_pct)}</span>
+                {t('explain.explained')}:{' '}
+                <span className="text-surface-200">{formatPct(attribution.explained_pct)}</span>
               </p>
               {attribution.buckets && (
                 <ul className="grid grid-cols-2 gap-1.5">
@@ -213,16 +231,16 @@ export function ExplainabilityPanel() {
                       key={k}
                       className="text-xs px-2 py-1.5 rounded-lg bg-surface-900/70 border border-surface-700/40 flex justify-between"
                     >
-                      <span className="text-surface-400 capitalize">{k.replace(/_/g, ' ')}</span>
+                      <span className="text-surface-400">
+                        {BUCKET_KEYS[k] ? t(BUCKET_KEYS[k]) : k.replace(/_/g, ' ')}
+                      </span>
                       <span className="font-mono text-surface-200">{formatNum(Number(v))}</span>
                     </li>
                   ))}
                 </ul>
               )}
               {attribution.price_meta?.price_source === 'derived_l_over_q' && (
-                <p className="text-xs text-amber-400/90">
-                  Price is derived as L÷Q — it blends rate, mix, and discount effects; not measured ASP.
-                </p>
+                <p className="text-xs text-amber-400/90">{t('explain.derivedPrice')}</p>
               )}
               {attribution.note && (
                 <p className="text-xs text-amber-400/90">{attribution.note}</p>
@@ -231,7 +249,7 @@ export function ExplainabilityPanel() {
           )}
 
           <DataTable
-            title="Budget bridge (attributed)"
+            title={t('explain.bridgeTitle')}
             columns={columns}
             rows={(bridge?.rows || []) as Record<string, unknown>[]}
             getRowId={(r) => String(r.line_item_id)}

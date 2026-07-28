@@ -316,6 +316,113 @@ def test_create_what_if_scenario_service(db_session, seed_users):
     assert rows[0].p10 == pytest.approx(90.0)  # base intervals retained
 
 
+def test_identity_qp_reconciliation_bucket_sums_to_published_delta(db_session, seed_users):
+    """MinT coherence delta is an explicit bucket; Q×P runs on pre-reconcile L."""
+    li = LineItem(
+        account_code="REV-RECON",
+        name="Revenue Recon",
+        category="Revenue",
+        display_order=20,
+    )
+    db_session.add(li)
+    db_session.flush()
+    version = ForecastVersion(
+        name="Recon Attr",
+        status="draft",
+        version_type="baseline",
+        horizon_months=2,
+        created_by=seed_users["admin"].id,
+    )
+    db_session.add(version)
+    db_session.flush()
+    # Pre-MinT L matches Q×P; published p50 includes +50 MinT move on period_to only.
+    db_session.add_all(
+        [
+            ForecastLineResult(
+                version_id=version.id,
+                line_item_id=li.id,
+                period="2024-01",
+                p10=900,
+                p50=1000.0,
+                p90=1100,
+                model_p50=1000.0,
+                pre_reconcile_p50=1000.0,
+                bounds_method="mint_full",
+            ),
+            ForecastLineResult(
+                version_id=version.id,
+                line_item_id=li.id,
+                period="2024-02",
+                p10=1200,
+                p50=1370.0,  # pre 1320 + 50 MinT
+                p90=1400,
+                model_p50=1320.0,
+                pre_reconcile_p50=1320.0,
+                bounds_method="mint_full",
+            ),
+        ]
+    )
+    q = create_driver(
+        db_session, key="qty_rev_recon", name="Quantity", driver_type="volume", actor=seed_users["admin"]
+    )
+    p = create_driver(
+        db_session, key="price_rev_recon", name="Price", driver_type="price", actor=seed_users["admin"]
+    )
+    db_session.flush()
+    upsert_driver_values(
+        db_session,
+        driver_id=q.id,
+        rows=[{"period": "2024-01", "value": 100.0}, {"period": "2024-02", "value": 120.0}],
+    )
+    upsert_driver_values(
+        db_session,
+        driver_id=p.id,
+        rows=[{"period": "2024-01", "value": 10.0}, {"period": "2024-02", "value": 11.0}],
+    )
+    assert_link(
+        db_session,
+        driver_id=q.id,
+        line_item_id=li.id,
+        relation="quantity",
+        composition_group="rev_recon",
+        status="active",
+        actor=seed_users["admin"],
+    )
+    assert_link(
+        db_session,
+        driver_id=p.id,
+        line_item_id=li.id,
+        relation="unit_price",
+        composition_group="rev_recon",
+        status="active",
+        actor=seed_users["admin"],
+    )
+    db_session.commit()
+
+    out = attribute_variance(
+        db_session,
+        line_item_id=li.id,
+        period_from="2024-01",
+        period_to="2024-02",
+        basis="identity_qp",
+        convention="volume_first",
+        version_id=version.id,
+    )
+    assert out["method"] == "identity_qp"
+    assert out["buckets"]["volume"] == pytest.approx(200.0)
+    assert out["buckets"]["price"] == pytest.approx(120.0)
+    assert out["buckets"]["reconciliation"] == pytest.approx(50.0)
+    assert out["buckets"]["unattributed"] == pytest.approx(0.0)
+    assert out["total_delta"] == pytest.approx(370.0)  # published 1370-1000
+    parts = [
+        out["buckets"]["volume"],
+        out["buckets"]["price"],
+        out["buckets"]["reconciliation"],
+        out["buckets"]["unattributed"],
+    ]
+    assert sum(parts) == pytest.approx(out["total_delta"], abs=0.01)
+
+
 @pytest.fixture
 def client():
     from app.main import app

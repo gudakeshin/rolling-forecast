@@ -151,17 +151,20 @@ async def list_drivers(
     current_user: User = Depends(require_permission("manage_drivers")),
     db: Session = Depends(get_db),
 ):
-    from app.services.driver_ingest import driver_freshness
+    from app.services.driver_ingest import drivers_freshness_batch
 
     filters = []
     if driver_type:
         filters.append(Driver.driver_type == driver_type)
     q = scoped_drivers(db, current_user, *filters).order_by(Driver.key)
-    out = []
-    for d in q.all():
-        fresh = driver_freshness(db, d.id) if include_freshness else None
-        out.append(_driver_dict(d, freshness=fresh))
-    return out
+    drivers = q.all()
+    fresh_map: dict[int, dict] = {}
+    if include_freshness and drivers:
+        fresh_map = drivers_freshness_batch(db, [d.id for d in drivers])
+    return [
+        _driver_dict(d, freshness=fresh_map.get(d.id) if include_freshness else None)
+        for d in drivers
+    ]
 
 
 @router.get("/{driver_id}/freshness")

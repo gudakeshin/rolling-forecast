@@ -5,7 +5,7 @@ import pytest
 import asyncio
 from datetime import datetime, timezone
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
 # Override database before importing app modules
@@ -26,6 +26,34 @@ from passlib.context import CryptContext
 
 # Unit-test DB is isolated from the app's test_app.db used by TestClient
 UNIT_DB_URL = "sqlite:///:memory:"
+
+
+def ensure_app_db_schema_columns() -> None:
+    """Persistent test_app.db may predate new columns; create_all won't ALTER."""
+    from app.database import engine
+
+    try:
+        flr_cols = {c["name"] for c in inspect(engine).get_columns("forecast_line_results")}
+    except Exception:
+        return
+    with engine.begin() as conn:
+        if "pre_reconcile_p50" not in flr_cols:
+            conn.execute(text("ALTER TABLE forecast_line_results ADD COLUMN pre_reconcile_p50 FLOAT"))
+        if "selection_rule" not in {
+            c["name"] for c in inspect(engine).get_columns("forecast_versions")
+        }:
+            conn.execute(text("ALTER TABLE forecast_versions ADD COLUMN selection_rule VARCHAR(64)"))
+        if "model_mase" not in flr_cols:
+            conn.execute(text("ALTER TABLE forecast_line_results ADD COLUMN model_mase FLOAT"))
+        if "model_pinball" not in flr_cols:
+            conn.execute(text("ALTER TABLE forecast_line_results ADD COLUMN model_pinball FLOAT"))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _patch_persistent_app_db_schema():
+    """Keep TestClient's sqlite file compatible with current ORM columns."""
+    ensure_app_db_schema_columns()
+    yield
 
 
 @pytest.fixture(scope="session")

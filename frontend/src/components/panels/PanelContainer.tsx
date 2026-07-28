@@ -7,6 +7,7 @@ import {
 import { usePanelStore } from '../../store/panelStore';
 import { toast } from '../../store/toastStore';
 import { apiGet } from '../../api/client';
+import { useI18n } from '../../i18n/useI18n';
 import { SlidePanel } from '../ui/SlidePanel';
 import { ForecastTablePanel } from './ForecastTablePanel';
 import { OverridesPanel } from './OverridesPanel';
@@ -42,6 +43,7 @@ const panelIcons: Record<string, any> = {
 };
 
 export function PanelContainer() {
+  const { t } = useI18n();
   const {
     panelType,
     panelParams,
@@ -69,9 +71,9 @@ export function PanelContainer() {
       const titles: Record<string, string> = {
         skill_editor: 'Skill Editor',
         approvals: 'Approvals',
-        drivers: 'Driver Series',
-        explainability: 'Explain Variance',
-        what_if: 'What-if Scenario',
+        drivers: t('panel.drivers'),
+        explainability: t('panel.explainability'),
+        what_if: t('panel.whatIf'),
       };
       setPanelData({
         panel_type: panelType,
@@ -162,7 +164,7 @@ export function PanelContainer() {
     };
     fetchData();
     return () => controller.abort();
-  }, [panelType, panelParams, setLoading, setPanelData]);
+  }, [panelType, panelParams, setLoading, setPanelData, t]);
 
   const Icon = panelIcons[panelType || ''] || Table;
 
@@ -199,7 +201,7 @@ export function PanelContainer() {
   if (panelType === 'drivers') {
     return (
       <SlidePanel
-        title="Driver Series"
+        title={t('panel.drivers')}
         icon={<Activity className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
         onClose={closePanel}
         widthExpanded={widthMode === 'wide'}
@@ -213,7 +215,7 @@ export function PanelContainer() {
   if (panelType === 'explainability') {
     return (
       <SlidePanel
-        title="Explain Variance"
+        title={t('panel.explainability')}
         icon={<Sparkles className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
         onClose={closePanel}
         widthExpanded={widthMode === 'wide'}
@@ -227,7 +229,7 @@ export function PanelContainer() {
   if (panelType === 'what_if') {
     return (
       <SlidePanel
-        title="What-if Scenario"
+        title={t('panel.whatIf')}
         icon={<GitBranch className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
         onClose={closePanel}
         widthExpanded={widthMode === 'wide'}

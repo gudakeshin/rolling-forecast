@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { GitBranch, Loader2, Plus, Trash2 } from 'lucide-react';
 import { listDrivers, type Driver } from '../../api/drivers';
 import { createWhatIf, type DriverShock } from '../../api/scenarios';
+import { useI18n } from '../../i18n/useI18n';
 import { usePanelStore } from '../../store/panelStore';
 import { useVersionStore } from '../../store/versionStore';
 import { toast } from '../../store/toastStore';
@@ -14,6 +15,7 @@ interface ShockRow {
 }
 
 export function WhatIfPanel() {
+  const { t } = useI18n();
   const activeVersionId = useVersionStore((s) => s.activeVersionId);
   const refreshVersions = useVersionStore((s) => s.refresh);
   const setActiveVersionId = useVersionStore((s) => s.setActiveVersionId);
@@ -30,8 +32,8 @@ export function WhatIfPanel() {
   useEffect(() => {
     void listDrivers()
       .then(setDrivers)
-      .catch((e) => toast.error(e?.message || 'Failed to load drivers'));
-  }, []);
+      .catch((e) => toast.error(e?.message || t('drivers.error.load')));
+  }, [t]);
 
   const addShock = () => {
     setShocks((prev) => [
@@ -50,7 +52,7 @@ export function WhatIfPanel() {
 
   const handleRun = useCallback(async () => {
     if (!activeVersionId) {
-      toast.error('Select a base forecast version first');
+      toast.error(t('whatIf.error.version'));
       return;
     }
     const parsed: DriverShock[] = [];
@@ -58,17 +60,17 @@ export function WhatIfPanel() {
       const driverId = Number(s.driver_id);
       const value = Number(s.value);
       if (!Number.isFinite(driverId) || driverId <= 0) {
-        toast.error('Each shock needs a driver');
+        toast.error(t('whatIf.error.driver'));
         return;
       }
       if (!Number.isFinite(value)) {
-        toast.error('Each shock needs a numeric value');
+        toast.error(t('whatIf.error.value'));
         return;
       }
       parsed.push({ driver_id: driverId, mode: s.mode, value });
     }
     if (!label.trim()) {
-      toast.error('Scenario label is required');
+      toast.error(t('whatIf.error.label'));
       return;
     }
 
@@ -81,50 +83,47 @@ export function WhatIfPanel() {
         shocks: parsed,
       });
       setResult(out);
-      toast.success(`Created scenario ${out.scenario_label || label}`);
+      toast.success(t('whatIf.success.created', { label: out.scenario_label || label }));
       await refreshVersions();
       if (out.scenario_version_id) {
         setActiveVersionId(out.scenario_version_id);
       }
     } catch (e: any) {
-      toast.error(e?.message || 'What-if failed');
+      toast.error(e?.message || t('whatIf.error.run'));
     } finally {
       setSubmitting(false);
     }
-  }, [activeVersionId, shocks, label, refreshVersions, setActiveVersionId]);
+  }, [activeVersionId, shocks, label, refreshVersions, setActiveVersionId, t]);
 
   return (
     <div className="space-y-4">
       <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl p-3 space-y-3">
         <div className="flex items-center gap-2">
           <GitBranch className="w-4 h-4 text-deloitte-green" />
-          <span className="text-sm font-semibold text-white">What-if scenario</span>
+          <span className="text-sm font-semibold text-white">{t('whatIf.title')}</span>
         </div>
-        <p className="text-xs text-surface-400">
-          Shock causal drivers and clone the active forecast into a scenario version.
-          Linked line items are perturbed via coefficients; P10/P90 stay on the base.
-        </p>
+        <p className="text-xs text-surface-400">{t('whatIf.subtitle')}</p>
 
         <label className="block space-y-1">
-          <span className="text-xs text-surface-500">Scenario label</span>
+          <span className="text-xs text-surface-500">{t('whatIf.label')}</span>
           <input
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             className="w-full text-xs bg-surface-900 border border-surface-700 rounded-lg px-2 py-1.5 text-surface-200"
-            placeholder="e.g. headcount_down_10"
+            placeholder={t('whatIf.labelPlaceholder')}
           />
         </label>
 
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-surface-300">Driver shocks</span>
+            <span className="text-xs font-semibold text-surface-300">{t('whatIf.shocks')}</span>
             <button
               type="button"
               onClick={addShock}
               className="inline-flex items-center gap-1 text-xs text-deloitte-green hover:underline"
             >
               <Plus className="w-3 h-3" />
-              Add shock
+              {t('whatIf.addShock')}
             </button>
           </div>
           {shocks.map((s) => (
@@ -134,7 +133,7 @@ export function WhatIfPanel() {
                 onChange={(e) => updateShock(s.id, { driver_id: e.target.value })}
                 className="text-xs bg-surface-900 border border-surface-700 rounded-lg px-2 py-1.5 text-surface-200"
               >
-                <option value="">Select driver…</option>
+                <option value="">{t('whatIf.selectDriver')}</option>
                 {drivers.map((d) => (
                   <option key={d.id} value={d.id}>
                     {d.key} — {d.name}
@@ -148,9 +147,9 @@ export function WhatIfPanel() {
                 }
                 className="text-xs bg-surface-900 border border-surface-700 rounded-lg px-2 py-1.5 text-surface-200"
               >
-                <option value="pct">% change</option>
-                <option value="absolute">absolute Δ</option>
-                <option value="replace">replace</option>
+                <option value="pct">{t('whatIf.mode.pct')}</option>
+                <option value="absolute">{t('whatIf.mode.absolute')}</option>
+                <option value="replace">{t('whatIf.mode.replace')}</option>
               </select>
               <input
                 type="number"
@@ -163,7 +162,7 @@ export function WhatIfPanel() {
                 type="button"
                 onClick={() => removeShock(s.id)}
                 className="p-1.5 text-surface-500 hover:text-red-400"
-                aria-label="Remove shock"
+                aria-label={t('whatIf.removeShock')}
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
@@ -178,20 +177,28 @@ export function WhatIfPanel() {
           className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg bg-deloitte-green text-white hover:bg-deloitte-green/90 disabled:opacity-50"
         >
           {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <GitBranch className="w-3.5 h-3.5" />}
-          Run what-if
+          {t('whatIf.run')}
         </button>
       </div>
 
       {result && (
         <div className="bg-surface-800/60 border border-deloitte-green/25 rounded-xl p-3 space-y-2">
-          <p className="text-sm text-white font-semibold">Scenario created</p>
+          <p className="text-sm text-white font-semibold">{t('whatIf.created')}</p>
           <ul className="text-xs text-surface-400 space-y-1">
             <li>
-              Version:{' '}
+              {t('whatIf.version')}:{' '}
               <span className="font-mono text-surface-200">{result.scenario_version_id}</span>
             </li>
-            <li>Line-periods perturbed: {result.affected_line_periods ?? '—'}</li>
-            <li>Line items affected: {result.affected_line_items ?? '—'}</li>
+            <li>
+              {t('whatIf.linePeriods', {
+                count: result.affected_line_periods ?? '—',
+              })}
+            </li>
+            <li>
+              {t('whatIf.lineItems', {
+                count: result.affected_line_items ?? '—',
+              })}
+            </li>
           </ul>
           <button
             type="button"
@@ -200,15 +207,13 @@ export function WhatIfPanel() {
             }
             className="text-xs text-deloitte-green hover:underline"
           >
-            Open scenario forecast table
+            {t('whatIf.openTable')}
           </button>
         </div>
       )}
 
       {!drivers.length && (
-        <p className="text-xs text-surface-500">
-          No drivers available. Create or upload drivers first, then link them to line items.
-        </p>
+        <p className="text-xs text-surface-500">{t('whatIf.emptyDrivers')}</p>
       )}
     </div>
   );

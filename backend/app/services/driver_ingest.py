@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.driver import Driver, DriverValue
@@ -27,35 +28,68 @@ def driver_freshness(
     stale_days: int = DEFAULT_STALE_DAYS,
 ) -> dict[str, Any]:
     """Surface last ingest time and staleness for a driver series."""
-    latest = (
-        db.query(DriverValue)
-        .filter(DriverValue.driver_id == driver_id)
-        .order_by(DriverValue.ingested_at.desc())
-        .first()
-    )
-    last_period = (
-        db.query(DriverValue.period)
-        .filter(DriverValue.driver_id == driver_id, DriverValue.value_type == "actual")
-        .order_by(DriverValue.period.desc())
-        .first()
-    )
-    ingested_at = latest.ingested_at if latest else None
-    now = datetime.now(timezone.utc)
-    age_days: float | None = None
-    stale = True
-    if ingested_at is not None:
-        # SQLite may return naive datetimes
-        ts = ingested_at if ingested_at.tzinfo else ingested_at.replace(tzinfo=timezone.utc)
-        age_days = (now - ts).total_seconds() / 86400.0
-        stale = age_days > stale_days
-    return {
-        "driver_id": driver_id,
-        "last_ingested_at": ingested_at.isoformat() if ingested_at else None,
-        "last_period": last_period[0] if last_period else None,
-        "age_days": round(age_days, 1) if age_days is not None else None,
-        "stale": stale,
+    return drivers_freshness_batch(db, [driver_id], stale_days=stale_days)[driver_id]
+
+
+def drivers_freshness_batch(
+    db: Session,
+    driver_ids: list[int],
+    *,
+    stale_days: int = DEFAULT_STALE_DAYS,
+) -> dict[int, dict[str, Any]]:
+    """Batch freshness for many drivers (2 queries total, not 2×N)."""
+    ids = sorted({int(i) for i in driver_ids})
+    empty = {
+        "last_ingested_at": None,
+        "last_period": None,
+        "age_days": None,
+        "stale": True,
         "stale_days_threshold": stale_days,
     }
+    out: dict[int, dict[str, Any]] = {i: {"driver_id": i, **empty} for i in ids}
+    if not ids:
+        return out
+
+    # Latest ingest per driver
+    latest_rows = (
+        db.query(
+            DriverValue.driver_id,
+            func.max(DriverValue.ingested_at).label("last_ingested_at"),
+        )
+        .filter(DriverValue.driver_id.in_(ids))
+        .group_by(DriverValue.driver_id)
+        .all()
+    )
+    # Latest actual period per driver
+    period_rows = (
+        db.query(
+            DriverValue.driver_id,
+            func.max(DriverValue.period).label("last_period"),
+        )
+        .filter(DriverValue.driver_id.in_(ids), DriverValue.value_type == "actual")
+        .group_by(DriverValue.driver_id)
+        .all()
+    )
+    last_period_by = {int(r.driver_id): r.last_period for r in period_rows}
+    now = datetime.now(timezone.utc)
+    for r in latest_rows:
+        did = int(r.driver_id)
+        ingested_at = r.last_ingested_at
+        age_days: float | None = None
+        stale = True
+        if ingested_at is not None:
+            ts = ingested_at if ingested_at.tzinfo else ingested_at.replace(tzinfo=timezone.utc)
+            age_days = (now - ts).total_seconds() / 86400.0
+            stale = age_days > stale_days
+        out[did] = {
+            "driver_id": did,
+            "last_ingested_at": ingested_at.isoformat() if ingested_at else None,
+            "last_period": last_period_by.get(did),
+            "age_days": round(age_days, 1) if age_days is not None else None,
+            "stale": stale,
+            "stale_days_threshold": stale_days,
+        }
+    return out
 
 
 async def ingest_drivers_file(
