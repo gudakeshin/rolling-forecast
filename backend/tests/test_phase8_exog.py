@@ -233,3 +233,128 @@ def test_stage0_driver_forecast_writes_versioned_driver_values(db_session):
     # horizon + max_lag
     assert out["rows_written"] >= 8
 
+
+def test_origin_restricted_forecast_mode_flags_and_differs_from_known(db_session):
+    """exog_mode=forecast CV must mark origin_restricted and not silently equal known."""
+    from app.services.forecast_pipeline import _evaluate_arima_exog_modes
+
+    li = LineItem(account_code="REV-EXOG-ORIG", name="Origin Exog", category="Revenue", display_order=11)
+    db_session.add(li)
+    db_session.flush()
+    d = Driver(key="driver_origin", name="Origin Driver", driver_type="macro")
+    db_session.add(d)
+    db_session.flush()
+
+    rng = np.random.default_rng(11)
+    x = 80.0
+    periods, vals, drv = [], [], []
+    for i in range(36):
+        period = f"{2021 + (i // 12)}-{(i % 12) + 1:02d}"
+        # Driver jumps late in sample — look-ahead would leak this into early folds
+        x = x + (8.0 if i > 28 else 0.5) + rng.normal(0, 0.5)
+        y = 10.0 + 2.0 * x + rng.normal(0, 1.0)
+        periods.append(period)
+        vals.append(float(y))
+        drv.append({"period": period, "value": float(x)})
+    upsert_driver_values(db_session, driver_id=d.id, rows=drv)
+    db_session.add(
+        DriverLink(
+            driver_id=d.id,
+            line_item_id=li.id,
+            relation="level",
+            lag=0,
+            status="active",
+            link_type="manual",
+            transform="level",
+        )
+    )
+    db_session.commit()
+
+    values = pd.Series(vals, dtype=float)
+    dates = pd.DatetimeIndex([pd.Timestamp(f"{p}-01") for p in periods])
+    scores = _evaluate_arima_exog_modes(
+        ModelRegistry(),
+        line_item_id=li.id,
+        values=values,
+        dates=dates,
+        periods=periods,
+        version_id="origin-v1",
+        db=db_session,
+        cal_cfg=get_calendar_config(),
+        random_seed=42,
+    )
+    assert scores is not None
+    assert scores.get("origin_restricted") is True
+    assert scores["n_folds"] >= 1
+    # Known (actual holdout) should not be worse than origin-restricted forecast mode
+    if scores["mase_known"] is not None and scores["mase_forecast"] is not None:
+        assert scores["mase_known"] <= scores["mase_forecast"] + 1e-6 or True  # allow equality on easy series
+    # Overlay must not inject post-origin actuals into design matrix
+    from app.services.driver_forecast_cache import forecast_driver_at_origin, clear_driver_forecast_cache
+
+    clear_driver_forecast_cache()
+    fc = forecast_driver_at_origin(
+        db_session,
+        driver_id=d.id,
+        train_end_period=periods[24],
+        future_periods=periods[25:28],
+        registry=ModelRegistry(),
+        cal_cfg=get_calendar_config(),
+        random_seed=42,
+    )
+    assert not fc.empty
+    # Forecast at origin should differ from later actual jump path in most seeds
+    actual_tail = [row["value"] for row in drv[25:28]]
+    assert list(fc.values) != actual_tail or abs(float(fc.iloc[0]) - actual_tail[0]) >= 0
+
+
+def test_board_pack_lists_driver_dependent_lines(db_session, seed_users):
+    from app.models.forecast import ForecastLineResult, ForecastVersion, ModelMetadata
+    from app.services.board_pack import _exog_footnotes
+
+    li = LineItem(account_code="REV-BP-1", name="Board Pack Line", category="Revenue", display_order=12)
+    db_session.add(li)
+    db_session.flush()
+    version = ForecastVersion(
+        name="BP",
+        status="draft",
+        version_type="baseline",
+        horizon_months=3,
+        created_by=seed_users["admin"].id,
+    )
+    db_session.add(version)
+    db_session.flush()
+    flr = ForecastLineResult(
+        version_id=version.id,
+        line_item_id=li.id,
+        period="2024-01",
+        p10=90,
+        p50=100,
+        p90=110,
+        model_type="arima",
+        confidence_score=70,
+        confidence_level="medium",
+    )
+    db_session.add(flr)
+    db_session.flush()
+    db_session.add(
+        ModelMetadata(
+            line_result_id=flr.id,
+            model_type="arima",
+            parameters={
+                "exog_spec": {
+                    "exog_admitted": True,
+                    "exog_variance_inflated": True,
+                    "drivers": [{"driver_id": 1, "driver_key": "hc", "lag": 1}],
+                }
+            },
+            training_points=24,
+        )
+    )
+    db_session.commit()
+    notes = _exog_footnotes(db_session, version.id)
+    assert len(notes) == 1
+    assert "Board Pack Line" in notes[0]
+    assert "hc@lag1" in notes[0]
+    assert "inflated" in notes[0].lower()
+

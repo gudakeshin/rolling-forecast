@@ -3,6 +3,12 @@
 Every number here comes from arithmetic over accuracy records and overrides; no
 LLM is involved in detection. The pass only ever writes ``candidate`` rows — a
 reviewer must promote them to ``active`` before they influence anything.
+
+Promotion is not the same as consumption. An ``active`` heuristic derived from
+reviewer overrides (``source == "overrides"``) is a record of human behaviour,
+not evidence about the world, so it never touches model selection — promoting it
+only makes it visible. Only ``source == "actuals"`` heuristics are eligible to
+nudge a forecast, and even then the caller applies its own guards.
 """
 
 from __future__ import annotations
@@ -30,6 +36,11 @@ MIN_ABS_BIAS_PCT = 2.0
 MIN_DIRECTION_CONSISTENCY = 0.67
 MIN_ABS_OVERRIDE_PCT = 1.0
 CANDIDATE_REVIEW_DAYS = 90
+
+# Only these sources may influence model selection once active. Override-derived
+# heuristics describe reviewer habit, so consuming them would close the loop on
+# ourselves rather than on reality.
+INFLUENCING_SOURCES = frozenset({"actuals"})
 
 
 def horizon_bucket(offset: Any) -> str:
@@ -351,3 +362,167 @@ def run_reflection_pass(
     )
     db.commit()
     return summary
+
+
+def influences_selection(row: LearnedHeuristic) -> bool:
+    """True when an active heuristic is allowed to influence model selection."""
+    return row.status == "active" and (row.source or "") in INFLUENCING_SOURCES
+
+
+def heuristic_summary(row: LearnedHeuristic) -> dict[str, Any]:
+    """Compact, JSON-safe description for stamping into forecast metadata."""
+    return {
+        "id": row.id,
+        "kind": row.kind,
+        "scope": row.scope,
+        "line_item_id": row.line_item_id,
+        "model_type": row.model_type,
+        "horizon_bucket": row.horizon_bucket,
+        "source": row.source,
+        "effect_size": row.effect_size,
+        "statement": row.statement,
+        "influences_selection": influences_selection(row),
+    }
+
+
+def _get_heuristic(db: Session, heuristic_id: int) -> LearnedHeuristic:
+    row = (
+        db.query(LearnedHeuristic)
+        .filter(LearnedHeuristic.id == heuristic_id)
+        .first()
+    )
+    if row is None:
+        raise ValueError(f"Heuristic {heuristic_id} not found")
+    return row
+
+
+def _supersede_siblings(db: Session, row: LearnedHeuristic) -> list[int]:
+    """Retire other active heuristics covering the same slice.
+
+    Two active heuristics for the same (kind, scope, line item, category, model,
+    horizon bucket) would contradict each other, so promoting one retires the
+    rest of that signature.
+    """
+    siblings = (
+        db.query(LearnedHeuristic)
+        .filter(
+            LearnedHeuristic.id != row.id,
+            LearnedHeuristic.status == "active",
+            LearnedHeuristic.kind == row.kind,
+            LearnedHeuristic.scope == row.scope,
+            LearnedHeuristic.line_item_id == row.line_item_id,
+            LearnedHeuristic.category == row.category,
+            LearnedHeuristic.model_type == row.model_type,
+            LearnedHeuristic.horizon_bucket == row.horizon_bucket,
+        )
+        .all()
+    )
+    for sibling in siblings:
+        sibling.status = "superseded"
+    return [s.id for s in siblings]
+
+
+def promote_heuristic(
+    db: Session, heuristic_id: int, actor: User | None = None
+) -> LearnedHeuristic:
+    """Promote a candidate to ``active`` and retire conflicting active rows.
+
+    Sets the transient ``influences_selection`` attribute on the returned row so
+    callers can tell a consumable heuristic from a merely-visible one.
+    """
+    row = _get_heuristic(db, heuristic_id)
+    if row.status not in ("candidate", "active"):
+        raise ValueError(
+            f"Heuristic {heuristic_id} is '{row.status}' — only candidate or "
+            "active heuristics can be promoted"
+        )
+
+    row.status = "active"
+    row.approved_by = getattr(actor, "id", None)
+    superseded = _supersede_siblings(db, row)
+    db.flush()
+
+    consumable = influences_selection(row)
+    record_audit(
+        db,
+        action="heuristic.promote",
+        entity_type="learned_heuristic",
+        entity_id=str(row.id),
+        actor_id=getattr(actor, "id", None),
+        actor_username=getattr(actor, "username", None),
+        details={
+            "kind": row.kind,
+            "source": row.source,
+            "line_item_id": row.line_item_id,
+            "model_type": row.model_type,
+            "horizon_bucket": row.horizon_bucket,
+            "effect_size": row.effect_size,
+            "superseded_ids": superseded,
+            "influences_selection": consumable,
+        },
+    )
+    db.commit()
+    db.refresh(row)
+    row.influences_selection = consumable
+    row.superseded_ids = superseded
+    return row
+
+
+def reject_heuristic(
+    db: Session, heuristic_id: int, actor: User | None = None
+) -> LearnedHeuristic:
+    """Mark a candidate or active heuristic ``rejected``."""
+    row = _get_heuristic(db, heuristic_id)
+    if row.status not in ("candidate", "active"):
+        raise ValueError(
+            f"Heuristic {heuristic_id} is '{row.status}' — only candidate or "
+            "active heuristics can be rejected"
+        )
+    previous = row.status
+    row.status = "rejected"
+    row.approved_by = getattr(actor, "id", None)
+    db.flush()
+
+    record_audit(
+        db,
+        action="heuristic.reject",
+        entity_type="learned_heuristic",
+        entity_id=str(row.id),
+        actor_id=getattr(actor, "id", None),
+        actor_username=getattr(actor, "username", None),
+        details={
+            "kind": row.kind,
+            "source": row.source,
+            "line_item_id": row.line_item_id,
+            "previous_status": previous,
+        },
+    )
+    db.commit()
+    db.refresh(row)
+    row.influences_selection = False
+    return row
+
+
+def active_heuristics_for_line(
+    db: Session,
+    line_item_id: int,
+    *,
+    kind: str = "error_bias",
+    consumable_only: bool = True,
+) -> list[LearnedHeuristic]:
+    """Active heuristics attached to one line item, newest proposal first.
+
+    With ``consumable_only`` (the default) override-derived rows are filtered
+    out, so the result is safe to feed into selection logic.
+    """
+    q = db.query(LearnedHeuristic).filter(
+        LearnedHeuristic.line_item_id == line_item_id,
+        LearnedHeuristic.status == "active",
+    )
+    if kind:
+        q = q.filter(LearnedHeuristic.kind == kind)
+    if consumable_only:
+        q = q.filter(LearnedHeuristic.source.in_(tuple(INFLUENCING_SOURCES)))
+    return q.order_by(
+        LearnedHeuristic.proposed_at.desc(), LearnedHeuristic.id.desc()
+    ).all()

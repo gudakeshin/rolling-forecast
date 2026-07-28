@@ -9,9 +9,11 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.driver import Driver, DriverDiscoveryRun, DriverLink
 from app.models.line_item import LineItem
+from app.models.sign_prior import SIGN_PRIOR_FAMILIES, SignPrior
 from app.models.user import User
 from app.services.audit import record_audit
 from app.services.driver_discovery import (
+    DEFAULT_SIGN_PRIORS,
     discover_drivers_for_line,
     discovery_run_dict,
 )
@@ -102,6 +104,30 @@ class DiscoveryRunRequest(BaseModel):
     placebo_draws: int | None = Field(None, ge=10, le=2000)
     driver_ids: list[int] | None = None
     random_seed: int | None = None
+
+
+class SignPriorRow(BaseModel):
+    driver_type: str = Field(..., min_length=1, max_length=50)
+    line_family: str = Field(..., min_length=1, max_length=20)
+    # -1 or 1 only: "no opinion" is expressed by omitting the pair, not by 0
+    expected_sign: int = Field(..., ge=-1, le=1)
+    notes: str | None = None
+
+
+class SignPriorsUpsert(BaseModel):
+    priors: list[SignPriorRow] = Field(..., min_length=1)
+
+
+def _sign_prior_dict(row: SignPrior) -> dict:
+    return {
+        "driver_type": row.driver_type,
+        "line_family": row.line_family,
+        "expected_sign": int(row.expected_sign),
+        "notes": row.notes,
+        "source": "sign_priors_table",
+        "updated_by": row.updated_by,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
 
 
 def _driver_dict(d: Driver, freshness: dict | None = None) -> dict:
@@ -299,6 +325,114 @@ async def promote_link_endpoint(
     db.commit()
     db.refresh(link)
     return _link_dict(link)
+
+
+def _effective_sign_priors(db: Session) -> dict:
+    """Table rows first, hardcoded defaults for every pair the table omits."""
+    rows = (
+        db.query(SignPrior)
+        .order_by(SignPrior.driver_type.asc(), SignPrior.line_family.asc())
+        .all()
+    )
+    priors = [_sign_prior_dict(r) for r in rows]
+    stored = {(r.driver_type, r.line_family) for r in rows}
+    for (driver_type, family), sign in sorted(DEFAULT_SIGN_PRIORS.items()):
+        if (driver_type, family) in stored:
+            continue
+        priors.append(
+            {
+                "driver_type": driver_type,
+                "line_family": family,
+                "expected_sign": int(sign),
+                "notes": None,
+                "source": "default_dict",
+                "updated_by": None,
+                "updated_at": None,
+            }
+        )
+    return {
+        "priors": priors,
+        "families": sorted(SIGN_PRIOR_FAMILIES),
+        "count": len(priors),
+    }
+
+
+@router.get("/sign-priors")
+async def list_sign_priors(
+    current_user: User = Depends(require_permission("manage_drivers")),
+    db: Session = Depends(get_db),
+):
+    return _effective_sign_priors(db)
+
+
+@router.put("/sign-priors")
+async def upsert_sign_priors(
+    body: SignPriorsUpsert,
+    current_user: User = Depends(require_permission("manage_drivers")),
+    db: Session = Depends(get_db),
+):
+    """Create or update priors by (driver_type, line_family)."""
+    seen: set[tuple[str, str]] = set()
+    normalized: list[tuple[str, str, int, str | None]] = []
+    for prior in body.priors:
+        driver_type = prior.driver_type.strip().lower()
+        family = prior.line_family.strip().lower()
+        if family not in SIGN_PRIOR_FAMILIES:
+            raise HTTPException(
+                400,
+                f"Invalid line_family '{prior.line_family}' — expected one of "
+                f"{sorted(SIGN_PRIOR_FAMILIES)}",
+            )
+        if prior.expected_sign not in (-1, 1):
+            raise HTTPException(
+                400, "expected_sign must be -1 or 1 (omit the pair for no opinion)"
+            )
+        key = (driver_type, family)
+        if key in seen:
+            raise HTTPException(400, f"Duplicate prior for {key} in one request")
+        seen.add(key)
+        normalized.append((driver_type, family, prior.expected_sign, prior.notes))
+
+    created = 0
+    updated = 0
+    for driver_type, family, sign, notes in normalized:
+        row = (
+            db.query(SignPrior)
+            .filter(
+                SignPrior.driver_type == driver_type,
+                SignPrior.line_family == family,
+            )
+            .first()
+        )
+        if row is None:
+            row = SignPrior(driver_type=driver_type, line_family=family)
+            db.add(row)
+            created += 1
+        else:
+            updated += 1
+        row.expected_sign = sign
+        row.notes = notes
+        row.updated_by = current_user.id
+    db.flush()
+
+    record_audit(
+        db,
+        action="driver.sign_priors.upsert",
+        entity_type="sign_prior",
+        entity_id=None,
+        actor_id=current_user.id,
+        actor_username=current_user.username,
+        details={
+            "created": created,
+            "updated": updated,
+            "priors": [
+                {"driver_type": t, "line_family": f, "expected_sign": s}
+                for t, f, s, _ in normalized
+            ],
+        },
+    )
+    db.commit()
+    return {"created": created, "updated": updated, **_effective_sign_priors(db)}
 
 
 @router.get("/by-line/{line_item_id}/links")

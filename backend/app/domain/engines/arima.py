@@ -210,13 +210,20 @@ class ARIMAModel(IForecastModel):
                     ci_arr = np.asarray(ci, dtype=float)
                     lower, upper = ci_arr[:, 0], ci_arr[:, 1]
 
+        from app.services.driver_forecast_cache import extract_exog_betas
+
+        public_params = {k: v for k, v in params.items() if not str(k).startswith("_")}
+        betas = extract_exog_betas(params)
+        if betas:
+            public_params["exog_betas"] = betas
+
         return ForecastOutput(
             point_forecast=forecast,
             lower_bound=lower,
             upper_bound=upper,
             periods=periods,
             model_type=self.name,
-            parameters={k: v for k, v in params.items() if not str(k).startswith("_")},
+            parameters=public_params,
             fit_metrics={
                 "in_sample_mape": params.get("in_sample_mape", params.get("mape", 0)),
                 "r_squared": params.get("r_squared", 0),

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   Loader2, Table, GitCompare, Edit, ClipboardList, Settings2,
   LayoutDashboard, Shield, Target, FileInput, AlertTriangle, FolderOpen,
-  CheckSquare, Activity, Sparkles, GitBranch,
+  CheckSquare, Activity, Sparkles, GitBranch, Brain,
 } from 'lucide-react';
 import { usePanelStore } from '../../store/panelStore';
 import { toast } from '../../store/toastStore';
@@ -23,6 +23,7 @@ import { ApprovalsPanel } from './ApprovalsPanel';
 import { DriversPanel } from './DriversPanel';
 import { ExplainabilityPanel } from './ExplainabilityPanel';
 import { WhatIfPanel } from './WhatIfPanel';
+import { HeuristicsPanel } from './HeuristicsPanel';
 
 const panelIcons: Record<string, any> = {
   forecast_table: Table,
@@ -37,6 +38,7 @@ const panelIcons: Record<string, any> = {
   drivers: Activity,
   explainability: Sparkles,
   what_if: GitBranch,
+  heuristics: Brain,
   anomaly_dashboard: AlertTriangle,
   document_library: FolderOpen,
   approvals: CheckSquare,
@@ -67,6 +69,7 @@ export function PanelContainer() {
       || panelType === 'drivers'
       || panelType === 'explainability'
       || panelType === 'what_if'
+      || panelType === 'heuristics'
     ) {
       const titles: Record<string, string> = {
         skill_editor: 'Skill Editor',
@@ -74,6 +77,7 @@ export function PanelContainer() {
         drivers: t('panel.drivers'),
         explainability: t('panel.explainability'),
         what_if: t('panel.whatIf'),
+        heuristics: t('panel.heuristics'),
       };
       setPanelData({
         panel_type: panelType,
@@ -236,6 +240,20 @@ export function PanelContainer() {
         onToggleWidth={toggleWidth}
       >
         <WhatIfPanel />
+      </SlidePanel>
+    );
+  }
+
+  if (panelType === 'heuristics') {
+    return (
+      <SlidePanel
+        title={t('panel.heuristics')}
+        icon={<Brain className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
+        onClose={closePanel}
+        widthExpanded={widthMode === 'wide'}
+        onToggleWidth={toggleWidth}
+      >
+        <HeuristicsPanel />
       </SlidePanel>
     );
   }

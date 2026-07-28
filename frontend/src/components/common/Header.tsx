@@ -20,6 +20,7 @@ import {
   Activity,
   Sparkles,
   GitBranch,
+  Brain,
 } from 'lucide-react';
 import { useAuthStore, useCan } from '../../store/authStore';
 import { usePanelStore } from '../../store/panelStore';
@@ -148,6 +149,13 @@ export function Header() {
       labelKey: 'nav.anomalies',
       icon: AlertTriangle,
       show: canReview,
+    },
+    {
+      kind: 'panel',
+      panel: 'heuristics',
+      labelKey: 'nav.heuristics',
+      icon: Brain,
+      show: canReview || canAdmin,
     },
     {
       kind: 'link',

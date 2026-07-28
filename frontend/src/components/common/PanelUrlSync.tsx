@@ -15,6 +15,7 @@ const VALID_PANELS = new Set([
   'explainability',
   'what_if',
   'anomaly_dashboard',
+  'heuristics',
   'document_library',
   'approvals',
   'skill_editor',

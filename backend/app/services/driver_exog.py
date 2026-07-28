@@ -33,8 +33,13 @@ def _materialize_with_precedence(
     driver_id: int,
     periods: list[str],
     version_id: str | None,
+    overlay: pd.Series | None = None,
 ) -> pd.Series:
-    """Compose period-indexed driver values with plan>scenario>forecast>actual precedence."""
+    """Compose period-indexed driver values with plan>scenario>forecast>actual precedence.
+
+    ``overlay`` (if provided) wins for any periods it covers — used by fold CV to inject
+    origin-restricted driver forecasts without writing the DB.
+    """
     idx = pd.Index(periods, dtype=str)
     out = pd.Series(index=idx, dtype=float)
 
@@ -43,7 +48,7 @@ def _materialize_with_precedence(
     if not actual.empty:
         out.update(actual.astype(float))
 
-    # Version-scoped overlays (highest precedence first)
+    # Version-scoped overlays (highest precedence first among stored types)
     if version_id:
         for value_type in ("plan", "scenario", "forecast"):
             s = materialize_driver_series(
@@ -54,6 +59,10 @@ def _materialize_with_precedence(
             )
             if not s.empty:
                 out.update(s.astype(float))
+
+    # Fold-local origin forecasts beat stored overlays for the periods they cover
+    if overlay is not None and not overlay.empty:
+        out.update(overlay.astype(float))
 
     return out
 
@@ -66,8 +75,13 @@ def build_exog_for_line(
     future_periods: list[str],
     version_id: str | None,
     max_links: int = 3,
+    overlays: dict[int, pd.Series] | None = None,
 ) -> ExogBundle | None:
-    """Build aligned train/future exog matrices from active driver links."""
+    """Build aligned train/future exog matrices from active driver links.
+
+    ``overlays`` maps ``driver_id → series`` of origin-restricted forecasts used for
+    Phase 8 CV ``exog_mode=forecast`` holdouts.
+    """
     links = (
         db.query(DriverLink, Driver)
         .join(Driver, Driver.id == DriverLink.driver_id)
@@ -94,6 +108,7 @@ def build_exog_for_line(
             driver_id=driver.id,
             periods=full_periods,
             version_id=version_id,
+            overlay=(overlays or {}).get(int(driver.id)),
         )
         if series.empty:
             continue
@@ -121,8 +136,13 @@ def build_exog_for_line(
         return None
 
     exog_train = exog_all.reindex(train_idx)
-    exog_future = exog_all.reindex(future_idx)
-    if exog_train.empty or exog_future.empty:
+    exog_future = (
+        exog_all.reindex(future_idx) if len(future_periods) else pd.DataFrame(index=future_idx)
+    )
+    if exog_train.empty or exog_train.isna().all().all():
+        return None
+    # Allow empty future when caller only needs the training design matrix (fold CV).
+    if len(future_periods) and (exog_future.empty or exog_future.isna().all().all()):
         return None
 
     return ExogBundle(exog_train=exog_train, exog_future=exog_future, specs=specs)

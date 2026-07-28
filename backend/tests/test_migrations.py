@@ -39,7 +39,7 @@ def test_single_base_and_single_head():
     bases = script.get_bases()
     heads = script.get_heads()
     assert bases == ["001_initial"], f"expected single base, got {bases}"
-    assert heads == ["017_memory_archival_heuristics"], f"expected single head, got {heads}"
+    assert heads == ["018_sign_priors"], f"expected single head, got {heads}"
 
 
 def test_linear_chain_reachable():
@@ -289,6 +289,33 @@ def test_dedupe_then_unique_on_actuals(tmp_sqlite_url):
             text("SELECT value FROM actuals_records WHERE period='2024-01'")
         ).scalar()
         assert val == 99.0
+
+
+def test_sign_priors_seeded_and_idempotent(tmp_sqlite_url):
+    """018 seeds the discovery defaults and re-running head does not duplicate."""
+    cfg = _alembic_config(tmp_sqlite_url)
+    command.upgrade(cfg, "head")
+
+    from app.services.driver_discovery import DEFAULT_SIGN_PRIORS
+
+    engine = create_engine(tmp_sqlite_url)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT driver_type, line_family, expected_sign FROM sign_priors")
+        ).fetchall()
+    seeded = {(t, f): s for t, f, s in rows}
+    assert seeded == {k: v for k, v in DEFAULT_SIGN_PRIORS.items()}
+
+    command.upgrade(cfg, "head")
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT COUNT(*) FROM sign_priors")).scalar() == len(
+            DEFAULT_SIGN_PRIORS
+        )
+
+    uniques = {
+        uc["name"] for uc in inspect(engine).get_unique_constraints("sign_priors")
+    } | {ix["name"] for ix in inspect(engine).get_indexes("sign_priors")}
+    assert "uq_sign_priors_type_family" in uniques
 
 
 def test_bulk_upsert_idempotent(tmp_sqlite_url):

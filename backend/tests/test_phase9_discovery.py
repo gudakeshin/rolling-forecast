@@ -364,6 +364,18 @@ def test_sign_priors_default_dict():
     assert expected_sign_for("headcount", None) is None
 
 
+def test_sign_priors_table_overrides_default(db_session):
+    """See tests/test_sign_priors.py for the full admin surface."""
+    from app.models.sign_prior import SignPrior
+
+    db_session.add(
+        SignPrior(driver_type="headcount", line_family="expense", expected_sign=-1)
+    )
+    db_session.commit()
+    assert expected_sign_for("headcount", "expense", db_session) == -1
+    assert expected_sign_for("volume", "revenue", db_session) == 1
+
+
 # ── Skill ────────────────────────────────────────────────
 
 

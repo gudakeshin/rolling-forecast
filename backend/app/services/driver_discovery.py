@@ -17,9 +17,9 @@ Gates, in order:
      and re-cumulate, which keeps the drift and integration order under the null;
      otherwise we use a circular block bootstrap that keeps autocorrelation.
 
-Sign priors are a hardcoded default dict for the MVP. A user-editable
-``sign_priors`` table (with per-line overrides) is deliberate follow-up work —
-it needs its own migration and admin surface.
+Sign priors live in the admin-editable ``sign_priors`` table and fall back to
+``DEFAULT_SIGN_PRIORS`` for any (driver_type, line family) pair the table does
+not cover, so an empty table behaves exactly like the hardcoded defaults.
 """
 
 from __future__ import annotations
@@ -175,11 +175,47 @@ def line_family(line: LineItem) -> str | None:
     return None
 
 
-def expected_sign_for(driver_type: str, family: str | None) -> int | None:
-    """Prior on the coefficient sign; ``None`` means we hold no opinion."""
+def resolve_sign_prior(
+    driver_type: str, family: str | None, db: Session | None = None
+) -> tuple[int | None, str]:
+    """Return ``(expected_sign, source)`` for one (driver_type, family) pair.
+
+    ``source`` is one of ``sign_priors_table``, ``default_dict`` or ``none`` so
+    the run summary can say where a rejection's prior came from.
+    """
     if family is None:
-        return None
-    return DEFAULT_SIGN_PRIORS.get(((driver_type or "").strip().lower(), family))
+        return None, "none"
+    key = ((driver_type or "").strip().lower(), family)
+    if db is not None:
+        try:
+            from app.models.sign_prior import SignPrior
+
+            row = (
+                db.query(SignPrior)
+                .filter(
+                    SignPrior.driver_type == key[0],
+                    SignPrior.line_family == key[1],
+                )
+                .first()
+            )
+        except Exception as e:  # pragma: no cover — schema predating migration 018
+            logger.debug("sign_priors lookup failed for %s: %s", key, e)
+            row = None
+        if row is not None and int(row.expected_sign) in (-1, 1):
+            return int(row.expected_sign), "sign_priors_table"
+    default = DEFAULT_SIGN_PRIORS.get(key)
+    return default, "default_dict" if default is not None else "none"
+
+
+def expected_sign_for(
+    driver_type: str, family: str | None, db: Session | None = None
+) -> int | None:
+    """Prior on the coefficient sign; ``None`` means we hold no opinion.
+
+    Reads the ``sign_priors`` table when a session is supplied, falling back to
+    ``DEFAULT_SIGN_PRIORS``.
+    """
+    return resolve_sign_prior(driver_type, family, db)[0]
 
 
 def line_actuals_series(db: Session, line_item_id: int) -> pd.Series:
@@ -558,7 +594,7 @@ def discover_drivers_for_line(
             continue
         x_series, x_clean_meta = _clean(raw_x, enabled=cfg.clean_series)
         cleaned_drivers[driver.id] = x_series
-        expected = expected_sign_for(driver.driver_type, family)
+        expected, prior_source = resolve_sign_prior(driver.driver_type, family, db)
 
         for lag in range(0, max_lag + 1):
             y_arr, x_arr, periods = _lagged_pair(y_series, x_series, lag)
@@ -609,7 +645,7 @@ def discover_drivers_for_line(
                         "line_cleaning": line_clean_meta,
                         "driver_cleaning": x_clean_meta,
                         "line_family": family,
-                        "sign_prior_source": "default_dict",
+                        "sign_prior_source": prior_source,
                     },
                 )
             )
@@ -772,7 +808,7 @@ def discover_drivers_for_line(
             "superseded_links": superseded,
             "placebo_enabled": cfg.enable_placebo,
             "difference_corroboration": cfg.require_difference_corroboration,
-            "sign_priors": "default_dict (sign_priors table is follow-up)",
+            "sign_priors": "sign_priors table with DEFAULT_SIGN_PRIORS fallback",
             "candidates": [f.as_dict() for f in ranked[:50]],
             "skipped": skipped[:50],
         },

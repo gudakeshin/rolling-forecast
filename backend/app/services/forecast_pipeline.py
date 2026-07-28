@@ -25,6 +25,7 @@ from app.services.error_handlers import HistoryAnalysis, clamp_forecast_values
 from app.services.outlier_cleaning import clean_series_for_fit
 from app.services.period_calendar import FiscalCalendarConfig, period_to_date
 from app.services.reconciliation import BOUNDS_METHOD_MODEL
+from app.services.reflection import active_heuristics_for_line, heuristic_summary
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,73 @@ def _mean_finite(values: list[float]) -> float | None:
     if not finite:
         return None
     return float(np.mean(finite))
+
+
+def _active_heuristics(db: Session | None, line_item_id: int) -> list[Any]:
+    """Consumable active heuristics for a line — never fatal to a forecast."""
+    if db is None:
+        return []
+    try:
+        return active_heuristics_for_line(db, line_item_id)
+    except Exception as e:  # pragma: no cover — legacy schemas without the table
+        logger.debug("active heuristic lookup failed for line %s: %s", line_item_id, e)
+        return []
+
+
+def _heuristic_nudge(
+    comparison: Any,
+    heuristics: list[Any],
+    *,
+    selected_model: str | None,
+    allow_override: bool,
+) -> dict[str, Any] | None:
+    """Decide whether an active heuristic should redirect model selection.
+
+    An error-bias heuristic names the model that produced the bias, which is a
+    weak preference signal at best — so it may only pick a *statistical tie*.
+    The candidate has to be eligible and land inside the 1-SE band of the best
+    model's fold MASE, the same tolerance the complexity tie-break uses.
+
+    Returns ``None`` when no heuristic names a usable alternative. Otherwise
+    returns the decision, with ``applied`` false when ``allow_override`` is off
+    (target-bearing lines) — the caller then warns instead of switching.
+    """
+    from app.domain.engines.model_registry import _selection_band
+
+    named = {
+        h.model_type: h
+        for h in heuristics
+        if h.model_type and h.model_type != selected_model
+    }
+    if not named:
+        return None
+
+    by_model = {c.model_name: c for c in comparison.comparisons}
+    best = by_model.get(comparison.best_model)
+    if best is None or best.mase == float("inf"):
+        return None
+    band = _selection_band(best.fold_mases, best.n_folds)
+
+    for model_type, heuristic in named.items():
+        candidate = by_model.get(model_type)
+        if candidate is None or not candidate.eligible:
+            continue
+        if candidate.mase == float("inf"):
+            continue
+        if candidate.mase > best.mase + band:
+            continue
+        return {
+            "applied": allow_override,
+            "reason": "within_1se_of_best" if allow_override else "target_bearing_line",
+            "heuristic_id": heuristic.id,
+            "heuristic_statement": heuristic.statement,
+            "from_model": comparison.best_model,
+            "to_model": model_type,
+            "best_mase": round(float(best.mase), 4),
+            "candidate_mase": round(float(candidate.mase), 4),
+            "band": round(float(band), 4),
+        }
+    return None
 
 
 def _exog_admission_band(mase_plain: float, fold_diffs: list[float]) -> float:
@@ -156,24 +224,22 @@ def _evaluate_arima_exog_modes(
     periods: list[str],
     version_id: str,
     db: Session,
+    cal_cfg: FiscalCalendarConfig | None = None,
+    random_seed: int = 42,
 ) -> dict[str, Any] | None:
-    """Compute fold-level MASE under exog_mode=forecast vs exog_mode=known.
+    """Fold MASE under exog_mode=forecast vs known.
 
-    - forecast: driver precedence uses version-scoped overlays (plan/scenario/forecast)
-    - known: uses actual driver values only
+    - known: holdout exog uses actual driver values
+    - forecast: holdout exog uses driver forecasts fit only on data ≤ fold origin
+      (no look-ahead into post-origin actuals)
     """
+    from app.services.driver_forecast_cache import build_origin_overlays
+
     model = registry.get("arima")
     if model is None:
         return None
 
-    bundle_forecast = build_exog_for_line(
-        db,
-        line_item_id=line_item_id,
-        train_periods=periods,
-        future_periods=[],
-        version_id=version_id,
-        max_links=3,
-    )
+    # Specs / train matrix from known actuals (no leakage in training block)
     bundle_known = build_exog_for_line(
         db,
         line_item_id=line_item_id,
@@ -182,11 +248,10 @@ def _evaluate_arima_exog_modes(
         version_id=None,
         max_links=3,
     )
-    if bundle_forecast is None or bundle_known is None:
-        return None
-    if bundle_forecast.exog_train.shape[1] == 0 or bundle_known.exog_train.shape[1] == 0:
+    if bundle_known is None or bundle_known.exog_train.shape[1] == 0:
         return None
 
+    driver_ids = [s.driver_id for s in bundle_known.specs]
     n = len(values)
     m = 12
     fold_h = 3
@@ -208,23 +273,59 @@ def _evaluate_arima_exog_modes(
         y_train = values.iloc[:train_end]
         y_test = np.asarray(values.iloc[test_start:test_end].values, dtype=float)
         d_train = dates[:train_end]
+        train_periods = [str(p) for p in periods[:train_end]]
+        holdout_periods = [str(p) for p in periods[test_start:test_end]]
+        origin = train_periods[-1]
 
-        ex_f_train = bundle_forecast.exog_train.iloc[:train_end]
-        ex_f_test = bundle_forecast.exog_train.iloc[test_start:test_end]
         ex_k_train = bundle_known.exog_train.iloc[:train_end]
         ex_k_test = bundle_known.exog_train.iloc[test_start:test_end]
+
+        overlays = build_origin_overlays(
+            db,
+            driver_ids=driver_ids,
+            train_end_period=origin,
+            future_periods=holdout_periods,
+            registry=registry,
+            cal_cfg=cal_cfg,
+            random_seed=random_seed,
+        )
+        bundle_f = build_exog_for_line(
+            db,
+            line_item_id=line_item_id,
+            train_periods=train_periods,
+            future_periods=holdout_periods,
+            version_id=None,  # train on actuals only
+            max_links=3,
+            overlays=overlays,
+        )
+        if bundle_f is None:
+            mase_forecast.append(float("inf"))
+        else:
+            ex_f_train = bundle_f.exog_train
+            ex_f_test = bundle_f.exog_future
+            # Align columns with known bundle when possible
+            common = [c for c in ex_k_train.columns if c in ex_f_train.columns]
+            if not common:
+                mase_forecast.append(float("inf"))
+            else:
+                try:
+                    p_f = model.fit(y_train, d_train, exog=ex_f_train[common])
+                    fc_f = model.predict(
+                        p_f, len(y_test), d_train[-1], exog_future=ex_f_test[common]
+                    )
+                    err_f = np.abs(
+                        y_test - np.asarray(fc_f.point_forecast[: len(y_test)], dtype=float)
+                    )
+                    denom, _ = mase_denominator(np.asarray(y_train.values, dtype=float), m)
+                    mase_forecast.append(
+                        float(np.mean(err_f) / denom) if denom > 1e-12 else float("inf")
+                    )
+                except Exception:
+                    mase_forecast.append(float("inf"))
 
         denom, _ = mase_denominator(np.asarray(y_train.values, dtype=float), m)
         if denom <= 1e-12:
             continue
-
-        try:
-            p_f = model.fit(y_train, d_train, exog=ex_f_train)
-            fc_f = model.predict(p_f, len(y_test), d_train[-1], exog_future=ex_f_test)
-            err_f = np.abs(y_test - np.asarray(fc_f.point_forecast[: len(y_test)], dtype=float))
-            mase_forecast.append(float(np.mean(err_f) / denom))
-        except Exception:
-            mase_forecast.append(float("inf"))
 
         try:
             p_k = model.fit(y_train, d_train, exog=ex_k_train)
@@ -241,6 +342,98 @@ def _evaluate_arima_exog_modes(
         "n_folds": used,
         "mase_forecast": _mean_finite(mase_forecast),
         "mase_known": _mean_finite(mase_known),
+        "origin_restricted": True,
+    }
+
+
+def _inflate_exog_intervals(
+    db: Session,
+    *,
+    point: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    periods: list[str],
+    betas: dict[str, float],
+    specs: list[Any],
+    version_id: str,
+) -> dict[str, Any] | None:
+    """Widen predictive intervals by delta-method driver uncertainty Σ β² Var(D)."""
+    from app.models.driver import DriverValue
+
+    if not betas or not specs:
+        return None
+
+    # Map column → driver_id
+    col_to_driver = {f"d{s.driver_id}_lag{int(s.lag)}": int(s.driver_id) for s in specs}
+    driver_ids = sorted({int(s.driver_id) for s in specs})
+    if not driver_ids:
+        return None
+
+    # Load p10/p90 for forecast/actual values covering horizon periods
+    rows = (
+        db.query(DriverValue)
+        .filter(
+            DriverValue.driver_id.in_(driver_ids),
+            DriverValue.period.in_(periods),
+            DriverValue.value_type.in_(["forecast", "actual", "plan", "scenario"]),
+        )
+        .all()
+    )
+    # Prefer version-scoped forecast, then any
+    by_key: dict[tuple[int, str], DriverValue] = {}
+    for r in rows:
+        key = (int(r.driver_id), str(r.period))
+        existing = by_key.get(key)
+        if existing is None:
+            by_key[key] = r
+            continue
+        # Prefer matching version_id forecast rows
+        if r.value_type == "forecast" and r.version_id == version_id:
+            by_key[key] = r
+        elif existing.value_type != "forecast" and r.value_type == "forecast":
+            by_key[key] = r
+
+    Z = 1.28  # ~80% normal half-width
+    new_lower = np.asarray(lower, dtype=float).copy()
+    new_upper = np.asarray(upper, dtype=float).copy()
+    point_arr = np.asarray(point, dtype=float)
+    total_extra = 0.0
+    steps_inflated = 0
+
+    for i, period in enumerate(periods):
+        extra_var = 0.0
+        for col, beta in betas.items():
+            did = col_to_driver.get(str(col))
+            if did is None:
+                continue
+            dv = by_key.get((did, str(period)))
+            if dv is None or dv.p10 is None or dv.p90 is None:
+                continue
+            half = (float(dv.p90) - float(dv.p10)) / (2.0 * Z)
+            extra_var += float(beta) ** 2 * max(half, 0.0) ** 2
+        if extra_var <= 0:
+            continue
+        model_half = max(
+            abs(float(point_arr[i]) - float(new_lower[i])),
+            abs(float(new_upper[i]) - float(point_arr[i])),
+            0.0,
+        )
+        new_half = float(np.sqrt(model_half**2 + extra_var))
+        new_lower[i] = float(point_arr[i]) - new_half
+        new_upper[i] = float(point_arr[i]) + new_half
+        total_extra += extra_var
+        steps_inflated += 1
+
+    if steps_inflated == 0:
+        return None
+    return {
+        "lower": new_lower,
+        "upper": new_upper,
+        "meta": {
+            "steps_inflated": steps_inflated,
+            "mean_extra_var": round(total_extra / steps_inflated, 6),
+            "betas": {k: round(float(v), 6) for k, v in betas.items()},
+        },
     }
 
 
@@ -362,6 +555,7 @@ def forecast_line_item(
     selection_mape: float | None = None
     selection_mase: float | None = None
     selection_pinball: float | None = None
+    selection_result: Any | None = None
 
     try:
         effective_model_type = forced or model_type
@@ -377,6 +571,7 @@ def forecast_line_item(
                 selection_rule=selection_rule,
                 is_material=ctx.is_material,
             )
+            selection_result = comparison
             out.comparison = comparison.to_dict()
             out.n_downgraded = comparison.n_downgraded
             selection_mase = (
@@ -457,6 +652,67 @@ def forecast_line_item(
                     )
                     selection_mape = None
 
+        # M3 — active heuristics are advisory. They are stamped on every line so
+        # a reviewer can see what the system believes, but only a line that does
+        # not carry a target may have its selection redirected: letting learned
+        # rules move target-bearing lines teaches the system to hit targets
+        # rather than to forecast. Override-derived heuristics are excluded
+        # upstream, so nothing here can feed reviewer habit back into a model.
+        active_heuristics = _active_heuristics(db, li.id)
+        heuristic_meta = [heuristic_summary(h) for h in active_heuristics]
+        heuristic_nudge: dict[str, Any] | None = None
+        if active_heuristics and selection_result is not None:
+            heuristic_nudge = _heuristic_nudge(
+                selection_result,
+                active_heuristics,
+                selected_model=selected_model,
+                allow_override=li.is_target_bearing is False,
+            )
+        if heuristic_nudge is not None:
+            statistical_best = heuristic_nudge["from_model"]
+            if heuristic_nudge["applied"]:
+                selected_model = heuristic_nudge["to_model"]
+                entry = next(
+                    (
+                        c
+                        for c in selection_result.comparisons
+                        if c.model_name == selected_model
+                    ),
+                    None,
+                )
+                if entry is not None:
+                    selection_mape = (
+                        float(entry.mape) if entry.mape != float("inf") else None
+                    )
+                    selection_mase = (
+                        float(entry.mase) if entry.mase != float("inf") else None
+                    )
+                    selection_pinball = (
+                        float(entry.pinball) if entry.pinball != float("inf") else None
+                    )
+                if out.comparison is not None:
+                    out.comparison["best_model"] = selected_model
+                    out.comparison["statistical_best_model"] = statistical_best
+                    for row in out.comparison.get("comparisons") or []:
+                        row["selected"] = row.get("model") == selected_model
+                out.warnings.append(
+                    f"{li.name}: heuristic nudge — using {selected_model} instead "
+                    f"of {statistical_best} (MASE {heuristic_nudge['candidate_mase']} "
+                    f"vs {heuristic_nudge['best_mase']}, within 1-SE band "
+                    f"{heuristic_nudge['band']}; heuristic "
+                    f"#{heuristic_nudge['heuristic_id']})"
+                )
+            else:
+                out.warnings.append(
+                    f"{li.name}: heuristic #{heuristic_nudge['heuristic_id']} "
+                    f"prefers {heuristic_nudge['to_model']} over {statistical_best} "
+                    "— not applied (target-bearing line)"
+                )
+            if out.comparison is not None:
+                out.comparison["heuristic_nudge"] = heuristic_nudge
+        if out.comparison is not None and heuristic_meta:
+            out.comparison["active_heuristics"] = heuristic_meta
+
         exog_bundle = None
         use_exog = False
         exog_spec: dict[str, Any] | None = None
@@ -522,6 +778,8 @@ def forecast_line_item(
                         periods=[str(p) for p in periods[-len(effective_values):]],
                         version_id=ctx.version_id,
                         db=db,
+                        cal_cfg=cal_cfg,
+                        random_seed=random_seed,
                     )
                     exog_spec["exog_mode_scores"] = mode_scores or {
                         "n_folds": 0,
@@ -560,6 +818,40 @@ def forecast_line_item(
             if out.comparison is not None:
                 out.comparison["exog_mode_scores"] = exog_spec.get("exog_mode_scores")
                 out.comparison["exog_admitted"] = exog_spec.get("exog_admitted")
+        if heuristic_meta:
+            forecast_output.parameters = dict(forecast_output.parameters or {})
+            forecast_output.parameters["active_heuristics"] = heuristic_meta
+            if heuristic_nudge is not None:
+                forecast_output.parameters["heuristic_nudge"] = heuristic_nudge
+
+        # Delta-method interval inflation for driver uncertainty (Phase 8.3)
+        bounds_method = BOUNDS_METHOD_MODEL
+        if (
+            use_exog
+            and exog_bundle is not None
+            and forecast_output.lower_bound is not None
+            and forecast_output.upper_bound is not None
+        ):
+            inflated = _inflate_exog_intervals(
+                db,
+                point=forecast_output.point_forecast,
+                lower=forecast_output.lower_bound,
+                upper=forecast_output.upper_bound,
+                periods=list(forecast_output.periods),
+                betas=(forecast_output.parameters or {}).get("exog_betas") or {},
+                specs=exog_bundle.specs,
+                version_id=ctx.version_id,
+            )
+            if inflated is not None:
+                forecast_output.lower_bound = inflated["lower"]
+                forecast_output.upper_bound = inflated["upper"]
+                forecast_output.parameters = dict(forecast_output.parameters or {})
+                forecast_output.parameters["exog_variance_inflated"] = True
+                forecast_output.parameters["exog_interval_inflation"] = inflated.get("meta")
+                bounds_method = "exog_variance_inflated"
+                if exog_spec is not None:
+                    exog_spec["exog_variance_inflated"] = True
+                    forecast_output.parameters["exog_spec"] = exog_spec
 
         cv_mape = selection_mape if selection_mape is not None else None
         in_sample = (
@@ -624,7 +916,7 @@ def forecast_line_item(
                 "model_mase": selection_mase,
                 "model_pinball": selection_pinball,
                 "model_r_squared": forecast_output.fit_metrics.get("r_squared"),
-                "bounds_method": BOUNDS_METHOD_MODEL,
+                "bounds_method": bounds_method,
                 "is_overridden": False,
                 "is_calculated": False,
             })

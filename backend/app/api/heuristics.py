@@ -15,7 +15,14 @@ from app.models.heuristic import (
 )
 from app.models.user import User
 from app.services.permissions import user_has_permission
-from app.services.reflection import MAX_CANDIDATES, MIN_CYCLES, run_reflection_pass
+from app.services.reflection import (
+    MAX_CANDIDATES,
+    MIN_CYCLES,
+    influences_selection,
+    promote_heuristic,
+    reject_heuristic,
+    run_reflection_pass,
+)
 
 router = APIRouter(prefix="/heuristics", tags=["heuristics"])
 
@@ -55,6 +62,9 @@ def _serialize(row: LearnedHeuristic) -> dict:
         "proposed_at": row.proposed_at.isoformat() if row.proposed_at else None,
         "approved_by": row.approved_by,
         "review_by": row.review_by.isoformat() if row.review_by else None,
+        # Promotion makes a heuristic visible; only actuals-derived ones are
+        # allowed anywhere near model selection.
+        "influences_selection": influences_selection(row),
     }
 
 
@@ -100,3 +110,32 @@ async def run_reflection(
         kinds=kinds,
     )
     return summary
+
+
+@router.post("/{heuristic_id}/promote")
+async def promote(
+    heuristic_id: int,
+    current_user: User = Depends(_require_reviewer),
+    db: Session = Depends(get_db),
+):
+    try:
+        row = promote_heuristic(db, heuristic_id, actor=current_user)
+    except ValueError as e:
+        raise HTTPException(404 if "not found" in str(e) else 400, str(e)) from e
+    return {
+        **_serialize(row),
+        "superseded_ids": getattr(row, "superseded_ids", []),
+    }
+
+
+@router.post("/{heuristic_id}/reject")
+async def reject(
+    heuristic_id: int,
+    current_user: User = Depends(_require_reviewer),
+    db: Session = Depends(get_db),
+):
+    try:
+        row = reject_heuristic(db, heuristic_id, actor=current_user)
+    except ValueError as e:
+        raise HTTPException(404 if "not found" in str(e) else 400, str(e)) from e
+    return _serialize(row)
