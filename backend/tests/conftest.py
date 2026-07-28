@@ -47,6 +47,12 @@ def ensure_app_db_schema_columns() -> None:
             conn.execute(text("ALTER TABLE forecast_line_results ADD COLUMN model_mase FLOAT"))
         if "model_pinball" not in flr_cols:
             conn.execute(text("ALTER TABLE forecast_line_results ADD COLUMN model_pinball FLOAT"))
+        if "is_target_bearing" not in {
+            c["name"] for c in inspect(engine).get_columns("line_items")
+        }:
+            conn.execute(
+                text("ALTER TABLE line_items ADD COLUMN is_target_bearing BOOLEAN DEFAULT 1")
+            )
 
 
 @pytest.fixture(scope="session", autouse=True)

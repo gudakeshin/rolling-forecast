@@ -12,6 +12,7 @@ from app.database import get_db
 from app.models.conversation import Conversation, Message
 from app.models.memory import MemoryBlock
 from app.models.user import User
+from app.services import archival_memory
 from app.services.audit import record_audit
 from app.api.auth import get_current_user
 from app.services.memory_blocks import scope_char_limit, upsert_core_memory
@@ -25,6 +26,12 @@ class CoreMemoryWrite(BaseModel):
     content: str
     char_limit: int = 2000
     replace: bool = False
+
+
+class ArchivalMemoryWrite(BaseModel):
+    text: str
+    provenance: str = "agent"
+    business_unit: str | None = None
 
 
 @router.get("/core")
@@ -108,6 +115,39 @@ async def core_memory_limits(
         "prompt_budget": settings.core_memory_prompt_char_budget,
         "business_unit": current_user.business_unit,
     }
+
+
+@router.post("/archival")
+async def write_archival_memory(
+    body: ArchivalMemoryWrite,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        entry = archival_memory.insert(
+            db,
+            current_user,
+            body.text,
+            provenance=body.provenance,
+            business_unit=body.business_unit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return entry
+
+
+@router.get("/archival/search")
+async def search_archival_memory(
+    q: str = Query(..., min_length=1),
+    top_k: int = Query(5, ge=1, le=25),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        hits = archival_memory.search(current_user, q, top_k, db=db)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"query": q, "hits": hits}
 
 
 @router.get("/search")

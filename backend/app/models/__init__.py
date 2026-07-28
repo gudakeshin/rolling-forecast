@@ -16,6 +16,7 @@ from app.models.integration import IntegrationConnection
 from app.models.fx import FxRate, SystemSetting, ForecastAccuracyRecord
 from app.models.auth_tokens import RefreshToken, TokenDenylist
 from app.models.memory import MemoryBlock
+from app.models.heuristic import LearnedHeuristic
 
 __all__ = [
     "User",
@@ -50,4 +51,5 @@ __all__ = [
     "RefreshToken",
     "TokenDenylist",
     "MemoryBlock",
+    "LearnedHeuristic",
 ]

@@ -12,10 +12,11 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 _client: chromadb.ClientAPI | None = None
-_collection: chromadb.Collection | None = None
+_collections: dict[str, chromadb.Collection] = {}
 _embedding_fn = None
 
 COLLECTION_NAME = "context_documents"
+ARCHIVAL_COLLECTION_NAME = "archival_memory"
 
 
 def _get_embedding_fn():
@@ -36,17 +37,24 @@ def get_chroma_client() -> chromadb.ClientAPI:
     return _client
 
 
-def get_collection() -> chromadb.Collection:
-    global _collection
-    if _collection is None:
+def get_collection(name: str = COLLECTION_NAME) -> chromadb.Collection:
+    """Get (or create) a named Chroma collection, cached per process."""
+    collection = _collections.get(name)
+    if collection is None:
         client = get_chroma_client()
-        _collection = client.get_or_create_collection(
-            name=COLLECTION_NAME,
+        collection = client.get_or_create_collection(
+            name=name,
             embedding_function=_get_embedding_fn(),
             metadata={"hnsw:space": "cosine"},
         )
-        logger.info(f"ChromaDB collection '{COLLECTION_NAME}' ready ({_collection.count()} docs)")
-    return _collection
+        _collections[name] = collection
+        logger.info(f"ChromaDB collection '{name}' ready ({collection.count()} docs)")
+    return collection
+
+
+def reset_collection_cache() -> None:
+    """Drop cached collection handles (used after client/persist-dir changes)."""
+    _collections.clear()
 
 
 def add_chunks(

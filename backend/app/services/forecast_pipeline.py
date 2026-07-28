@@ -36,6 +36,117 @@ def _mean_finite(values: list[float]) -> float | None:
     return float(np.mean(finite))
 
 
+def _exog_admission_band(mase_plain: float, fold_diffs: list[float]) -> float:
+    """1-SE band on fold MASE differences, floored at 5% of plain MASE."""
+    floor = 0.05 * max(abs(mase_plain), 1e-6)
+    finite = [d for d in fold_diffs if np.isfinite(d)]
+    if len(finite) < 2:
+        return floor
+    se = float(np.std(finite, ddof=1) / np.sqrt(len(finite)))
+    return max(se, floor)
+
+
+def _evaluate_plain_vs_exog(
+    registry: ModelRegistry,
+    *,
+    model_name: str,
+    values: pd.Series,
+    dates: pd.DatetimeIndex,
+    exog_train: pd.DataFrame,
+) -> dict[str, Any] | None:
+    """Fold MASE for plain vs exog variants of the same model.
+
+    Returns mean MASEs, fold diffs, and whether exog clears the 1-SE admission band.
+    """
+    model = registry.get(model_name)
+    if model is None or not model.capabilities.supports_exog:
+        return None
+    if exog_train is None or exog_train.shape[1] == 0:
+        return None
+
+    n = len(values)
+    m = 12
+    fold_h = 3
+    n_folds = 3
+    mase_plain: list[float] = []
+    mase_exog: list[float] = []
+    used = 0
+
+    for fold in range(1, n_folds + 1):
+        holdout = fold_h * fold
+        train_end = n - holdout
+        if train_end < max(18, model.min_data_points):
+            break
+        test_start = train_end
+        test_end = min(train_end + fold_h, n)
+        if test_end <= test_start:
+            break
+
+        y_train = values.iloc[:train_end]
+        y_test = np.asarray(values.iloc[test_start:test_end].values, dtype=float)
+        d_train = dates[:train_end]
+        ex_tr = exog_train.iloc[:train_end]
+        ex_te = exog_train.iloc[test_start:test_end]
+
+        denom, _ = mase_denominator(np.asarray(y_train.values, dtype=float), m)
+        if denom <= 1e-12:
+            continue
+
+        try:
+            p_plain = model.fit(y_train, d_train, exog=None)
+            fc_plain = model.predict(p_plain, len(y_test), d_train[-1], exog_future=None)
+            err_p = np.abs(y_test - np.asarray(fc_plain.point_forecast[: len(y_test)], dtype=float))
+            mase_plain.append(float(np.mean(err_p) / denom))
+        except Exception:
+            mase_plain.append(float("inf"))
+
+        try:
+            p_ex = model.fit(y_train, d_train, exog=ex_tr)
+            fc_ex = model.predict(p_ex, len(y_test), d_train[-1], exog_future=ex_te)
+            err_e = np.abs(y_test - np.asarray(fc_ex.point_forecast[: len(y_test)], dtype=float))
+            mase_exog.append(float(np.mean(err_e) / denom))
+        except Exception:
+            mase_exog.append(float("inf"))
+        used += 1
+
+    if used == 0:
+        return None
+
+    mean_plain = _mean_finite(mase_plain)
+    mean_exog = _mean_finite(mase_exog)
+    if mean_plain is None or mean_exog is None:
+        return {
+            "n_folds": used,
+            "mase_plain": mean_plain,
+            "mase_exog": mean_exog,
+            "exog_admitted": False,
+            "exog_rejected_reason": "non_finite_mase",
+            "admission_band": None,
+        }
+
+    diffs = [
+        (mase_plain[i] - mase_exog[i])
+        for i in range(min(len(mase_plain), len(mase_exog)))
+        if np.isfinite(mase_plain[i]) and np.isfinite(mase_exog[i])
+    ]
+    band = _exog_admission_band(mean_plain, diffs)
+    # Admit only when exog beats plain by more than the band (winner's-curse guard)
+    admitted = mean_exog < (mean_plain - band)
+    reason = None if admitted else "insufficient_improvement_vs_plain"
+    if mean_exog >= mean_plain:
+        reason = "exog_mase_not_better"
+    return {
+        "n_folds": used,
+        "mase_plain": round(mean_plain, 6),
+        "mase_exog": round(mean_exog, 6),
+        "admission_band": round(band, 6),
+        "exog_admitted": admitted,
+        "exog_rejected_reason": reason,
+        "fold_mase_plain": [round(v, 6) if np.isfinite(v) else None for v in mase_plain],
+        "fold_mase_exog": [round(v, 6) if np.isfinite(v) else None for v in mase_exog],
+    }
+
+
 def _evaluate_arima_exog_modes(
     registry: ModelRegistry,
     *,
@@ -374,9 +485,20 @@ def forecast_line_item(
                 k = int(exog_bundle.exog_train.shape[1])
                 needed = int(settings.exog_min_points_per_regressor) * max(k, 1)
                 if min_train >= needed:
-                    use_exog = True
+                    decision = _evaluate_plain_vs_exog(
+                        registry,
+                        model_name=selected_model,
+                        values=effective_values,
+                        dates=effective_dates,
+                        exog_train=exog_bundle.exog_train,
+                    )
+                    use_exog = bool(decision and decision.get("exog_admitted"))
                     exog_spec = {
-                        "mode": "forecast",
+                        "mode": "forecast" if use_exog else "rejected",
+                        "exog_admitted": use_exog,
+                        "exog_rejected_reason": (
+                            None if use_exog else (decision or {}).get("exog_rejected_reason") or "head_to_head_unavailable"
+                        ),
                         "drivers": [
                             {
                                 "driver_id": s.driver_id,
@@ -390,6 +512,7 @@ def forecast_line_item(
                         "min_train_points": min_train,
                         "required_points": needed,
                         "exog_source_version_id": ctx.version_id,
+                        "plain_vs_exog": decision,
                     }
                     mode_scores = _evaluate_arima_exog_modes(
                         registry,
@@ -405,10 +528,22 @@ def forecast_line_item(
                         "mase_forecast": None,
                         "mase_known": None,
                     }
+                    if not use_exog:
+                        reason = exog_spec["exog_rejected_reason"]
+                        out.warnings.append(
+                            f"{li.name}: exog rejected ({reason})"
+                        )
                 else:
                     out.warnings.append(
                         f"{li.name}: exog not admitted (effective train {min_train} < {needed})"
                     )
+                    exog_spec = {
+                        "mode": "rejected",
+                        "exog_admitted": False,
+                        "exog_rejected_reason": "insufficient_train_points",
+                        "min_train_points": min_train,
+                        "required_points": needed,
+                    }
 
         forecast_output = registry.fit_and_predict(
             selected_model,
@@ -419,11 +554,12 @@ def forecast_line_item(
             exog=(exog_bundle.exog_train if use_exog and exog_bundle is not None else None),
             exog_future=(exog_bundle.exog_future if use_exog and exog_bundle is not None else None),
         )
-        if use_exog and exog_spec is not None:
+        if exog_spec is not None:
             forecast_output.parameters = dict(forecast_output.parameters or {})
             forecast_output.parameters["exog_spec"] = exog_spec
             if out.comparison is not None:
                 out.comparison["exog_mode_scores"] = exog_spec.get("exog_mode_scores")
+                out.comparison["exog_admitted"] = exog_spec.get("exog_admitted")
 
         cv_mape = selection_mape if selection_mape is not None else None
         in_sample = (

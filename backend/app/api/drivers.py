@@ -7,10 +7,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.driver import Driver, DriverLink
+from app.models.driver import Driver, DriverDiscoveryRun, DriverLink
 from app.models.line_item import LineItem
 from app.models.user import User
 from app.services.audit import record_audit
+from app.services.driver_discovery import (
+    discover_drivers_for_line,
+    discovery_run_dict,
+)
 from app.services.driver_series import (
     assert_link,
     create_driver,
@@ -84,6 +88,22 @@ class DriverLinkCreate(BaseModel):
     notes: str | None = None
 
 
+class DiscoveryRunRequest(BaseModel):
+    """Phase 9 discovery request — omitted knobs fall back to DiscoveryConfig."""
+
+    line_item_id: int
+    min_overlap: int | None = Field(None, ge=18)
+    max_lag: int | None = Field(None, ge=0, le=12)
+    alpha: float | None = Field(None, gt=0.0, lt=1.0)
+    min_abs_elasticity: float | None = Field(None, ge=0.0)
+    max_survivors: int | None = Field(None, ge=1, le=10)
+    max_candidates: int | None = Field(None, ge=1, le=500)
+    enable_placebo: bool | None = None
+    placebo_draws: int | None = Field(None, ge=10, le=2000)
+    driver_ids: list[int] | None = None
+    random_seed: int | None = None
+
+
 def _driver_dict(d: Driver, freshness: dict | None = None) -> dict:
     out = {
         "id": d.id,
@@ -135,6 +155,16 @@ def _link_dict(link: DriverLink) -> dict:
         "created_at": link.created_at.isoformat() if link.created_at else None,
         "updated_at": link.updated_at.isoformat() if link.updated_at else None,
     }
+
+
+def _discovery_response(db: Session, run: DriverDiscoveryRun) -> dict:
+    links = (
+        db.query(DriverLink)
+        .filter(DriverLink.discovery_run_id == run.id)
+        .order_by(DriverLink.id.asc())
+        .all()
+    )
+    return {**discovery_run_dict(run), "links": [_link_dict(l) for l in links]}
 
 
 def _get_scoped_driver(db: Session, user: User, driver_id: int) -> Driver:
@@ -290,6 +320,47 @@ async def links_for_line_item(
     if status:
         q = q.filter(DriverLink.status == status)
     return [_link_dict(l) for l in q.all()]
+
+
+@router.post("/discovery/run", status_code=201)
+async def run_driver_discovery(
+    body: DiscoveryRunRequest,
+    current_user: User = Depends(require_permission("manage_drivers")),
+    db: Session = Depends(get_db),
+):
+    """Scan drivers for a line item. Only ever writes candidate links."""
+    li = db.query(LineItem).filter(LineItem.id == body.line_item_id).first()
+    if not li or not user_can_view_line_item(current_user, li):
+        raise HTTPException(404, "Line item not found")
+    config = body.model_dump(exclude={"line_item_id"}, exclude_none=True)
+    try:
+        run = discover_drivers_for_line(
+            db,
+            body.line_item_id,
+            actor=current_user,
+            config=config,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    db.commit()
+    db.refresh(run)
+    return _discovery_response(db, run)
+
+
+@router.get("/discovery/{run_id}")
+async def get_driver_discovery(
+    run_id: str,
+    current_user: User = Depends(require_permission("manage_drivers")),
+    db: Session = Depends(get_db),
+):
+    run = db.query(DriverDiscoveryRun).filter(DriverDiscoveryRun.id == run_id).first()
+    if not run:
+        raise HTTPException(404, "Discovery run not found")
+    if run.line_item_id is not None:
+        li = db.query(LineItem).filter(LineItem.id == run.line_item_id).first()
+        if li and not user_can_view_line_item(current_user, li):
+            raise HTTPException(404, "Discovery run not found")
+    return _discovery_response(db, run)
 
 
 @router.get("/{driver_id}")

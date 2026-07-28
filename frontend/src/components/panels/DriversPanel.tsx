@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity, AlertTriangle, Link2, Loader2, Plus, RefreshCw, Upload,
+  Activity, AlertTriangle, Link2, Loader2, Plus, RefreshCw, Search, Upload,
 } from 'lucide-react';
 import {
   createDriver,
   createDriverLink,
   listDriverLinks,
   listDrivers,
+  getDiscovery,
   promoteDriverLink,
+  runDiscovery,
   uploadDriversFile,
   type Driver,
+  type DiscoveryRun,
   type DriverLink,
 } from '../../api/drivers';
 import { useI18n } from '../../i18n/useI18n';
@@ -44,6 +47,9 @@ export function DriversPanel() {
     lag: '0',
     coefficient: '',
   });
+  const [discoveryLineId, setDiscoveryLineId] = useState('');
+  const [discovering, setDiscovering] = useState(false);
+  const [discovery, setDiscovery] = useState<DiscoveryRun | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -150,11 +156,36 @@ export function DriversPanel() {
     }
   };
 
+  const handleDiscover = async () => {
+    const lineItemId = Number(discoveryLineId);
+    if (!Number.isFinite(lineItemId) || lineItemId <= 0) {
+      toast.error(t('drivers.error.lineItem'));
+      return;
+    }
+    setDiscovering(true);
+    try {
+      const run = await runDiscovery({ line_item_id: lineItemId });
+      setDiscovery(run);
+      const survivors = run.summary?.n_survivors ?? 0;
+      if (run.status !== 'completed') {
+        toast.error(t('drivers.discovery.incomplete', { status: run.status }));
+      } else {
+        toast.success(t('drivers.discovery.success', { count: survivors }));
+      }
+      if (selected) await loadLinks(selected.id);
+    } catch (e: any) {
+      toast.error(e?.message || t('drivers.discovery.error'));
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
   const handlePromote = async (linkId: number) => {
     try {
       await promoteDriverLink(linkId);
       toast.success(t('drivers.success.promote'));
       if (selected) await loadLinks(selected.id);
+      if (discovery) setDiscovery(await getDiscovery(discovery.id));
     } catch (e: any) {
       toast.error(e?.message || t('drivers.error.promote'));
     }
@@ -288,6 +319,88 @@ export function DriversPanel() {
         >
           {creating ? t('drivers.creating') : t('drivers.create')}
         </button>
+      </div>
+
+      <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl p-3 space-y-2">
+        <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
+          <Search className="w-3.5 h-3.5 text-cyan-400" />
+          {t('drivers.discovery.title')}
+        </div>
+        <p className="text-[11px] text-surface-500">{t('drivers.discovery.hint')}</p>
+        <div className="flex items-center gap-2">
+          <input
+            placeholder={t('drivers.lineItemId')}
+            value={discoveryLineId}
+            onChange={(e) => setDiscoveryLineId(e.target.value)}
+            className="flex-1 text-xs bg-surface-900 border border-surface-700 rounded-lg px-2 py-1.5 text-surface-200"
+          />
+          <button
+            type="button"
+            onClick={() => void handleDiscover()}
+            disabled={discovering}
+            className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 disabled:opacity-50"
+          >
+            {discovering ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+            {discovering ? t('drivers.discovery.running') : t('drivers.discovery.run')}
+          </button>
+        </div>
+
+        {discovery && (
+          <div className="space-y-1.5 pt-1">
+            <div className="text-[11px] text-surface-400">
+              {t('drivers.discovery.stats', {
+                tested: discovery.summary?.n_tests ?? 0,
+                survivors: discovery.summary?.n_survivors ?? 0,
+              })}
+              {discovery.status !== 'completed'
+                ? ` · ${discovery.status}${
+                    discovery.summary?.reason ? ` (${discovery.summary.reason})` : ''
+                  }`
+                : ''}
+            </div>
+            {discovery.links.length === 0 ? (
+              <p className="text-xs text-surface-500">{t('drivers.discovery.none')}</p>
+            ) : (
+              <ul className="space-y-1.5">
+                {discovery.links.map((l) => (
+                  <li
+                    key={l.id}
+                    className="flex items-center justify-between gap-2 text-xs bg-surface-900/60 rounded-lg px-2.5 py-2 border border-surface-700/40"
+                  >
+                    <span className="text-surface-300">
+                      {drivers.find((d) => d.id === l.driver_id)?.key ?? `driver ${l.driver_id}`}
+                      {' · '}
+                      {t('drivers.discovery.lag', { lag: l.lag })}
+                      {l.coefficient != null ? ` · β=${l.coefficient.toPrecision(4)}` : ''}
+                      {l.p_value_adj != null ? ` · adj p=${l.p_value_adj.toExponential(1)}` : ''}
+                      {l.n_obs != null ? ` · n=${l.n_obs}` : ''}
+                    </span>
+                    <span className="flex items-center gap-2">
+                      <span
+                        className={`px-1.5 py-0.5 rounded ${
+                          l.status === 'active'
+                            ? 'bg-deloitte-green/15 text-deloitte-green'
+                            : 'bg-amber-500/15 text-amber-400'
+                        }`}
+                      >
+                        {l.status}
+                      </span>
+                      {l.status !== 'active' && (
+                        <button
+                          type="button"
+                          onClick={() => void handlePromote(l.id)}
+                          className="text-deloitte-green hover:underline"
+                        >
+                          {t('drivers.promote')}
+                        </button>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </div>
 
       {loading ? (

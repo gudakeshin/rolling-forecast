@@ -243,6 +243,7 @@ from app.api.jobs import router as jobs_router
 from app.api.drivers import router as drivers_router
 from app.api.scenarios import router as scenarios_router
 from app.api.memory import router as memory_router
+from app.api.heuristics import router as heuristics_router
 
 app.include_router(health_router)
 app.include_router(auth_router, prefix="/api")
@@ -263,6 +264,7 @@ app.include_router(jobs_router, prefix="/api")
 app.include_router(drivers_router, prefix="/api")
 app.include_router(scenarios_router, prefix="/api")
 app.include_router(memory_router, prefix="/api")
+app.include_router(heuristics_router, prefix="/api")
 
 # Prometheus metrics (skip in tests — instrumentator breaks on Starlette Mount routes)
 if settings.app_env != "test":

@@ -35,9 +35,63 @@ export interface DriverLink {
   lag: number;
   coefficient?: number | null;
   elasticity?: number | null;
+  p_value_adj?: number | null;
+  r2?: number | null;
+  n_obs?: number | null;
+  fit_method?: string | null;
+  discovery_run_id?: string | null;
   status: string;
   composition_group?: string | null;
   notes?: string | null;
+}
+
+export interface DiscoveryCandidate {
+  driver_id: number;
+  driver_key: string;
+  driver_type: string;
+  lag: number;
+  n_obs: number;
+  coefficient?: number | null;
+  elasticity?: number | null;
+  p_value?: number | null;
+  p_value_adj?: number | null;
+  diff_p_value_adj?: number | null;
+  placebo_p?: number | null;
+  r2?: number | null;
+  passed: boolean;
+  reject_reason?: string | null;
+}
+
+export interface DiscoverySummary {
+  reason?: string;
+  n_tests?: number;
+  n_survivors?: number;
+  family_size?: number;
+  max_lag?: number;
+  min_overlap?: number;
+  superseded_links?: number;
+  candidates?: DiscoveryCandidate[];
+}
+
+export interface DiscoveryRun {
+  id: string;
+  line_item_id: number | null;
+  status: string;
+  config?: Record<string, unknown> | null;
+  summary?: DiscoverySummary | null;
+  created_by?: string | null;
+  created_at?: string | null;
+  links: DriverLink[];
+}
+
+export interface DiscoveryRunPayload {
+  line_item_id: number;
+  max_lag?: number;
+  alpha?: number;
+  max_survivors?: number;
+  enable_placebo?: boolean;
+  placebo_draws?: number;
+  driver_ids?: number[];
 }
 
 export interface DriverCreatePayload {
@@ -93,6 +147,15 @@ export async function createDriverLink(payload: {
 
 export async function promoteDriverLink(linkId: number): Promise<DriverLink> {
   return apiPost(`/drivers/links/${linkId}/promote`, {});
+}
+
+/** Phase 9 — statistical discovery. Only ever produces candidate links. */
+export async function runDiscovery(payload: DiscoveryRunPayload): Promise<DiscoveryRun> {
+  return apiPost('/drivers/discovery/run', payload);
+}
+
+export async function getDiscovery(runId: string): Promise<DiscoveryRun> {
+  return apiGet(`/drivers/discovery/${runId}`);
 }
 
 export async function uploadDriversFile(file: File): Promise<any> {

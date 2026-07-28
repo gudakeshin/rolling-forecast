@@ -73,10 +73,12 @@ def test_forecast_pipeline_stamps_exog_spec_when_enabled(db_session):
     periods = []
     vals = []
     drv = []
-    for i in range(30):
-        period = f"{2022 + (i // 12)}-{(i % 12) + 1:02d}"
-        x = 100 + i
-        y = 200 + 2.5 * x + np.random.default_rng(42 + i).normal(0, 2)
+    rng = np.random.default_rng(42)
+    x = 100.0
+    for i in range(36):
+        period = f"{2021 + (i // 12)}-{(i % 12) + 1:02d}"
+        x = x + rng.normal(0, 3.0)  # irregular driver path
+        y = 50.0 + 4.0 * x + rng.normal(0, 1.0)
         periods.append(period)
         drv.append({"period": period, "value": float(x)})
         vals.append(float(y))
@@ -120,11 +122,76 @@ def test_forecast_pipeline_stamps_exog_spec_when_enabled(db_session):
     params = out.metadata_rows[0].parameters or {}
     assert "exog_spec" in params
     assert params["exog_spec"]["drivers"][0]["driver_id"] == d.id
+    assert "exog_admitted" in params["exog_spec"]
+    # Strong causal driver should clear the plain-vs-exog band
+    assert params["exog_spec"]["exog_admitted"] is True
+    assert params["exog_spec"]["mode"] == "forecast"
     # Next-step metadata: compare exog modes for transparency
     assert "exog_mode_scores" in params["exog_spec"]
     assert params["exog_spec"]["exog_mode_scores"]["n_folds"] >= 0
     assert out.comparison is not None
     assert "exog_mode_scores" in out.comparison
+
+
+def test_exog_rejected_when_driver_is_noise(db_session):
+    """Pure-noise driver must lose the head-to-head against the plain model."""
+    li = LineItem(account_code="REV-EXOG-NOISE", name="Noise Exog", category="Revenue", display_order=9)
+    db_session.add(li)
+    db_session.flush()
+    d = Driver(key="noise_driver", name="Noise", driver_type="macro")
+    db_session.add(d)
+    db_session.flush()
+
+    rng = np.random.default_rng(7)
+    periods = []
+    vals = []
+    drv = []
+    for i in range(36):
+        period = f"{2021 + (i // 12)}-{(i % 12) + 1:02d}"
+        # Smooth trend + tiny noise — independent of driver
+        y = 100 + 0.8 * i + rng.normal(0, 1.0)
+        x = float(rng.normal(0, 25))
+        periods.append(period)
+        vals.append(float(y))
+        drv.append({"period": period, "value": x})
+    upsert_driver_values(db_session, driver_id=d.id, rows=drv)
+    db_session.add(
+        DriverLink(
+            driver_id=d.id,
+            line_item_id=li.id,
+            relation="level",
+            lag=0,
+            status="active",
+            link_type="manual",
+            transform="level",
+        )
+    )
+    db_session.commit()
+
+    out = forecast_line_item(
+        db_session,
+        li,
+        pd.Series(vals, dtype=float),
+        pd.DatetimeIndex([pd.Timestamp(f"{p}-01") for p in periods]),
+        periods,
+        LineForecastContext(
+            version_id="phase8-noise",
+            horizon=6,
+            random_seed=42,
+            model_type="arima",
+            selection_rule="mase_pinball_complexity",
+            is_material=True,
+            cal_cfg=get_calendar_config(),
+            model_registry=ModelRegistry(),
+            enable_driver_forecasting=True,
+        ),
+    )
+    assert out.skipped is False
+    params = (out.metadata_rows[0].parameters or {}) if out.metadata_rows else {}
+    assert "exog_spec" in params
+    assert params["exog_spec"]["exog_admitted"] is False
+    assert params["exog_spec"]["exog_rejected_reason"]
+    assert params["exog_spec"]["mode"] == "rejected"
 
 
 def test_stage0_driver_forecast_writes_versioned_driver_values(db_session):

@@ -359,6 +359,10 @@ def register_all_skills() -> SkillsRegistry:
         CoreMemoryListSkill,
         ConversationSearchSkill,
     )
+    from app.domain.skills.archival_memory import (
+        ArchivalMemoryInsertSkill,
+        ArchivalMemorySearchSkill,
+    )
 
     registry.register(ManageDriversSkill())
     registry.register(ExplainVarianceSkill())
@@ -367,6 +371,13 @@ def register_all_skills() -> SkillsRegistry:
     registry.register(CoreMemoryReplaceSkill())
     registry.register(CoreMemoryListSkill())
     registry.register(ConversationSearchSkill())
+    registry.register(ArchivalMemoryInsertSkill())
+    registry.register(ArchivalMemorySearchSkill())
+
+    # Phase 9 — statistical driver discovery
+    from app.domain.skills.discover_drivers import DiscoverDriversSkill
+
+    registry.register(DiscoverDriversSkill())
 
     logger.info(f"Registered {len(registry.list_names())} skills: {registry.list_names()}")
     return registry
