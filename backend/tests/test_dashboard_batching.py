@@ -14,11 +14,20 @@ from app.models.forecast import ForecastLineResult, ForecastVersion
 
 
 def _ensure_phase1_columns() -> None:
-    """Persistent test_app.db may predate migration 013; create_all won't ALTER."""
+    """Persistent test_app.db may predate migration 013; create_all won't ALTER.
+
+    On a fresh checkout test_app.db has no tables yet — they're created by the
+    FastAPI app's lifespan on first TestClient use, which happens *after* this
+    fixture runs. Match conftest.py's ensure_app_db_schema_columns() and no-op
+    rather than raising NoSuchTableError in that case.
+    """
     from app.database import engine
 
-    fv_cols = {c["name"] for c in inspect(engine).get_columns("forecast_versions")}
-    flr_cols = {c["name"] for c in inspect(engine).get_columns("forecast_line_results")}
+    try:
+        fv_cols = {c["name"] for c in inspect(engine).get_columns("forecast_versions")}
+        flr_cols = {c["name"] for c in inspect(engine).get_columns("forecast_line_results")}
+    except Exception:
+        return
     with engine.begin() as conn:
         if "selection_rule" not in fv_cols:
             conn.execute(text("ALTER TABLE forecast_versions ADD COLUMN selection_rule VARCHAR(64)"))
