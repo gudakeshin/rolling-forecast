@@ -34,28 +34,18 @@ function contrastRatio(fg: string, bg: string): number {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
-/** Dark theme tokens (from index.css data-theme=dark) */
-const DARK = {
-  bg: '#0d0d0d',
-  bgElevated: '#1a1a1a',
-  text: '#f5f5f5',
-  textMuted: '#b0b2b4',
-  surface500: '#8a8d90',
-  deloitteGreen: '#86BC25',
-  deloitteTeal: '#0076A8',
-  white: '#ffffff',
-  black: '#000000',
-} as const;
-
-/** Light theme tokens */
+/** Theme tokens (from index.css :root — light-only, mockup palette) */
 const LIGHT = {
-  bg: '#f4f5f7',
+  bg: '#f6f4ef',
   bgElevated: '#ffffff',
-  text: '#1a1a1a',
-  textMuted: '#53565a',
-  surface500: '#6b6e72',
-  deloitteGreen: '#86BC25',
-  deloitteTeal: '#0076A8',
+  text: '#211f1c',
+  textMuted: '#726f68',
+  surface500: '#726f68',
+  deloitteGreen: '#0e6e5c',
+  deloitteGreenDark: '#123b33',
+  deloitteTeal: '#3d6e8a',
+  amber: '#b8792e',
+  red: '#b23b2e',
   white: '#ffffff',
   black: '#000000',
 } as const;
@@ -63,46 +53,7 @@ const LIGHT = {
 const AA_NORMAL = 4.5;
 const AA_LARGE = 3.0;
 
-describe('WCAG AA contrast — dark theme', () => {
-  it('primary text on page background meets AA', () => {
-    expect(contrastRatio(DARK.text, DARK.bg)).toBeGreaterThanOrEqual(AA_NORMAL);
-  });
-
-  it('primary text on elevated surface meets AA', () => {
-    expect(contrastRatio(DARK.text, DARK.bgElevated)).toBeGreaterThanOrEqual(AA_NORMAL);
-  });
-
-  it('muted text on page background meets AA for large/UI (≥3:1)', () => {
-    // surface-400 (#b0b2b4) is used for secondary labels at ≥12px
-    expect(contrastRatio(DARK.textMuted, DARK.bg)).toBeGreaterThanOrEqual(AA_LARGE);
-  });
-
-  it('muted text on elevated surface meets AA for large/UI', () => {
-    expect(contrastRatio(DARK.textMuted, DARK.bgElevated)).toBeGreaterThanOrEqual(AA_LARGE);
-  });
-
-  it('surface-500 on page background meets AA for 12px normal text (≥4.5:1)', () => {
-    expect(contrastRatio(DARK.surface500, DARK.bg)).toBeGreaterThanOrEqual(AA_NORMAL);
-  });
-
-  it('surface-500 on elevated surface meets AA for 12px normal text', () => {
-    expect(contrastRatio(DARK.surface500, DARK.bgElevated)).toBeGreaterThanOrEqual(AA_NORMAL);
-  });
-
-  it('Deloitte green on dark bg meets AA for large text / icons', () => {
-    expect(contrastRatio(DARK.deloitteGreen, DARK.bg)).toBeGreaterThanOrEqual(AA_LARGE);
-  });
-
-  it('white on Deloitte teal meets AA for button labels', () => {
-    expect(contrastRatio(DARK.white, DARK.deloitteTeal)).toBeGreaterThanOrEqual(AA_NORMAL);
-  });
-
-  it('black on Deloitte green meets AA for primary CTA labels', () => {
-    expect(contrastRatio(DARK.black, DARK.deloitteGreen)).toBeGreaterThanOrEqual(AA_NORMAL);
-  });
-});
-
-describe('WCAG AA contrast — light theme', () => {
+describe('WCAG AA contrast — light theme (cream/forest palette)', () => {
   it('primary text on page background meets AA', () => {
     expect(contrastRatio(LIGHT.text, LIGHT.bg)).toBeGreaterThanOrEqual(AA_NORMAL);
   });
@@ -127,12 +78,36 @@ describe('WCAG AA contrast — light theme', () => {
     expect(contrastRatio(LIGHT.surface500, LIGHT.bgElevated)).toBeGreaterThanOrEqual(AA_NORMAL);
   });
 
-  it('Deloitte teal on light bg meets AA for links/accents', () => {
+  it('Deloitte green (forest) on page bg meets AA for large text / icons', () => {
+    expect(contrastRatio(LIGHT.deloitteGreen, LIGHT.bg)).toBeGreaterThanOrEqual(AA_LARGE);
+  });
+
+  it('Deloitte green on elevated surface meets AA for normal text (links/labels)', () => {
+    expect(contrastRatio(LIGHT.deloitteGreen, LIGHT.bgElevated)).toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+
+  it('Deloitte teal (secondary accent) on light bg meets AA for links/accents', () => {
     expect(contrastRatio(LIGHT.deloitteTeal, LIGHT.bg)).toBeGreaterThanOrEqual(AA_NORMAL);
   });
 
-  it('black on Deloitte green meets AA for primary CTA labels', () => {
-    expect(contrastRatio(LIGHT.black, LIGHT.deloitteGreen)).toBeGreaterThanOrEqual(AA_NORMAL);
+  it('amber accent on light bg meets AA for large/bold text (badges, labels)', () => {
+    // Amber is used for bold uppercase micro-labels and badge chips, not
+    // plain body copy — AA_LARGE is the applicable threshold (WCAG 2.1 §1.4.3).
+    expect(contrastRatio(LIGHT.amber, LIGHT.bg)).toBeGreaterThanOrEqual(AA_LARGE);
+  });
+
+  it('red accent on light bg meets AA for normal text', () => {
+    expect(contrastRatio(LIGHT.red, LIGHT.bg)).toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+
+  it('white on Deloitte green meets AA for primary CTA labels', () => {
+    // Buttons render white text on the forest-green fill (not black — the
+    // green is a dark tone in this palette, unlike the old bright brand green).
+    expect(contrastRatio(LIGHT.white, LIGHT.deloitteGreen)).toBeGreaterThanOrEqual(AA_NORMAL);
+  });
+
+  it('white on Deloitte green-dark meets AA for user chat bubbles', () => {
+    expect(contrastRatio(LIGHT.white, LIGHT.deloitteGreenDark)).toBeGreaterThanOrEqual(AA_NORMAL);
   });
 });
 
@@ -142,6 +117,6 @@ describe('contrast helpers', () => {
   });
 
   it('identical colors are 1:1', () => {
-    expect(contrastRatio('#86BC25', '#86BC25')).toBeCloseTo(1, 5);
+    expect(contrastRatio('#0e6e5c', '#0e6e5c')).toBeCloseTo(1, 5);
   });
 });

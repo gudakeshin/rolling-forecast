@@ -206,7 +206,7 @@ export function SkillEditorPanel() {
                   <button
                     onClick={handleSave}
                     disabled={saving}
-                    className="px-3 py-1 text-xs bg-deloitte-green text-black font-semibold rounded hover:bg-deloitte-green/90 disabled:opacity-50"
+                    className="px-3 py-1 text-xs bg-deloitte-green text-white font-semibold rounded hover:bg-deloitte-green/90 disabled:opacity-50"
                   >
                     {saving ? 'Saving...' : 'Save'}
                   </button>

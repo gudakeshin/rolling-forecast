@@ -1,59 +1,36 @@
-@import '@fontsource/open-sans/300.css';
-@import '@fontsource/open-sans/400.css';
-@import '@fontsource/open-sans/500.css';
-@import '@fontsource/open-sans/600.css';
-@import '@fontsource/open-sans/700.css';
+@import '@fontsource/plus-jakarta-sans/400.css';
+@import '@fontsource/plus-jakarta-sans/500.css';
+@import '@fontsource/plus-jakarta-sans/600.css';
+@import '@fontsource/plus-jakarta-sans/700.css';
+@import '@fontsource/plus-jakarta-sans/800.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+@import '@fontsource/jetbrains-mono/600.css';
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
-  :root,
-  html.dark,
-  html[data-theme='dark'] {
-    --rf-bg: #0d0d0d;
-    --rf-bg-elevated: #1a1a1a;
-    --rf-border: rgba(45, 45, 45, 0.8);
-    --rf-text: #f5f5f5;
-    --rf-text-muted: #b0b2b4;
-    --surface-50: #fafafa;
-    --surface-100: #f5f5f5;
-    --surface-200: #e8e8e8;
-    --surface-300: #d0d0ce;
-    --surface-400: #b0b2b4;
-    --surface-500: #8a8d90;
-    --surface-600: #53565a;
-    --surface-700: #2d2d2d;
-    --surface-800: #1a1a1a;
-    --surface-900: #0d0d0d;
-    --rf-on-surface: #f5f5f5;
-    --rf-chart-axis: #9ca3af;
-    --rf-chart-grid: rgba(255, 255, 255, 0.06);
-    color-scheme: dark;
-  }
-
-  html.light,
-  html[data-theme='light'] {
-    --rf-bg: #f4f5f7;
+  :root {
+    --rf-bg: #f6f4ef;
     --rf-bg-elevated: #ffffff;
-    --rf-border: rgba(208, 208, 206, 0.95);
-    --rf-text: #1a1a1a;
-    --rf-text-muted: #53565a;
-    /* Invert surface scale so dark-first Tailwind classes stay readable */
-    --surface-50: #0d0d0d;
-    --surface-100: #1a1a1a;
-    --surface-200: #2d2d2d;
-    --surface-300: #53565a;
-    --surface-400: #75787b;
-    --surface-500: #6b6e72;
-    --surface-600: #b8b9ba;
-    --surface-700: #d0d0ce;
+    --rf-border: #e4e0d6;
+    --rf-text: #211f1c;
+    --rf-text-muted: #726f68;
+    --surface-50: #1a1817;
+    --surface-100: #211f1c;
+    --surface-200: #3a3833;
+    --surface-300: #55524a;
+    --surface-400: #8b8880;
+    --surface-500: #726f68;
+    --surface-600: #ada99f;
+    --surface-700: #e4e0d6;
     --surface-800: #ffffff;
-    --surface-900: #f4f5f7;
-    --rf-on-surface: #1a1a1a;
-    --rf-chart-axis: #53565a;
-    --rf-chart-grid: rgba(0, 0, 0, 0.08);
+    --surface-900: #f6f4ef;
+    --rf-on-surface: #211f1c;
+    --rf-chart-axis: #8b8880;
+    --rf-chart-grid: rgba(33, 31, 28, 0.08);
     color-scheme: light;
   }
 
@@ -68,7 +45,7 @@
     min-height: 100dvh;
   }
 
-  /* Custom scrollbar — Deloitte themed */
+  /* Custom scrollbar */
   ::-webkit-scrollbar {
     width: 6px;
   }
@@ -76,43 +53,65 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: rgba(134, 188, 37, 0.25);
+    background: rgba(14, 110, 92, 0.18);
     border-radius: 3px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: rgba(134, 188, 37, 0.45);
+    background: rgba(14, 110, 92, 0.32);
   }
 
   /* Selection color */
   ::selection {
-    background: rgba(134, 188, 37, 0.3);
-    color: #fff;
+    background: rgba(14, 110, 92, 0.18);
+    color: #211f1c;
   }
 
-  html.light ::selection,
-  html[data-theme='light'] ::selection {
-    color: #1a1a1a;
-  }
-
-  /* Light theme: text-white / bg-black used as primary surfaces */
-  html.light .text-white,
-  html[data-theme='light'] .text-white {
+  /* Dark-first Tailwind classes (text-white / bg-black) stay readable on the
+     light surface — most panel components were written against a dark shell. */
+  .text-white {
     color: var(--rf-on-surface) !important;
   }
 
-  html.light .bg-black,
-  html[data-theme='light'] .bg-black,
-  html.light .bg-black\/60,
-  html[data-theme='light'] .bg-black\/60 {
+  /* Solid forest-green fills (CTA buttons, user chat bubble, avatar chips)
+     stay dark even in the light theme — text-white on them must stay literal
+     white, not fall through to the on-surface override above. Higher
+     specificity (two classes) wins regardless of source order. */
+  .bg-deloitte-green.text-white,
+  .bg-deloitte-green-dark.text-white,
+  .bg-deloitte-green .text-white,
+  .bg-deloitte-green-dark .text-white {
+    color: #fff !important;
+  }
+
+  .bg-black,
+  .bg-black\/60 {
     background-color: var(--rf-bg-elevated) !important;
   }
 
-  html.light .prose-invert,
-  html[data-theme='light'] .prose-invert {
+  .prose-invert {
     --tw-prose-body: var(--rf-text);
     --tw-prose-headings: var(--rf-text);
     --tw-prose-bold: var(--rf-text);
   }
+
+  /* Stock Tailwind status colors were tuned for a dark background; retune the
+     shades actually used across panels (red/amber/cyan/blue/green/yellow) so
+     they clear WCAG AA on the cream/white surfaces. */
+  .text-red-400 { color: #b23b2e !important; }
+  .text-amber-400 { color: #a3641f !important; }
+  .text-amber-300 { color: #a3641f !important; }
+  .text-cyan-400 { color: #1d6f7a !important; }
+  .text-cyan-300 { color: #1d6f7a !important; }
+  .text-blue-400 { color: #3d6e8a !important; }
+  .text-green-400 { color: #0e6e5c !important; }
+  .text-yellow-400 { color: #a3641f !important; }
+
+  .bg-red-500\/10, .bg-red-500\/15, .bg-red-600\/20 { background-color: rgba(178, 59, 46, 0.1) !important; }
+  .bg-amber-500\/10, .bg-amber-500\/15, .bg-amber-500\/20 { background-color: rgba(184, 121, 46, 0.12) !important; }
+  .bg-cyan-500\/15 { background-color: rgba(29, 111, 122, 0.1) !important; }
+  .bg-blue-500\/10 { background-color: rgba(61, 110, 138, 0.1) !important; }
+  .bg-green-500\/10 { background-color: rgba(14, 110, 92, 0.1) !important; }
+  .bg-yellow-500\/15 { background-color: rgba(184, 121, 46, 0.12) !important; }
 }
 
 @layer components {
@@ -147,11 +146,11 @@
   }
 
   .glow-green {
-    box-shadow: 0 0 20px rgba(134, 188, 37, 0.15);
+    box-shadow: 0 0 20px rgba(14, 110, 92, 0.15);
   }
 
   .glow-teal {
-    box-shadow: 0 0 20px rgba(0, 118, 168, 0.15);
+    box-shadow: 0 0 20px rgba(61, 110, 138, 0.15);
   }
 
   .rf-shell {

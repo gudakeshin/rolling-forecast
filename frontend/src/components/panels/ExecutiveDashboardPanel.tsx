@@ -15,14 +15,15 @@ import { usePanelStore } from '../../store/panelStore';
 import { useCan } from '../../store/authStore';
 import { toast } from '../../store/toastStore';
 import { DataTable, downloadCsv, type DataTableColumn } from '../ui/DataTable';
+import { chartTheme } from '../../theme/chartTheme';
 
 const COLORS = {
-  green: '#86BC25',
-  teal: '#0076A8',
-  tealLight: '#00A3E0',
-  red: '#E84855',
-  amber: '#FFB547',
-  coolGray: '#97999B',
+  green: chartTheme.colors.primary,
+  teal: chartTheme.colors.secondary,
+  tealLight: '#5B8AA6',
+  red: chartTheme.colors.danger,
+  amber: chartTheme.colors.warning,
+  coolGray: chartTheme.colors.tertiary,
 };
 
 function formatCurrency(val: number): string {
@@ -569,7 +570,7 @@ export function ExecutiveDashboardPanel({ data, onRefresh: _onRefresh }: { data:
             <button
               type="button"
               onClick={() => openPanel('approvals', { version_id: d.version.id })}
-              className="flex items-center gap-1 px-2.5 py-1 bg-deloitte-green text-black rounded-lg text-xs font-semibold"
+              className="flex items-center gap-1 px-2.5 py-1 bg-deloitte-green text-white rounded-lg text-xs font-semibold"
             >
               Submit for approval
             </button>
@@ -684,9 +685,9 @@ export function ExecutiveDashboardPanel({ data, onRefresh: _onRefresh }: { data:
                   <stop offset="95%" stopColor={COLORS.teal} stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-              <XAxis dataKey="period" tick={{ fill: '#97999B', fontSize: 12 }} />
-              <YAxis tick={{ fill: '#97999B', fontSize: 12 }} tickFormatter={(v) => formatCurrency(v)} width={45} />
+              <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+              <XAxis dataKey="period" tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} />
+              <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} tickFormatter={(v) => formatCurrency(v)} width={45} />
               <Tooltip content={<ChartTooltip />} />
               <Area type="monotone" dataKey="p90" name="P90 (Upside)" stroke={COLORS.teal} fill="url(#cfoGradCI)" strokeWidth={1} strokeDasharray="4 3" />
               <Area type="monotone" dataKey="p10" name="P10 (Downside)" stroke={COLORS.teal} fill="url(#cfoGradCI)" strokeWidth={1} strokeDasharray="4 3" />
@@ -697,9 +698,9 @@ export function ExecutiveDashboardPanel({ data, onRefresh: _onRefresh }: { data:
           <>
             <ResponsiveContainer width="100%" height={180}>
               <BarChart data={d.bridge_data} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-                <XAxis dataKey="name" tick={{ fill: '#97999B', fontSize: 12 }} angle={-15} textAnchor="end" height={40} />
-                <YAxis tick={{ fill: '#97999B', fontSize: 12 }} tickFormatter={(v) => formatCurrency(v)} width={45} />
+                <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+                <XAxis dataKey="name" tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} angle={-15} textAnchor="end" height={40} />
+                <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} tickFormatter={(v) => formatCurrency(v)} width={45} />
                 <Tooltip content={<ChartTooltip />} />
                 <Bar dataKey="invisible" stackId="bridge" fill="transparent" />
                 <Bar dataKey="value" stackId="bridge" radius={[2, 2, 0, 0]}>
@@ -770,44 +771,49 @@ export function ExecutiveDashboardPanel({ data, onRefresh: _onRefresh }: { data:
             </span>
           )}
         </div>
-        <button
-          onClick={async () => {
-            if (!d.version?.id) {
-              toast.error('No version id available for export');
-              return;
-            }
-            setIsExporting(true);
-            try {
-              const token = localStorage.getItem('forecast-auth');
-              let authHeader = '';
-              try {
-                const parsed = token ? JSON.parse(token) : null;
-                authHeader = parsed?.state?.token ? `Bearer ${parsed.state.token}` : '';
-              } catch { /* ignore */ }
-              const res = await fetch(`/api/executive/board-pack/${d.version.id}?format=pptx`, {
-                headers: authHeader ? { Authorization: authHeader } : {},
-              });
-              if (!res.ok) throw new Error('Export failed');
-              const blob = await res.blob();
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = `${d.version.name || 'forecast'}_board_pack.pptx`;
-              a.click();
-              URL.revokeObjectURL(url);
-              toast.success('Board pack downloaded');
-            } catch (e: any) {
-              toast.error(e.message || 'Board pack export failed');
-            } finally {
-              setIsExporting(false);
-            }
-          }}
-          disabled={isExporting}
-          className="flex items-center gap-1 px-2 py-1 bg-surface-800/60 border border-surface-700/50 rounded-lg text-xs text-surface-400 hover:text-white hover:border-deloitte-green/30 transition-all disabled:opacity-50"
-        >
-          {isExporting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
-          Export PPT
-        </button>
+        <div className="flex items-center gap-1.5">
+          {(['pptx', 'pdf'] as const).map((format) => (
+            <button
+              key={format}
+              onClick={async () => {
+                if (!d.version?.id) {
+                  toast.error('No version id available for export');
+                  return;
+                }
+                setIsExporting(true);
+                try {
+                  const token = localStorage.getItem('forecast-auth');
+                  let authHeader = '';
+                  try {
+                    const parsed = token ? JSON.parse(token) : null;
+                    authHeader = parsed?.state?.token ? `Bearer ${parsed.state.token}` : '';
+                  } catch { /* ignore */ }
+                  const res = await fetch(`/api/executive/board-pack/${d.version.id}?format=${format}`, {
+                    headers: authHeader ? { Authorization: authHeader } : {},
+                  });
+                  if (!res.ok) throw new Error('Export failed');
+                  const blob = await res.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `${d.version.name || 'forecast'}_board_pack.${format}`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                  toast.success('Board pack downloaded');
+                } catch (e: any) {
+                  toast.error(e.message || 'Board pack export failed');
+                } finally {
+                  setIsExporting(false);
+                }
+              }}
+              disabled={isExporting}
+              className="flex items-center gap-1 px-2 py-1 bg-surface-800/60 border border-surface-700/50 rounded-lg text-xs text-surface-400 hover:text-white hover:border-deloitte-green/30 transition-all disabled:opacity-50"
+            >
+              {isExporting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+              Export {format.toUpperCase()}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

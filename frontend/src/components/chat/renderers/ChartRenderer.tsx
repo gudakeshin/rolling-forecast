@@ -11,15 +11,8 @@ import { DataTable, downloadCsv } from '../../ui/DataTable';
 
 const COLORS = {
   green: chartTheme.colors.primary,
-  greenDark: '#046A38',
-  greenLight: '#C4D600',
-  teal: '#0076A8',
-  tealLight: chartTheme.colors.secondary,
-  blue: '#012169',
-  blueLight: '#0097A9',
-  warmGray: '#53565A',
+  teal: chartTheme.colors.secondary,
   coolGray: chartTheme.colors.tertiary,
-  lightGray: '#D0D0CE',
   red: chartTheme.colors.danger,
   amber: chartTheme.colors.warning,
 };
@@ -128,7 +121,7 @@ export function ChartRenderer({ data }: Props) {
 
   const commonLegend = show_legend ? (
     <Legend
-      wrapperStyle={{ fontSize: 12, color: '#97999B', cursor: 'pointer' }}
+      wrapperStyle={{ fontSize: 12, color: chartTheme.axis.fill, cursor: 'pointer' }}
       onClick={onLegendClick}
     />
   ) : null;
@@ -185,9 +178,9 @@ export function ChartRenderer({ data }: Props) {
       <ResponsiveContainer width="100%" height={height}>
         {chart_type === 'bar' ? (
           <BarChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+            <XAxis dataKey={x_key} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} />
+            <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
             {commonLegend}
             {visibleKeys.map((key, i) => (
@@ -199,9 +192,9 @@ export function ChartRenderer({ data }: Props) {
 
         ) : chart_type === 'stacked_bar' ? (
           <BarChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+            <XAxis dataKey={x_key} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} />
+            <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
             {commonLegend}
             {visibleKeys.map((key, i) => (
@@ -212,9 +205,9 @@ export function ChartRenderer({ data }: Props) {
 
         ) : chart_type === 'line' ? (
           <LineChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+            <XAxis dataKey={x_key} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} />
+            <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
             {commonLegend}
             {visibleKeys.map((key, i) => (
@@ -234,9 +227,9 @@ export function ChartRenderer({ data }: Props) {
                 </linearGradient>
               ))}
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+            <XAxis dataKey={x_key} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} />
+            <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
             {commonLegend}
             {visibleKeys.map((key, i) => (
@@ -253,9 +246,9 @@ export function ChartRenderer({ data }: Props) {
                 <stop offset="95%" stopColor={COLORS.teal} stopOpacity={0} />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+            <XAxis dataKey={x_key} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} />
+            <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
             {commonLegend}
             <Area type="monotone" dataKey="p90" name="P90 (Upside)" stroke={COLORS.teal} fill="url(#gradCI)" strokeWidth={1} strokeDasharray="4 4" />
@@ -269,9 +262,9 @@ export function ChartRenderer({ data }: Props) {
 
         ) : chart_type === 'bridge' ? (
           <BarChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+            <XAxis dataKey={x_key} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} />
+            <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
             <Bar dataKey="invisible" stackId="bridge" fill="transparent" />
             <Bar dataKey="value" stackId="bridge" radius={[3, 3, 0, 0]}>
@@ -312,9 +305,9 @@ export function ChartRenderer({ data }: Props) {
 
         ) : chart_type === 'combo' ? (
           <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+            <XAxis dataKey={x_key} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} />
+            <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
             {commonLegend}
             {visibleKeys.slice(0, 1).map((key) => (
@@ -328,9 +321,9 @@ export function ChartRenderer({ data }: Props) {
 
         ) : chart_type === 'variance' ? (
           <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+            <XAxis dataKey={x_key} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} />
+            <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
             {commonLegend}
             <ReferenceLine y={0} stroke={COLORS.coolGray} strokeDasharray="3 3" />
@@ -350,9 +343,9 @@ export function ChartRenderer({ data }: Props) {
 
         ) : chart_type === 'grouped_bar' ? (
           <BarChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+            <XAxis dataKey={x_key} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} />
+            <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
             {commonLegend}
             {visibleKeys.map((key, i) => (
@@ -364,9 +357,9 @@ export function ChartRenderer({ data }: Props) {
 
         ) : chart_type === 'scatter' ? (
           <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={y_keys[0] || x_key} tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} name={labelFor(y_keys[0] || x_key)} />
-            <YAxis dataKey={y_keys[1]} tick={{ fill: '#97999B', fontSize: 12 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} name={labelFor(y_keys[1])} />
+            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+            <XAxis dataKey={y_keys[0] || x_key} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} tickFormatter={(v) => formatValue(v, format)} name={labelFor(y_keys[0] || x_key)} />
+            <YAxis dataKey={y_keys[1]} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} tickFormatter={(v) => formatValue(v, format)} name={labelFor(y_keys[1])} />
             <Tooltip content={<CustomTooltip format={format} />} />
             {commonLegend}
             <Scatter name={labelFor(y_keys[1] || 'values')} fill={COLORS.teal} />
@@ -374,9 +367,9 @@ export function ChartRenderer({ data }: Props) {
 
         ) : (
           <BarChart data={chartData} onClick={onPointClick}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 12 }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 12 }} />
+            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+            <XAxis dataKey={x_key} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} />
+            <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} />
             <Tooltip />
             {visibleKeys.map((key, i) => (
               <Bar key={key} dataKey={key} fill={SERIES_COLORS[i % SERIES_COLORS.length]} />

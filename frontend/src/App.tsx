@@ -5,8 +5,6 @@ import { useVersionStore } from './store/versionStore';
 import { AppLayout } from './components/common/AppLayout';
 import { LoginForm } from './components/common/LoginForm';
 import { PanelUrlSync } from './components/common/PanelUrlSync';
-import { ExecutiveLandingPage } from './components/pages/ExecutiveLandingPage';
-import { AdminPage } from './components/pages/AdminPage';
 import { ToastHost } from './components/ui/ToastHost';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import type { TokenResponse } from './types/auth';
@@ -67,15 +65,6 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-function AdminRoute({ children }: { children: ReactNode }) {
-  const user = useAuthStore((s) => s.user);
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const canAdmin = Boolean(user?.can_admin);
-  if (!isAuthenticated) return <Navigate to="/login" replace />;
-  if (!canAdmin && user?.role_name !== 'admin') return <Navigate to="/" replace />;
-  return <>{children}</>;
-}
-
 function SsoTokenHandler() {
   const [params, setParams] = useSearchParams();
   const login = useAuthStore((s) => s.login);
@@ -130,22 +119,8 @@ export default function App() {
         <ToastHost />
         <Routes>
           <Route path="/login" element={<LoginForm />} />
-          <Route
-            path="/executive"
-            element={
-              <ProtectedRoute>
-                <ExecutiveLandingPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/admin"
-            element={
-              <AdminRoute>
-                <AdminPage />
-              </AdminRoute>
-            }
-          />
+          {/* Executive Dashboard and Admin Console are now slide-over panels,
+              not standalone routes — any deep link falls through to the app shell. */}
           <Route
             path="/*"
             element={

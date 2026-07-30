@@ -216,7 +216,7 @@ export function ApprovalsPanel() {
             type="button"
             onClick={handleSubmit}
             disabled={busy}
-            className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-deloitte-green text-black text-xs font-semibold rounded-lg hover:bg-deloitte-green/90 disabled:opacity-50"
+            className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-deloitte-green text-white text-xs font-semibold rounded-lg hover:bg-deloitte-green/90 disabled:opacity-50"
           >
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
             Submit for approval
@@ -307,7 +307,7 @@ export function ApprovalsPanel() {
                             type="button"
                             disabled={busy}
                             onClick={() => handleDecide(step.id, 'approve')}
-                            className="px-2.5 py-1.5 bg-deloitte-green text-black rounded-lg text-xs font-semibold hover:bg-deloitte-green/90 disabled:opacity-50"
+                            className="px-2.5 py-1.5 bg-deloitte-green text-white rounded-lg text-xs font-semibold hover:bg-deloitte-green/90 disabled:opacity-50"
                           >
                             Approve
                           </button>

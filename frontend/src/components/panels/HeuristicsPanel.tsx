@@ -231,7 +231,7 @@ export function HeuristicsPanel() {
                       type="button"
                       disabled={busyId === row.id}
                       onClick={() => void decide(row, 'promote')}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-deloitte-green text-black rounded-lg text-xs font-semibold hover:bg-deloitte-green/90 disabled:opacity-50"
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-deloitte-green text-white rounded-lg text-xs font-semibold hover:bg-deloitte-green/90 disabled:opacity-50"
                     >
                       <Check className="w-3.5 h-3.5" />
                       {t('heuristics.promote')}

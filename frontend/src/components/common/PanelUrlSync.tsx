@@ -19,6 +19,7 @@ const VALID_PANELS = new Set([
   'document_library',
   'approvals',
   'skill_editor',
+  'admin_console',
 ]);
 
 /** Keep `?panel=` in sync with the open side panel (deep-link + shareable URL). */

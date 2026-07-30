@@ -19,14 +19,15 @@ import { useCan } from '../../store/authStore';
 import { toast } from '../../store/toastStore';
 import { downloadCsv } from '../ui/DataTable';
 import { dispatchRecommendedAction } from '../../utils/recommendedActions';
+import { chartTheme } from '../../theme/chartTheme';
 
 const COLORS = {
-  green: '#86BC25',
-  amber: '#FFB547',
-  red: '#E84855',
-  teal: '#0076A8',
-  coolGray: '#97999B',
-  blue: '#62B5E5',
+  green: chartTheme.colors.primary,
+  amber: chartTheme.colors.warning,
+  red: chartTheme.colors.danger,
+  teal: chartTheme.colors.secondary,
+  coolGray: chartTheme.colors.tertiary,
+  blue: '#3D6E8A',
 };
 
 // ─── Types ─────────────────────────────────────────
@@ -892,20 +893,17 @@ function ReviewItemRow({
                 <AreaChart data={item.history} margin={{ top: 2, right: 5, left: -20, bottom: 2 }}>
                   <defs>
                     <linearGradient id={`histGrad-${item.id}`} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#0076A8" stopOpacity={0.2} />
-                      <stop offset="95%" stopColor="#0076A8" stopOpacity={0} />
+                      <stop offset="5%" stopColor={COLORS.teal} stopOpacity={0.2} />
+                      <stop offset="95%" stopColor={COLORS.teal} stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <XAxis dataKey="period" tick={{ fill: '#97999B', fontSize: 12 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: '#97999B', fontSize: 12 }} axisLine={false} tickLine={false} />
-                  <Tooltip
-                    contentStyle={{ background: '#1a1d21', border: '1px solid #3a3d42', borderRadius: '8px', fontSize: '12px' }}
-                    labelStyle={{ color: '#97999B', fontSize: '9px' }}
-                  />
+                  <XAxis dataKey="period" tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={false} tickLine={false} />
+                  <Tooltip contentStyle={chartTheme.tooltip.contentStyle} labelStyle={{ color: chartTheme.axis.fill, fontSize: '9px' }} />
                   {item.history[0]?.actual !== undefined && (
-                    <Area type="monotone" dataKey="actual" name="Actual" stroke="#FFB547" fill="none" strokeWidth={1.5} dot={{ r: 2, fill: '#FFB547' }} />
+                    <Area type="monotone" dataKey="actual" name="Actual" stroke={COLORS.amber} fill="none" strokeWidth={1.5} dot={{ r: 2, fill: COLORS.amber }} />
                   )}
-                  <Area type="monotone" dataKey="forecast" name="Forecast" stroke="#0076A8" fill={`url(#histGrad-${item.id})`} strokeWidth={1.5} dot={{ r: 2, fill: '#0076A8' }} />
+                  <Area type="monotone" dataKey="forecast" name="Forecast" stroke={COLORS.teal} fill={`url(#histGrad-${item.id})`} strokeWidth={1.5} dot={{ r: 2, fill: COLORS.teal }} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -1248,7 +1246,7 @@ export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props
             <button
               type="button"
               onClick={() => openPanel('approvals', { version_id: version.id })}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-deloitte-green text-black text-xs font-semibold rounded-lg hover:bg-deloitte-green/90 transition-colors whitespace-nowrap"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-deloitte-green text-white text-xs font-semibold rounded-lg hover:bg-deloitte-green/90 transition-colors whitespace-nowrap"
             >
               Submit for approval
             </button>
@@ -1277,7 +1275,7 @@ export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props
             <button
               onClick={handleAcceptAll}
               disabled={isAcceptingAll}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-deloitte-green text-black text-xs font-semibold rounded-lg hover:bg-deloitte-green/90 disabled:opacity-50 transition-colors whitespace-nowrap"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-deloitte-green text-white text-xs font-semibold rounded-lg hover:bg-deloitte-green/90 disabled:opacity-50 transition-colors whitespace-nowrap"
             >
               {isAcceptingAll ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
               Accept All AI ({localBuckets.ai_approved.total})
@@ -1466,9 +1464,9 @@ export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props
           {confidence_trend.length > 1 ? (
             <ResponsiveContainer width="100%" height={120}>
               <LineChart data={confidence_trend} margin={{ top: 5, right: 5, left: -15, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-                <XAxis dataKey="version" tick={{ fill: '#97999B', fontSize: 12 }} />
-                <YAxis tick={{ fill: '#97999B', fontSize: 12 }} domain={[0, 100]} />
+                <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+                <XAxis dataKey="version" tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} />
+                <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} domain={[0, 100]} />
                 <Tooltip content={<ChartTooltip />} />
                 <Line type="monotone" dataKey="avg_confidence" name="Avg Confidence" stroke={COLORS.green} strokeWidth={2} dot={{ r: 3 }} />
               </LineChart>
@@ -1483,8 +1481,8 @@ export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props
           {category_flag_chart.length > 0 ? (
             <ResponsiveContainer width="100%" height={120}>
               <BarChart data={category_flag_chart.slice(0, 6)} layout="vertical" margin={{ left: 60, right: 5, top: 5, bottom: 5 }}>
-                <XAxis type="number" tick={{ fill: '#97999B', fontSize: 12 }} />
-                <YAxis type="category" dataKey="category" tick={{ fill: '#97999B', fontSize: 12 }} width={55} />
+                <XAxis type="number" tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} />
+                <YAxis type="category" dataKey="category" tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} width={55} />
                 <Tooltip content={<ChartTooltip />} />
                 <Bar dataKey="count" name="Issues" fill={COLORS.red} radius={[0, 3, 3, 0]} />
               </BarChart>

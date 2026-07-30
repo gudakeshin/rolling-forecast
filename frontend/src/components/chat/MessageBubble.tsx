@@ -33,7 +33,7 @@ export function MessageBubble({ message, onRegenerate, canRegenerate }: Props) {
       <div
         className={`max-w-[80%] ${
           isUser
-            ? 'bg-accent-500 rounded-2xl rounded-br-md px-4 py-3'
+            ? 'bg-deloitte-green-dark rounded-2xl rounded-br-md px-4 py-3'
             : 'space-y-3'
         }`}
       >

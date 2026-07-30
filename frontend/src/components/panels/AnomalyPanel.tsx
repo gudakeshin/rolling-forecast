@@ -15,15 +15,16 @@ import {
 import { apiPost } from '../../api/client';
 import { usePanelStore } from '../../store/panelStore';
 import { DataTable, downloadCsv, type DataTableColumn } from '../ui/DataTable';
+import { chartTheme } from '../../theme/chartTheme';
 
 // ─── Design tokens ─────────────────────────────────
 const COLORS = {
-  green: '#86BC25',
-  amber: '#FFB547',
-  red: '#E84855',
-  teal: '#0076A8',
-  coolGray: '#97999B',
-  blue: '#62B5E5',
+  green: chartTheme.colors.primary,
+  amber: chartTheme.colors.warning,
+  red: chartTheme.colors.danger,
+  teal: chartTheme.colors.secondary,
+  coolGray: chartTheme.colors.tertiary,
+  blue: '#3D6E8A',
 };
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -512,7 +513,7 @@ function AnomalyRow({
                     <XAxis dataKey="period" tick={{ fontSize: 12, fill: '#666' }} tickLine={false} axisLine={false} />
                     <YAxis tick={{ fontSize: 12, fill: '#666' }} tickLine={false} axisLine={false} width={40} tickFormatter={(v) => formatCurrency(v)} />
                     <Tooltip
-                      contentStyle={{ background: '#1a1a2e', border: '1px solid #333', borderRadius: 8, fontSize: 12 }}
+                      contentStyle={chartTheme.tooltip.contentStyle}
                       labelStyle={{ color: '#fff', marginBottom: 4 }}
                       formatter={(v: number, name: string) => [formatCurrency(v), name === 'actual' ? 'Actual' : 'Forecast']}
                     />

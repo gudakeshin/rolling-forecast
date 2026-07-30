@@ -140,7 +140,7 @@ export function InputBar({ onSend, onStop, isStreaming }: Props) {
             onClick={handleSend}
             disabled={!input.trim()}
             aria-label={t('chat.send')}
-            className="flex-shrink-0 p-1.5 bg-deloitte-green hover:bg-deloitte-green/90 disabled:bg-surface-700 disabled:text-surface-600 text-black rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+            className="flex-shrink-0 p-1.5 bg-deloitte-green hover:bg-deloitte-green/90 disabled:bg-surface-700 disabled:text-surface-600 text-white rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
           >
             <Send className="w-5 h-5" />
           </button>

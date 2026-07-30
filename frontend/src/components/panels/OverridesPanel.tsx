@@ -250,7 +250,7 @@ export function OverridesPanel({ data, onRefresh }: Props) {
           <button
             type="submit"
             disabled={creating || loadingLines || !resultId}
-            className="w-full py-1.5 text-xs font-semibold bg-deloitte-green text-black rounded-lg disabled:opacity-50"
+            className="w-full py-1.5 text-xs font-semibold bg-deloitte-green text-white rounded-lg disabled:opacity-50"
           >
             {creating ? <Loader2 className="w-3.5 h-3.5 animate-spin mx-auto" /> : 'Apply override'}
           </button>

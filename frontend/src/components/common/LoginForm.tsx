@@ -107,7 +107,7 @@ export function LoginForm() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3 px-4 bg-deloitte-green hover:bg-deloitte-green/90 disabled:bg-surface-700 disabled:text-surface-500 text-black font-semibold rounded-xl transition-all glow-green"
+            className="w-full py-3 px-4 bg-deloitte-green hover:bg-deloitte-green/90 disabled:bg-surface-700 disabled:text-surface-500 text-white font-semibold rounded-xl transition-all glow-green"
           >
             {loading ? 'Signing in...' : 'Sign In'}
           </button>

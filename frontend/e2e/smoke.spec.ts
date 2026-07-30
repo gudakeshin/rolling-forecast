@@ -18,7 +18,7 @@ test.describe('enterprise smoke', () => {
     await expect(page.getByLabel(/message composer/i)).toBeVisible({ timeout: 15_000 });
   });
 
-  test('can open executive view from the UI', async ({ page }) => {
+  test('can open executive dashboard panel from the UI', async ({ page }) => {
     await page.goto('/login');
     await page.getByLabel(/username/i).fill(process.env.E2E_USER || 'analyst');
     await page.getByLabel(/password/i).fill(process.env.E2E_PASSWORD || 'analyst');
@@ -26,7 +26,8 @@ test.describe('enterprise smoke', () => {
 
     await expect(page.getByLabel(/message composer/i)).toBeVisible({ timeout: 15_000 });
 
-    await page.getByRole('link', { name: /executive/i }).click();
-    await expect(page).toHaveURL(/executive/i, { timeout: 15_000 });
+    // Executive Dashboard is a slide-over panel (not a route) opened from the sidebar.
+    await page.getByRole('button', { name: /executive dashboard/i }).click();
+    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 15_000 });
   });
 });

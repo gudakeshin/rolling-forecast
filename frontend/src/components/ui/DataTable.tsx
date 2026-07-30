@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef, type ReactNode } from 'react';
+import { Fragment, useMemo, useState, useRef, type ReactNode } from 'react';
 import {
   flexRender,
   getCoreRowModel,
@@ -195,9 +195,8 @@ export function DataTable<T extends Record<string, unknown>>({
     const rowKey = getRowId ? getRowId(original) : row.id;
     const isExpanded = Boolean(renderExpandedRow && expandedRowIds?.has(rowKey));
     return (
-      <>
+      <Fragment key={rowKey}>
         <tr
-          key={row.id}
           className={`group border-b border-surface-800/80 hover:bg-surface-700/30 ${onRowClick ? 'cursor-pointer' : ''} ${extra}`}
           style={{ height: rowHeight }}
           onClick={onRowClick ? () => onRowClick(original) : undefined}
@@ -226,7 +225,7 @@ export function DataTable<T extends Record<string, unknown>>({
             </td>
           </tr>
         )}
-      </>
+      </Fragment>
     );
   };
 

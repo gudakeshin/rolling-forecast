@@ -1,7 +1,7 @@
 import { ChatContainer } from '../chat/ChatContainer';
 import { PanelContainer } from '../panels/PanelContainer';
 import { Header } from './Header';
-import { ConversationSidebar } from './ConversationSidebar';
+import { Sidebar } from './Sidebar';
 import { usePanelStore } from '../../store/panelStore';
 import { useChatStore } from '../../store/chatStore';
 
@@ -38,7 +38,7 @@ export function AppLayout() {
             lg:relative lg:translate-x-0 lg:pointer-events-auto
           `}
         >
-          <ConversationSidebar />
+          <Sidebar />
         </div>
 
         <div

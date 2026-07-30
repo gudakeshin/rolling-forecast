@@ -24,6 +24,7 @@ import { DriversPanel } from './DriversPanel';
 import { ExplainabilityPanel } from './ExplainabilityPanel';
 import { WhatIfPanel } from './WhatIfPanel';
 import { HeuristicsPanel } from './HeuristicsPanel';
+import { AdminConsolePanel } from './AdminConsolePanel';
 
 const panelIcons: Record<string, any> = {
   forecast_table: Table,
@@ -42,6 +43,7 @@ const panelIcons: Record<string, any> = {
   anomaly_dashboard: AlertTriangle,
   document_library: FolderOpen,
   approvals: CheckSquare,
+  admin_console: Shield,
 };
 
 export function PanelContainer() {
@@ -70,6 +72,7 @@ export function PanelContainer() {
       || panelType === 'explainability'
       || panelType === 'what_if'
       || panelType === 'heuristics'
+      || panelType === 'admin_console'
     ) {
       const titles: Record<string, string> = {
         skill_editor: 'Skill Editor',
@@ -78,6 +81,7 @@ export function PanelContainer() {
         explainability: t('panel.explainability'),
         what_if: t('panel.whatIf'),
         heuristics: t('panel.heuristics'),
+        admin_console: 'Admin Console',
       };
       setPanelData({
         panel_type: panelType,
@@ -168,7 +172,12 @@ export function PanelContainer() {
     };
     fetchData();
     return () => controller.abort();
-  }, [panelType, panelParams, setLoading, setPanelData, t]);
+    // `t` is intentionally omitted: useI18n() returns a new function identity
+    // every render, so including it here re-runs the fetch (and setPanelData)
+    // on every render — an infinite update loop. Locale-driven titles inside
+    // this effect only need the current translation at fetch time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panelType, panelParams, setLoading, setPanelData]);
 
   const Icon = panelIcons[panelType || ''] || Table;
 
@@ -254,6 +263,20 @@ export function PanelContainer() {
         onToggleWidth={toggleWidth}
       >
         <HeuristicsPanel />
+      </SlidePanel>
+    );
+  }
+
+  if (panelType === 'admin_console') {
+    return (
+      <SlidePanel
+        title="Admin Console"
+        icon={<Shield className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
+        onClose={closePanel}
+        widthExpanded={widthMode === 'wide'}
+        onToggleWidth={toggleWidth}
+      >
+        <AdminConsolePanel />
       </SlidePanel>
     );
   }

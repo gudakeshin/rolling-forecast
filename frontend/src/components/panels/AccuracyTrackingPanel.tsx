@@ -10,14 +10,15 @@ import { DataTable, type DataTableColumn } from '../ui/DataTable';
 import { rescoreForecasts } from '../../api/dashboard';
 import { usePanelStore } from '../../store/panelStore';
 import { toast } from '../../store/toastStore';
+import { chartTheme } from '../../theme/chartTheme';
 
 const COLORS = {
-  green: '#86BC25',
-  teal: '#0076A8',
-  tealLight: '#00A3E0',
-  red: '#E84855',
-  amber: '#FFB547',
-  coolGray: '#97999B',
+  green: chartTheme.colors.primary,
+  teal: chartTheme.colors.secondary,
+  tealLight: '#5B8AA6',
+  red: chartTheme.colors.danger,
+  amber: chartTheme.colors.warning,
+  coolGray: chartTheme.colors.tertiary,
 };
 
 interface Props {
@@ -267,9 +268,9 @@ export function AccuracyTrackingPanel({ data, onRefresh }: Props) {
             {mape_trend.length > 1 ? (
               <ResponsiveContainer width="100%" height={180}>
                 <LineChart data={mape_trend} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-                  <XAxis dataKey="version" tick={{ fill: '#97999B', fontSize: 12 }} />
-                  <YAxis tick={{ fill: '#97999B', fontSize: 12 }} unit="%" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+                  <XAxis dataKey="version" tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} />
+                  <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} unit="%" />
                   <Tooltip content={<ChartTooltip />} />
                   <ReferenceLine y={5} stroke={COLORS.green} strokeDasharray="5 5" label={{ value: 'Target 5%', fill: COLORS.green, fontSize: 12 }} />
                   <Line type="monotone" dataKey="avg_mape" name="Avg MAPE" stroke={COLORS.teal} strokeWidth={2.5} dot={{ r: 4, fill: COLORS.teal }} />
@@ -289,9 +290,9 @@ export function AccuracyTrackingPanel({ data, onRefresh }: Props) {
               </h4>
               <ResponsiveContainer width="100%" height={150}>
                 <ComposedChart data={bias_trend} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-                  <XAxis dataKey="version" tick={{ fill: '#97999B', fontSize: 12 }} />
-                  <YAxis tick={{ fill: '#97999B', fontSize: 12 }} unit="%" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+                  <XAxis dataKey="version" tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} />
+                  <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} unit="%" />
                   <Tooltip content={<ChartTooltip />} />
                   <ReferenceLine y={0} stroke={COLORS.coolGray} strokeDasharray="3 3" />
                   <Bar dataKey="avg_bias" name="Avg Bias" radius={[3, 3, 0, 0]}>
@@ -310,9 +311,9 @@ export function AccuracyTrackingPanel({ data, onRefresh }: Props) {
             {category_accuracy.length > 0 ? (
               <ResponsiveContainer width="100%" height={180}>
                 <BarChart data={category_accuracy} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-                  <XAxis dataKey="category" tick={{ fill: '#97999B', fontSize: 12 }} />
-                  <YAxis tick={{ fill: '#97999B', fontSize: 12 }} unit="%" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+                  <XAxis dataKey="category" tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} />
+                  <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} unit="%" />
                   <Tooltip content={<ChartTooltip />} />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
                   <Bar dataKey="avg_mape" name="MAPE" radius={[3, 3, 0, 0]}>
@@ -337,9 +338,9 @@ export function AccuracyTrackingPanel({ data, onRefresh }: Props) {
             <>
               <ResponsiveContainer width="100%" height={200}>
                 <BarChart data={model_performance} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-                  <XAxis dataKey="model" tick={{ fill: '#97999B', fontSize: 12 }} />
-                  <YAxis tick={{ fill: '#97999B', fontSize: 12 }} unit="%" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+                  <XAxis dataKey="model" tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} />
+                  <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} unit="%" />
                   <Tooltip content={<ChartTooltip />} />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
                   <Bar dataKey="avg_mape" name="Avg MAPE" fill={COLORS.green} radius={[3, 3, 0, 0]} />
