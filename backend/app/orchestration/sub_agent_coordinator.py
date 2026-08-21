@@ -1,12 +1,11 @@
 """Sub-Agent Coordinator -- manages skill execution lifecycle."""
 
-import asyncio
 import logging
 from typing import Any, AsyncIterator
 
 from app.domain.registry import get_registry
 from app.domain.base_skill import SkillContext, SkillResult
-from app.orchestration.task_planner import TaskPlan, TaskStep
+from app.orchestration.task_planner import TaskPlan
 
 logger = logging.getLogger(__name__)
 

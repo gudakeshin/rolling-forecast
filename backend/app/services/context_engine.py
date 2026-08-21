@@ -11,7 +11,6 @@ Provides a unified interface for:
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +19,7 @@ from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models.document import Document, DocumentChunk
+from app.models.document import Document
 from app.services import document_processor, vector_store
 
 logger = logging.getLogger(__name__)

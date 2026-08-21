@@ -1,7 +1,6 @@
 """Dependency graph manager using NetworkX for P&L line item recalculation."""
 
 import logging
-from typing import Any
 import networkx as nx
 from sqlalchemy.orm import Session
 
@@ -97,12 +96,15 @@ class DependencyGraphManager:
     ) -> int:
         """
         Recalculate all downstream dependents after an override.
-        
+
+        Batches predecessor/result lookups (no per-cell queries). Recomputes
+        dependent p10/p90 via linear aggregation and tags ``bounds_method``.
+
         Args:
             version_id: Forecast version to update
             source_line_item_id: The overridden line item
             periods: Specific periods to recalculate (all if None)
-            
+
         Returns:
             Number of line results recalculated
         """
@@ -112,75 +114,145 @@ class DependencyGraphManager:
         if not downstream:
             return 0
 
+        # Preload all version rows once — includes predecessors of dependents
+        rows = (
+            self.db.query(ForecastLineResult)
+            .filter(ForecastLineResult.version_id == version_id)
+            .all()
+        )
+        by_key: dict[tuple[int, str], ForecastLineResult] = {
+            (r.line_item_id, r.period): r for r in rows
+        }
+
         recalc_count = 0
 
         for dependent_id in downstream:
-            # Get the dependency edges leading into this node
             predecessors = list(G.predecessors(dependent_id))
             node_data = G.nodes[dependent_id]
 
             if not node_data.get("is_calculated"):
                 continue
 
-            # Get the periods to recalculate
             if periods:
                 target_periods = periods
             else:
-                # Get all periods for this line item in this version
-                results = (
-                    self.db.query(ForecastLineResult.period)
-                    .filter(
-                        ForecastLineResult.version_id == version_id,
-                        ForecastLineResult.line_item_id == dependent_id,
-                    )
-                    .distinct()
-                    .all()
+                target_periods = sorted(
+                    {p for (lid, p) in by_key if lid == dependent_id}
                 )
-                target_periods = [r[0] for r in results]
 
             for period in target_periods:
-                # Gather source values
                 source_values = {}
                 for pred_id in predecessors:
-                    pred_result = (
-                        self.db.query(ForecastLineResult)
-                        .filter(
-                            ForecastLineResult.version_id == version_id,
-                            ForecastLineResult.line_item_id == pred_id,
-                            ForecastLineResult.period == period,
-                        )
-                        .first()
+                    pred_result = by_key.get((pred_id, period))
+                    if not pred_result:
+                        continue
+                    val = (
+                        pred_result.override_value
+                        if pred_result.is_overridden
+                        else pred_result.p50
                     )
-                    if pred_result:
-                        # Use override value if present, otherwise model value
-                        val = pred_result.override_value if pred_result.is_overridden else pred_result.p50
-                        edge_data = G.edges[pred_id, dependent_id]
-                        source_values[pred_id] = {
-                            "value": val,
-                            "relationship": edge_data.get("relationship_type", "sum"),
-                            "weight": edge_data.get("weight", 1.0),
-                        }
+                    edge_data = G.edges[pred_id, dependent_id]
+                    source_values[pred_id] = {
+                        "value": val,
+                        "relationship": edge_data.get("relationship_type", "sum"),
+                        "weight": edge_data.get("weight", 1.0),
+                    }
 
                 if not source_values:
                     continue
 
-                # Calculate new value
-                new_value = self._calculate_value(source_values, node_data.get("formula"))
-
-                # Update the forecast result
-                result = (
-                    self.db.query(ForecastLineResult)
-                    .filter(
-                        ForecastLineResult.version_id == version_id,
-                        ForecastLineResult.line_item_id == dependent_id,
-                        ForecastLineResult.period == period,
-                    )
-                    .first()
+                new_value = self._calculate_value(
+                    source_values, node_data.get("formula")
                 )
+                result = by_key.get((dependent_id, period))
+                if not result:
+                    continue
 
+                result.p50 = new_value
+                result.is_calculated = True
+
+                # Linear aggregation of bounds (same as recalculate_all)
+                lowers, uppers = [], []
+                for pred_id in predecessors:
+                    pred = by_key.get((pred_id, period))
+                    if pred and pred.p10 is not None:
+                        lowers.append(pred.p10)
+                    if pred and pred.p90 is not None:
+                        uppers.append(pred.p90)
+                if lowers:
+                    result.p10 = sum(lowers)
+                if uppers:
+                    result.p90 = sum(uppers)
+                result.bounds_method = "linear_aggregation"
+                recalc_count += 1
+
+        self.db.flush()
+        return recalc_count
+
+    def recalculate_all(self, version_id: str) -> int:
+        """Full topo-sort recompute of all calculated line items for a version.
+
+        Preloads all ForecastLineResult rows into a dict to avoid per-cell queries.
+        Calculated-line bounds are tagged bounds_method=linear_aggregation.
+        """
+        G = self._load_graph()
+        try:
+            order = list(nx.topological_sort(G))
+        except nx.NetworkXUnfeasible:
+            logger.error("Cycle in dependency graph; aborting recalculate_all")
+            return 0
+
+        rows = (
+            self.db.query(ForecastLineResult)
+            .filter(ForecastLineResult.version_id == version_id)
+            .all()
+        )
+        # (line_item_id, period) -> result
+        by_key: dict[tuple[int, str], ForecastLineResult] = {
+            (r.line_item_id, r.period): r for r in rows
+        }
+        periods = sorted({r.period for r in rows})
+        recalc_count = 0
+
+        for node_id in order:
+            node_data = G.nodes.get(node_id, {})
+            if not node_data.get("is_calculated"):
+                continue
+            predecessors = list(G.predecessors(node_id))
+            for period in periods:
+                source_values = {}
+                for pred_id in predecessors:
+                    pred = by_key.get((pred_id, period))
+                    if not pred:
+                        continue
+                    val = pred.override_value if pred.is_overridden else pred.p50
+                    edge_data = G.edges[pred_id, node_id]
+                    source_values[pred_id] = {
+                        "value": val,
+                        "relationship": edge_data.get("relationship_type", "sum"),
+                        "weight": edge_data.get("weight", 1.0),
+                    }
+                if not source_values:
+                    continue
+                new_value = self._calculate_value(source_values, node_data.get("formula"))
+                result = by_key.get((node_id, period))
                 if result:
                     result.p50 = new_value
                     result.is_calculated = True
+                    # Linear aggregation of bounds when sources have them
+                    lowers, uppers = [], []
+                    for pred_id in predecessors:
+                        pred = by_key.get((pred_id, period))
+                        if pred and pred.p10 is not None:
+                            lowers.append(pred.p10)
+                        if pred and pred.p90 is not None:
+                            uppers.append(pred.p90)
+                    if lowers:
+                        result.p10 = sum(lowers)
+                    if uppers:
+                        result.p90 = sum(uppers)
+                    if hasattr(result, "bounds_method"):
+                        result.bounds_method = "linear_aggregation"
                     recalc_count += 1
 
         self.db.flush()
@@ -189,13 +261,21 @@ class DependencyGraphManager:
     def _calculate_value(
         self, source_values: dict[int, dict], formula: str | None
     ) -> float:
-        """Calculate a dependent value from its sources."""
+        """Calculate a dependent value from its sources.
+
+        Formula support:
+        - Arithmetic over named placeholders: ``{123} + {456} - {789}`` (line item ids)
+        - Category aliases: ``Revenue - COGS``, ``Gross Margin - OpEx``
+        - Falls back to relationship_type sum/subtract/multiply when formula is absent
+          or cannot be evaluated safely.
+        """
         if formula:
-            # TODO: Parse and evaluate formula expressions
-            # For now, fall back to sum/subtract logic
-            pass
+            evaluated = self._evaluate_formula(formula, source_values)
+            if evaluated is not None:
+                return evaluated
 
         total = 0.0
+        first = True
         for source_id, info in source_values.items():
             relationship = info["relationship"]
             value = info["value"] * info["weight"]
@@ -205,11 +285,82 @@ class DependencyGraphManager:
             elif relationship == "subtract":
                 total -= value
             elif relationship == "multiply":
-                total *= value if total != 0 else value
+                total = value if first and total == 0 else total * value
             else:
                 total += value
+            first = False
 
         return total
+
+    def _evaluate_formula(
+        self, formula: str, source_values: dict[int, dict]
+    ) -> float | None:
+        """Safely evaluate a restricted arithmetic formula."""
+        import ast
+        import operator
+        import re
+
+        # Build name -> value map from graph node metadata + source ids
+        G = self._load_graph()
+        env: dict[str, float] = {}
+        for source_id, info in source_values.items():
+            val = float(info["value"]) * float(info.get("weight", 1.0))
+            env[str(source_id)] = val
+            node = G.nodes.get(source_id, {})
+            name = (node.get("name") or "").strip().lower()
+            category = (node.get("category") or "").strip().lower()
+            if name:
+                env[name] = val
+            if category and category != name:
+                env[category] = env.get(category, 0.0) + val
+
+        expr = formula.strip()
+        # Replace {id} placeholders
+        expr = re.sub(
+            r"\{(\d+)\}",
+            lambda m: str(env.get(m.group(1), 0.0)),
+            expr,
+        )
+        # Replace known names/categories (longest first to avoid partial replaces)
+        for key in sorted(env.keys(), key=len, reverse=True):
+            if key.isdigit():
+                continue
+            pattern = re.compile(re.escape(key), re.IGNORECASE)
+            expr = pattern.sub(str(env[key]), expr)
+
+        # Only allow digits, operators, dots, spaces, parentheses
+        if not re.fullmatch(r"[0-9+\-*/().\s]+", expr):
+            logger.warning("Formula rejected (unsafe chars): %s -> %s", formula, expr)
+            return None
+
+        ops = {
+            ast.Add: operator.add,
+            ast.Sub: operator.sub,
+            ast.Mult: operator.mul,
+            ast.Div: operator.truediv,
+            ast.USub: operator.neg,
+            ast.UAdd: operator.pos,
+        }
+
+        def _eval(node):
+            if isinstance(node, ast.Expression):
+                return _eval(node.body)
+            if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+                return float(node.value)
+            if isinstance(node, ast.Num):  # pragma: no cover - py<3.8 compat
+                return float(node.n)
+            if isinstance(node, ast.BinOp) and type(node.op) in ops:
+                return ops[type(node.op)](_eval(node.left), _eval(node.right))
+            if isinstance(node, ast.UnaryOp) and type(node.op) in ops:
+                return ops[type(node.op)](_eval(node.operand))
+            raise ValueError(f"Unsupported expression node: {type(node)}")
+
+        try:
+            tree = ast.parse(expr, mode="eval")
+            return float(_eval(tree))
+        except Exception as e:
+            logger.warning("Formula evaluation failed for '%s': %s", formula, e)
+            return None
 
     def add_dependency(
         self, dependent_id: int, source_id: int, relationship_type: str = "sum", weight: float = 1.0
@@ -225,7 +376,7 @@ class DependencyGraphManager:
         G_test.add_edge(source_id, dependent_id)
 
         if not nx.is_directed_acyclic_graph(G_test):
-            return False, f"Adding this dependency would create a circular reference"
+            return False, "Adding this dependency would create a circular reference"
 
         # Add to database
         dep = LineItemDependency(

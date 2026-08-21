@@ -5,7 +5,7 @@ import pandas as pd
 from typing import Any
 import logging
 
-from app.domain.engines.base_model import IForecastModel, ForecastOutput
+from app.domain.engines.base_model import IForecastModel, ForecastOutput, ModelCapabilities
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,18 @@ class ProphetModel(IForecastModel):
     @property
     def min_data_points(self) -> int:
         return 18
+
+    @property
+    def capabilities(self) -> ModelCapabilities:
+        return ModelCapabilities(
+            complexity_rank=40,
+            min_data_points=18,
+            max_folds_short_series=2,
+            short_series_threshold=36,
+            base_confidence=65.0,
+            cost_class="expensive",
+            display_label="Prophet",
+        )
 
     def fit(self, series: pd.Series, dates: pd.DatetimeIndex) -> dict[str, Any]:
         from prophet import Prophet
@@ -68,7 +80,7 @@ class ProphetModel(IForecastModel):
                 "n_changepoints": len(changepoints),
                 "has_changepoints": has_changepoints,
                 "residual_std": float(np.std(residuals)),
-                "mape": mape,
+                "in_sample_mape": mape,
                 "r_squared": float(r_squared),
                 "n_points": len(series),
                 "_df": df.to_dict(orient="records"),
@@ -126,12 +138,9 @@ class ProphetModel(IForecastModel):
             lower = forecast_rows["yhat_lower"].values
             upper = forecast_rows["yhat_upper"].values
 
-        # Period labels
-        periods = []
-        current = last_date
-        for _ in range(horizon):
-            current = current + pd.offsets.MonthBegin(1)
-            periods.append(current.strftime("%Y-%m"))
+        from app.domain.engines.base_model import make_period_labels
+
+        periods = make_period_labels(last_date, horizon)
 
         return ForecastOutput(
             point_forecast=forecast,
@@ -141,7 +150,7 @@ class ProphetModel(IForecastModel):
             model_type="prophet",
             parameters={k: v for k, v in params.items() if not k.startswith("_")},
             fit_metrics={
-                "mape": params.get("mape", 0),
+                "in_sample_mape": params.get("in_sample_mape", params.get("mape", 0)),
                 "r_squared": params.get("r_squared", 0),
             },
             diagnostics={

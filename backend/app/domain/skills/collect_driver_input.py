@@ -2,16 +2,13 @@
 
 import logging
 from typing import Any
-from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
 from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.models.driver_input import DriverFormConfig, DriverInput
-from app.models.forecast import ForecastVersion, ForecastLineResult
 from app.models.line_item import LineItem
-from app.services.dependency_graph import DependencyGraphManager
-from app.services.error_handlers import check_driver_deadline
+from app.services.driver_submission import apply_driver_submission, form_field_defs
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +190,7 @@ class CollectDriverInputSkill(BaseSkill):
                 "id": str(f.id),
                 "name": f.name,
                 "bu": f.business_unit,
-                "fields": str(len(f.fields_schema.get("fields", []))),
+                "fields": str(len(form_field_defs(f))),
                 "deadline": f"Soft: {f.soft_deadline_days}d / Hard: {f.hard_deadline_days}d",
             }
             for f in forms
@@ -231,7 +228,9 @@ class CollectDriverInputSkill(BaseSkill):
 
         version_id = params.get("version_id") or context.context_manager.get_active_version_id()
 
-        fields = form.fields_schema.get("fields", [])
+        from app.models.forecast import ForecastLineResult
+
+        fields = form_field_defs(form)
         rows = []
         for field in fields:
             suggested = "-"
@@ -249,8 +248,8 @@ class CollectDriverInputSkill(BaseSkill):
                     suggested = f"${result.p50:,.0f}"
 
             rows.append({
-                "field": field["label"],
-                "type": field["type"],
+                "field": field.get("label", field.get("name", "")),
+                "type": field.get("type", "number"),
                 "model_suggested": suggested,
                 "linked_item": field.get("line_item_name", "N/A"),
             })
@@ -297,76 +296,27 @@ class CollectDriverInputSkill(BaseSkill):
         if not form:
             return SkillResult.fail(f"Form {form_id} not found.")
 
-        # Enrich values with model-suggested for comparison
-        enriched_values = {}
-        applied_count = 0
-        dag = DependencyGraphManager(db)
+        fields_map = {f["name"]: f for f in form_field_defs(form)}
 
-        fields_map = {f["name"]: f for f in form.fields_schema.get("fields", [])}
+        try:
+            result = apply_driver_submission(
+                db,
+                version_id=version_id,
+                form=form,
+                values=values,
+                user_id=context.user_id,
+                business_unit=form.business_unit,
+                apply_overrides=True,
+                actor_username=None,
+                audit=True,
+                commit=True,
+            )
+        except ValueError as e:
+            return SkillResult.fail(str(e))
 
-        for field_name, submission in values.items():
-            field_def = fields_map.get(field_name)
-            if not field_def:
-                continue
-
-            value = submission.get("value") if isinstance(submission, dict) else submission
-            reason = submission.get("reason", "Driver input submission") if isinstance(submission, dict) else "Driver input submission"
-
-            enriched = {
-                "value": value,
-                "reason": reason,
-            }
-
-            # Get model-suggested value if linked
-            line_item_id = field_def.get("line_item_id")
-            if line_item_id and version_id:
-                results = (
-                    db.query(ForecastLineResult)
-                    .filter(
-                        ForecastLineResult.version_id == version_id,
-                        ForecastLineResult.line_item_id == line_item_id,
-                    )
-                    .all()
-                )
-
-                for result in results:
-                    enriched["model_suggested"] = result.p50
-                    enriched["prior_value"] = result.p50
-
-                    # Apply as override if different from model
-                    if abs(value - result.p50) > 0.01:
-                        result.is_overridden = True
-                        result.override_value = value
-                        dag.recalculate_dependents(version_id, line_item_id, [result.period])
-                        applied_count += 1
-
-            enriched_values[field_name] = enriched
-
-        # EC7: Check deadline status
-        deadline_status = check_driver_deadline(
-            soft_deadline_days=form.soft_deadline_days,
-            hard_deadline_days=form.hard_deadline_days,
-        )
-
-        submission_status = "submitted"
-        is_late = False
-        if deadline_status["is_past_hard"]:
-            submission_status = "late"
-            is_late = True
-
-        # Create DriverInput record
-        driver_input = DriverInput(
-            version_id=version_id,
-            form_config_id=form_id,
-            user_id=context.user_id,
-            business_unit=form.business_unit,
-            values=enriched_values,
-            status=submission_status,
-            submitted_at=datetime.now(timezone.utc),
-            is_late=is_late,
-        )
-        db.add(driver_input)
-        db.commit()
+        enriched_values = result.enriched_values
+        applied_count = result.overrides_applied
+        deadline_status = result.deadline_status
 
         content_blocks = [
             self._text_block(
@@ -399,14 +349,13 @@ class CollectDriverInputSkill(BaseSkill):
                 )
             )
 
-        # EC7: Show deadline warnings
-        if deadline_status["is_past_hard"]:
+        if deadline_status.get("is_past_hard"):
             content_blocks.append(
                 self._text_block(
                     f"**Late Submission:** {deadline_status['message']}"
                 )
             )
-        elif deadline_status["is_past_soft"]:
+        elif deadline_status.get("is_past_soft"):
             content_blocks.append(
                 self._text_block(
                     f"**Deadline Warning:** {deadline_status['message']}"
@@ -414,9 +363,12 @@ class CollectDriverInputSkill(BaseSkill):
             )
 
         return SkillResult.ok(
-            message=f"Submitted {len(enriched_values)} driver values for {form.business_unit}, {applied_count} applied as overrides",
+            message=(
+                f"Submitted {len(enriched_values)} driver values for {form.business_unit}, "
+                f"{applied_count} applied as overrides"
+            ),
             data={
-                "submission_id": driver_input.id,
+                "submission_id": result.driver_input.id,
                 "values_count": len(enriched_values),
                 "overrides_applied": applied_count,
             },
@@ -440,7 +392,7 @@ class CollectDriverInputSkill(BaseSkill):
             .filter(DriverInput.version_id == version_id)
             .all()
         )
-        submissions_by_form = {}
+        submissions_by_form: dict[int, list[Any]] = {}
         for s in submissions:
             if s.form_config_id not in submissions_by_form:
                 submissions_by_form[s.form_config_id] = []

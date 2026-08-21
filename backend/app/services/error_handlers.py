@@ -19,9 +19,8 @@ Edge Cases Covered:
 import logging
 import asyncio
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Coroutine
-from functools import wraps
 
 import numpy as np
 import pandas as pd
@@ -46,6 +45,8 @@ class HistoryAnalysis:
         self.n_points = len(values)
         self.warnings: list[str] = []
         self.flags: list[str] = []
+        # Memoised (detected, period, index) from the structural-break scan.
+        self._break_cache: tuple[bool, str | None, int | None] | None = None
 
     @property
     def is_all_zeros(self) -> bool:
@@ -62,32 +63,102 @@ class HistoryAnalysis:
         """Fewer than 6 months -- cannot run any statistical model."""
         return self.n_points < 6
 
+    def _detect_structural_break(self) -> tuple[bool, str | None, int | None]:
+        """CUSUM on OLS residuals (statsmodels) with Chow fallback.
+
+        Returns (detected, period_label, break_index). Truncation eligibility
+        (≥12 post-break points) is decided by the caller.
+        """
+        if self.n_points < 12:
+            return False, None, None
+        if self._break_cache is not None:
+            return self._break_cache
+
+        y = self.values.values.astype(float)
+        if float(np.std(y)) < 1e-12:
+            self._break_cache = (False, None, None)
+            return self._break_cache
+
+        t = np.arange(len(y), dtype=float)
+        break_idx: int | None = None
+        detected = False
+
+        try:
+            import statsmodels.api as sm
+            from statsmodels.stats.diagnostic import breaks_cusumolsresid
+
+            X = sm.add_constant(t)
+            ols = sm.OLS(y, X).fit()
+            resid = np.asarray(ols.resid, dtype=float)
+            if float(np.std(resid)) < 1e-12:
+                self._break_cache = (False, None, None)
+                return self._break_cache
+            _stat, pval, _crit = breaks_cusumolsresid(resid, ddof=X.shape[1])
+            if pval is not None and float(pval) < 0.05:
+                detected = True
+                # Locate break at max |scaled CUSUM of demeaned residuals|
+                cumsum = np.cumsum(resid - np.mean(resid))
+                break_idx = int(np.argmax(np.abs(cumsum)))
+        except Exception:
+            detected = False
+
+        # Chow fallback at mid-sample candidates when CUSUM unavailable/insignificant
+        if not detected and self.n_points >= 24:
+            try:
+                import statsmodels.api as sm
+
+                best_p = 1.0
+                best_i = None
+                # Candidate split points with ≥6 obs each side
+                for i in range(6, self.n_points - 6):
+                    y1, y2 = y[:i], y[i:]
+                    t1 = sm.add_constant(np.arange(len(y1), dtype=float))
+                    t2 = sm.add_constant(np.arange(len(y2), dtype=float))
+                    rss1 = float(sm.OLS(y1, t1).fit().ssr)
+                    rss2 = float(sm.OLS(y2, t2).fit().ssr)
+                    rss_p = float(sm.OLS(y, sm.add_constant(t)).fit().ssr)
+                    k = 2
+                    n = len(y)
+                    num = (rss_p - rss1 - rss2) / k
+                    den = (rss1 + rss2) / (n - 2 * k)
+                    if den <= 0:
+                        continue
+                    from scipy import stats as scipy_stats
+
+                    f_stat = num / den
+                    p = float(scipy_stats.f.sf(f_stat, k, n - 2 * k))
+                    if p < best_p:
+                        best_p = p
+                        best_i = i
+                if best_p < 0.05 and best_i is not None:
+                    detected = True
+                    break_idx = best_i
+            except Exception:
+                pass
+
+        period = None
+        if detected and break_idx is not None and break_idx < len(self.dates):
+            period = self.dates[break_idx].strftime("%Y-%m")
+        self._break_cache = (detected, period, break_idx)
+        return self._break_cache
+
     @property
     def has_structural_break(self) -> bool:
-        """Edge Case 12: Detect structural breaks using simple CUSUM-like test."""
-        if self.n_points < 12:
-            return False
-        values = self.values.values.astype(float)
-        mean = np.mean(values)
-        cumsum = np.cumsum(values - mean)
-        s_range = np.max(cumsum) - np.min(cumsum)
-        std = np.std(values) + 1e-10
-        # R/S statistic -- heuristic threshold
-        rs_stat = s_range / std
-        return bool(rs_stat > 2.5 * np.sqrt(self.n_points))
+        """Edge Case 12: CUSUM / Chow structural break detection."""
+        detected, _, _ = self._detect_structural_break()
+        return detected
 
     @property
     def structural_break_period(self) -> str | None:
         """Find approximate period of the structural break."""
-        if not self.has_structural_break or self.n_points < 12:
-            return None
-        values = self.values.values.astype(float)
-        mean = np.mean(values)
-        cumsum = np.cumsum(values - mean)
-        break_idx = int(np.argmax(np.abs(cumsum)))
-        if break_idx < len(self.dates):
-            return self.dates[break_idx].strftime("%Y-%m")
-        return None
+        _, period, _ = self._detect_structural_break()
+        return period
+
+    @property
+    def structural_break_index(self) -> int | None:
+        """0-based index of the detected break (or None)."""
+        _, _, idx = self._detect_structural_break()
+        return idx
 
     @property
     def recommended_model(self) -> str:
@@ -102,7 +173,7 @@ class HistoryAnalysis:
 
     def analyze(self) -> dict[str, Any]:
         """Run full analysis and return recommendations."""
-        result = {
+        result: dict[str, Any] = {
             "n_points": self.n_points,
             "recommended_model": self.recommended_model,
             "warnings": [],
@@ -269,7 +340,7 @@ def check_driver_deadline(
 
     days_elapsed = (now - cycle_start).days
 
-    result = {
+    result: dict[str, Any] = {
         "is_late": False,
         "is_past_soft": False,
         "is_past_hard": False,
@@ -340,10 +411,9 @@ def check_concurrent_override(
     """
     from app.models.override import Override
 
-    # Check for recent overrides by other users (within last hour)
-    recent_cutoff = datetime.now(timezone.utc).replace(
-        hour=datetime.now(timezone.utc).hour - 1
-    )
+    # Check for recent overrides by other users (within last hour).
+    # Use timedelta — datetime.replace(hour=hour-1) crashes at 00:00–00:59 UTC.
+    recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
 
     recent = (
         db.query(Override)

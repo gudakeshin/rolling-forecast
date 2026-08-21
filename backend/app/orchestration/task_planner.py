@@ -50,7 +50,7 @@ class TaskPlanner:
         ],
     }
 
-    def plan(self, intent: str, context: dict[str, Any] = None) -> TaskPlan | None:
+    def plan(self, intent: str, context: dict[str, Any] | None = None) -> TaskPlan | None:
         """
         Create a task plan for a recognized multi-step intent.
         

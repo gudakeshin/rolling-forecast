@@ -1,10 +1,12 @@
 import { useState, useCallback, useMemo } from 'react';
 import {
-  Send, Clock, CheckCircle, AlertTriangle,
-  ChevronDown, ChevronUp, Plus, RefreshCw,
-  Sparkles, TrendingUp, Filter,
+  Send, CheckCircle, AlertTriangle,
+  RefreshCw, Sparkles, TrendingUp, Filter, Download,
 } from 'lucide-react';
 import { apiPost } from '../../api/client';
+import { Tabs } from '../ui/Tabs';
+import { DataTable, downloadCsv, type DataTableColumn } from '../ui/DataTable';
+import { usePanelStore } from '../../store/panelStore';
 
 interface LineItemInput {
   id: number;
@@ -38,13 +40,42 @@ function formatCurrency(val: number): string {
 }
 
 export function DriverInputPanel({ data }: Props) {
-  const { version, inputs, form_configs, available_line_items } = data.data;
+  const { version, inputs, available_line_items } = data.data;
   const [activeTab, setActiveTab] = useState<'submit' | 'history'>('submit');
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [useModelDefaults, setUseModelDefaults] = useState(false);
+  const [expandedHistoryIds, setExpandedHistoryIds] = useState<Set<string>>(new Set());
+
+  const historyTableColumns = useMemo<DataTableColumn<Record<string, unknown>>[]>(
+    () => [
+      { key: 'business_unit', label: 'Business Unit' },
+      {
+        key: 'status',
+        label: 'Status',
+        render: (_v, row) => (
+          <StatusBadge status={String(row.status ?? '')} isLate={Boolean(row.is_late)} />
+        ),
+      },
+      {
+        key: 'submitted_at',
+        label: 'Submitted',
+        render: (v) => (v ? new Date(String(v)).toLocaleDateString() : 'N/A'),
+      },
+      {
+        key: 'review_comments',
+        label: 'Comments',
+        render: (v) => (
+          <span className="text-surface-400 italic truncate max-w-[180px] block">
+            {String(v ?? '')}
+          </span>
+        ),
+      },
+    ],
+    [],
+  );
 
   // Get unique categories
   const categories = useMemo(() => {
@@ -106,6 +137,43 @@ export function DriverInputPanel({ data }: Props) {
     }
   }, [formValues, version.id, useModelDefaults]);
 
+  const lineItemColumns = [
+    { key: 'name', label: 'Line Item' },
+    { key: 'category', label: 'Category' },
+    { key: 'account_code', label: 'Account Code' },
+    { key: 'model_suggested_value', label: 'Model Suggested Value' },
+    { key: 'model_type', label: 'Model Type' },
+    { key: 'confidence_score', label: 'Confidence Score' },
+    { key: 'last_actual', label: 'Last Actual' },
+  ];
+
+  const historyColumns = [
+    { key: 'business_unit', label: 'Business Unit' },
+    { key: 'status', label: 'Status' },
+    { key: 'is_late', label: 'Late' },
+    { key: 'submitted_at', label: 'Submitted At' },
+    { key: 'review_comments', label: 'Review Comments' },
+  ];
+
+  const handleExport = () => {
+    const filename = `drivers_${version?.name || 'export'}`;
+    if (activeTab === 'history') {
+      downloadCsv(
+        filename,
+        historyColumns,
+        inputs.map((inp: any) => ({
+          business_unit: inp.business_unit,
+          status: inp.status,
+          is_late: inp.is_late ? 'yes' : 'no',
+          submitted_at: inp.submitted_at || '',
+          review_comments: inp.review_comments || '',
+        })) as Record<string, unknown>[],
+      );
+    } else {
+      downloadCsv(filename, lineItemColumns, available_line_items as unknown as Record<string, unknown>[]);
+    }
+  };
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -113,34 +181,43 @@ export function DriverInputPanel({ data }: Props) {
         <div className="flex items-center justify-between">
           <div>
             <h4 className="text-xs font-semibold text-white">{version.name}</h4>
-            <p className="text-[10px] text-surface-500 mt-0.5">{version.status} • {inputs.length} submissions</p>
+            <p className="text-xs text-surface-500 mt-0.5">{version.status} • {inputs.length} submissions</p>
           </div>
-          <span className={`px-2 py-1 text-[10px] font-medium rounded-md border ${
-            version.status === 'draft' ? 'bg-blue-500/10 border-blue-500/20 text-blue-400'
-            : version.status === 'in_review' ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
-            : 'bg-deloitte-green/10 border-deloitte-green/20 text-deloitte-green'
-          }`}>
-            {version.status}
-          </span>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => usePanelStore.getState().openPanel('approvals', { version_id: version.id })}
+              className={`px-2 py-1 text-xs font-medium rounded-md border cursor-pointer hover:opacity-90 ${
+                version.status === 'draft' ? 'bg-blue-500/10 border-blue-500/20 text-blue-400'
+                : version.status === 'in_review' ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+                : 'bg-deloitte-green/10 border-deloitte-green/20 text-deloitte-green'
+              }`}
+              title="Open approvals"
+            >
+              {version.status}
+            </button>
+            <button
+              type="button"
+              onClick={handleExport}
+              className="inline-flex items-center gap-1.5 text-xs text-surface-300 hover:text-white px-2 py-1 rounded-md border border-surface-600 hover:border-deloitte-green/40"
+              title="Export drivers CSV"
+            >
+              <Download className="w-3.5 h-3.5" />
+              CSV
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-surface-800/50 rounded-lg p-1">
-        {(['submit', 'history'] as const).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-              activeTab === tab
-                ? 'bg-deloitte-green/20 text-deloitte-green border border-deloitte-green/30'
-                : 'text-surface-400 hover:text-white hover:bg-surface-700/50'
-            }`}
-          >
-            {tab === 'submit' ? 'Submit Inputs' : 'Submission History'}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        tabs={[
+          { id: 'submit', label: 'Submit Inputs' },
+          { id: 'history', label: 'Submission History' },
+        ]}
+        value={activeTab}
+        onChange={setActiveTab}
+      />
 
       {message && (
         <div className={`px-3 py-2 rounded-lg text-xs flex items-center gap-2 ${
@@ -166,11 +243,11 @@ export function DriverInputPanel({ data }: Props) {
                   <option key={cat} value={cat}>{cat === 'all' ? 'All Categories' : cat}</option>
                 ))}
               </select>
-              <span className="text-[10px] text-surface-500">{filteredLineItems.length} items</span>
+              <span className="text-xs text-surface-500">{filteredLineItems.length} items</span>
             </div>
             <button
               onClick={handlePopulateFromModel}
-              className="flex items-center gap-1 px-2.5 py-1 bg-deloitte-teal/10 border border-deloitte-teal/20 text-deloitte-teal-light text-[10px] font-medium rounded-md hover:bg-deloitte-teal/20 transition-all"
+              className="flex items-center gap-1 px-2.5 py-1 bg-deloitte-teal/10 border border-deloitte-teal/20 text-deloitte-teal-light text-xs font-medium rounded-md hover:bg-deloitte-teal/20 transition-all"
             >
               <Sparkles className="w-3 h-3" />
               Use Model Suggestions
@@ -181,7 +258,7 @@ export function DriverInputPanel({ data }: Props) {
           <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl overflow-hidden">
             <div className="px-4 py-2.5 border-b border-surface-700/50">
               <h4 className="text-xs font-semibold text-white">Driver Assumptions</h4>
-              <p className="text-[10px] text-surface-500 mt-0.5">Enter your BU assumptions for each driver. Model suggestions shown for reference.</p>
+              <p className="text-xs text-surface-500 mt-0.5">Enter your BU assumptions for each driver. Model suggestions shown for reference.</p>
             </div>
             <div className="max-h-[350px] overflow-y-auto p-3 space-y-2">
               {filteredLineItems.slice(0, 30).map((li: LineItemInput) => (
@@ -189,9 +266,9 @@ export function DriverInputPanel({ data }: Props) {
                   <div className="flex items-center justify-between mb-1.5">
                     <div>
                       <span className="text-xs font-medium text-surface-200">{li.name}</span>
-                      <span className="ml-2 text-[10px] text-surface-500">{li.category}</span>
+                      <span className="ml-2 text-xs text-surface-500">{li.category}</span>
                     </div>
-                    <span className="text-[10px] text-surface-500 font-mono">{li.account_code}</span>
+                    <span className="text-xs text-surface-500 font-mono">{li.account_code}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="flex-1">
@@ -206,15 +283,15 @@ export function DriverInputPanel({ data }: Props) {
                     <div className="text-right min-w-[100px]">
                       {li.model_suggested_value !== undefined && li.model_suggested_value !== null ? (
                         <div>
-                          <div className="text-[10px] text-surface-500">
+                          <div className="text-xs text-surface-500">
                             Model: <span className="text-deloitte-teal-light font-mono font-medium">{formatCurrency(li.model_suggested_value)}</span>
                           </div>
                           <div className="flex items-center gap-1 justify-end">
                             {li.model_type && (
-                              <span className="text-[8px] text-surface-500 bg-surface-700/40 px-1 py-0.5 rounded">{li.model_type}</span>
+                              <span className="text-xs text-surface-500 bg-surface-700/40 px-1 py-0.5 rounded">{li.model_type}</span>
                             )}
                             {li.confidence_score !== undefined && (
-                              <span className={`text-[8px] px-1 py-0.5 rounded font-medium ${
+                              <span className={`text-xs px-1 py-0.5 rounded font-medium ${
                                 li.confidence_score >= 70 ? 'bg-deloitte-green/15 text-deloitte-green'
                                 : li.confidence_score >= 50 ? 'bg-amber-500/15 text-amber-400'
                                 : 'bg-red-500/15 text-red-400'
@@ -223,12 +300,12 @@ export function DriverInputPanel({ data }: Props) {
                           </div>
                         </div>
                       ) : (
-                        <span className="text-[10px] text-surface-600">No model data</span>
+                        <span className="text-xs text-surface-600">No model data</span>
                       )}
                     </div>
                   </div>
                   {li.last_actual !== undefined && li.last_actual !== null && (
-                    <div className="mt-1 flex items-center gap-1 text-[9px] text-surface-500">
+                    <div className="mt-1 flex items-center gap-1 text-xs text-surface-500">
                       <TrendingUp className="w-2.5 h-2.5" />
                       Last actual: <span className="font-mono text-surface-400">{formatCurrency(li.last_actual)}</span>
                     </div>
@@ -239,7 +316,7 @@ export function DriverInputPanel({ data }: Props) {
                 <p className="text-surface-500 text-xs text-center py-6">No line items available for input</p>
               )}
               {filteredLineItems.length > 30 && (
-                <p className="text-surface-500 text-[10px] text-center py-2">
+                <p className="text-surface-500 text-xs text-center py-2">
                   Showing first 30 of {filteredLineItems.length} items. Use category filter to narrow down.
                 </p>
               )}
@@ -268,46 +345,52 @@ export function DriverInputPanel({ data }: Props) {
       )}
 
       {activeTab === 'history' && (
-        <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl overflow-hidden">
-          <div className="max-h-[400px] overflow-y-auto">
-            {inputs.length > 0 ? (
-              <div className="space-y-2 p-3">
-                {inputs.map((inp: any, i: number) => (
-                  <div key={i} className="bg-surface-800/40 border border-surface-700/30 rounded-lg p-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-medium text-white">{inp.business_unit}</span>
-                      <StatusBadge status={inp.status} isLate={inp.is_late} />
-                    </div>
-                    <div className="flex items-center justify-between text-[10px] text-surface-500">
-                      <span className="flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        {inp.submitted_at ? new Date(inp.submitted_at).toLocaleDateString() : 'N/A'}
+        inputs.length > 0 ? (
+          <DataTable
+            title="Submission History"
+            columns={historyTableColumns}
+            rows={inputs as Record<string, unknown>[]}
+            maxHeight={400}
+            exportFilename={`drivers_history_${version?.name || 'export'}`}
+            getRowId={(row) => String(row.id ?? `${row.business_unit}-${row.submitted_at}`)}
+            renderExpandedRow={(inp) => {
+              const values = inp.values;
+              if (!values || typeof values !== 'object') {
+                return <p className="text-xs text-surface-500">No field values</p>;
+              }
+              const entries = Object.entries(values as Record<string, unknown>);
+              return (
+                <div className="space-y-1">
+                  {entries.slice(0, 8).map(([key, val]) => (
+                    <div key={key} className="flex justify-between text-xs py-0.5">
+                      <span className="text-surface-400">{key}</span>
+                      <span className="text-surface-300 font-mono">
+                        {typeof val === 'object' && val != null
+                          ? String((val as { value?: unknown }).value ?? JSON.stringify(val))
+                          : String(val)}
                       </span>
-                      {inp.review_comments && (
-                        <span className="text-surface-400 italic max-w-[150px] truncate">{inp.review_comments}</span>
-                      )}
                     </div>
-                    {inp.values && typeof inp.values === 'object' && (
-                      <div className="mt-2 pt-2 border-t border-surface-700/30">
-                        {Object.entries(inp.values).slice(0, 3).map(([key, val]: [string, any]) => (
-                          <div key={key} className="flex justify-between text-[10px] py-0.5">
-                            <span className="text-surface-400">{key}</span>
-                            <span className="text-surface-300 font-mono">{typeof val === 'object' ? val?.value || JSON.stringify(val) : val}</span>
-                          </div>
-                        ))}
-                        {Object.keys(inp.values).length > 3 && (
-                          <p className="text-[9px] text-surface-500 mt-1">+{Object.keys(inp.values).length - 3} more fields</p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-surface-500 text-xs text-center py-8">No submissions yet</p>
-            )}
-          </div>
-        </div>
+                  ))}
+                  {entries.length > 8 && (
+                    <p className="text-xs text-surface-500 mt-1">+{entries.length - 8} more fields</p>
+                  )}
+                </div>
+              );
+            }}
+            expandedRowIds={expandedHistoryIds}
+            onRowClick={(row) => {
+              const id = String(row.id ?? `${row.business_unit}-${row.submitted_at}`);
+              setExpandedHistoryIds((prev) => {
+                const next = new Set(prev);
+                if (next.has(id)) next.delete(id);
+                else next.add(id);
+                return next;
+              });
+            }}
+          />
+        ) : (
+          <p className="text-surface-500 text-xs text-center py-8">No submissions yet</p>
+        )
       )}
     </div>
   );
@@ -323,9 +406,9 @@ function StatusBadge({ status, isLate }: { status: string; isLate: boolean }) {
   return (
     <div className="flex items-center gap-1">
       {isLate && (
-        <span className="px-1.5 py-0.5 text-[9px] font-medium rounded bg-red-500/15 text-red-400 border border-red-500/20">LATE</span>
+        <span className="px-1.5 py-0.5 text-xs font-medium rounded bg-red-500/15 text-red-400 border border-red-500/20">LATE</span>
       )}
-      <span className={`px-1.5 py-0.5 text-[10px] font-medium rounded border ${styles}`}>{status}</span>
+      <span className={`px-1.5 py-0.5 text-xs font-medium rounded border ${styles}`}>{status}</span>
     </div>
   );
 }

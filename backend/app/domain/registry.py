@@ -95,6 +95,8 @@ class SkillsRegistry:
     def __init__(self):
         self._skills: dict[str, BaseSkill] = {}
         self._definitions: dict[str, SkillDefinition] = {}
+        # Bumped on .md reload/edit so MasterAgent can invalidate its graph cache
+        self.definitions_generation: int = 0
 
     def register(self, skill: BaseSkill) -> None:
         """Register a skill in the registry and load its .md definition."""
@@ -110,9 +112,18 @@ class SkillsRegistry:
         else:
             logger.info(f"Registered skill: {skill.name} (no .md definition found)")
 
+    def bump_definitions_generation(self) -> None:
+        self.definitions_generation += 1
+        try:
+            from app.orchestration.master_agent import invalidate_agent_cache
+            invalidate_agent_cache()
+        except Exception:
+            pass
+
     def load_definitions(self) -> None:
         """Load/reload all .md definitions from the skills directory."""
         self._definitions = load_all_skill_definitions()
+        self.bump_definitions_generation()
         logger.info(f"Loaded {len(self._definitions)} skill definitions from .md files")
 
     def get(self, name: str) -> BaseSkill | None:
@@ -150,24 +161,59 @@ class SkillsRegistry:
         return results
 
     def get_for_role(self, role: str) -> list[BaseSkill]:
-        """Get skills available for a given role."""
-        return self.list_all()
+        """Get skills available for a given role permission flag or role name.
 
-    def as_langchain_tools(self, context: SkillContext) -> list[StructuredTool]:
+        ``role`` may be a permission key (generate/override/review/...) or a
+        role name (admin/analyst/reviewer/...). Admin gets all skills.
         """
-        Convert all registered skills into LangChain tools.
-        
-        Each skill becomes a StructuredTool that the ReACT agent can invoke.
-        The tool description is enriched with the .md definition's full_description
-        (including "When to Use" and examples) for better LLM tool selection.
-        """
-        tools = []
+        role_permissions = {
+            "admin": {"input", "generate", "override", "review", "publish", "admin"},
+            "analyst": {"input", "generate", "override"},
+            "reviewer": {"input", "generate", "override", "review"},
+            "publisher": {"input", "generate", "override", "review", "publish"},
+            "input_provider": {"input"},
+            "manager": {"input", "generate", "override", "review"},  # alias
+        }
+        # Direct permission key
+        if role in {"input", "generate", "override", "review", "publish", "admin"}:
+            allowed = {role, "input"} if role != "admin" else role_permissions["admin"]
+            if role == "admin":
+                return self.list_all()
+        else:
+            allowed = role_permissions.get(role, {"input"})
+
+        if "admin" in allowed:
+            return self.list_all()
+
+        result = []
         for skill in self._skills.values():
-            tool = self._skill_to_tool(skill, context)
+            required = skill.required_role or "generate"
+            if required in allowed or required == "input":
+                result.append(skill)
+        return result
+
+    def as_langchain_tools(self, context: SkillContext | None = None) -> list[StructuredTool]:
+        """
+        Convert role-filtered skills into LangChain tools.
+
+        Tools resolve SkillContext at invoke time via ContextVar so the compiled
+        agent graph can be cached across turns. ``context`` is only used to pick
+        which skills to expose for the caller's role.
+        """
+        from app.domain.base_skill import get_active_skill_context
+
+        role_key = "analyst"
+        if context is not None:
+            role_name = getattr(getattr(context, "user", None), "role", None)
+            role_key = role_name.name if role_name else getattr(context, "user_role", "analyst")
+        skills = self.get_for_role(role_key)
+        tools = []
+        for skill in skills:
+            tool = self._skill_to_tool(skill, get_active_skill_context)
             tools.append(tool)
         return tools
 
-    def _skill_to_tool(self, skill: BaseSkill, context: SkillContext) -> StructuredTool:
+    def _skill_to_tool(self, skill: BaseSkill, get_context) -> StructuredTool:
         """Convert a single skill to a LangChain StructuredTool.
         
         Uses the .md definition's enriched description if available.
@@ -191,6 +237,12 @@ class SkillsRegistry:
 
         async def _invoke_skill(**kwargs) -> str:
             """Wrapper that invokes the skill and returns formatted output."""
+            context = get_context()
+            if context is None:
+                return json.dumps({
+                    "success": False,
+                    "error": "No active skill context for this request",
+                })
             # Check permissions
             if not skill.validate_permissions(context):
                 return json.dumps({
@@ -296,6 +348,36 @@ def register_all_skills() -> SkillsRegistry:
     registry.register(WebSearchSkill())
     registry.register(FetchURLSkill())
     registry.register(FinancialLookupSkill())
+
+    # U2 — driver surfaces / attribution / what-if
+    from app.domain.skills.manage_drivers import ManageDriversSkill
+    from app.domain.skills.explain_variance import ExplainVarianceSkill
+    from app.domain.skills.run_what_if import RunWhatIfSkill
+    from app.domain.skills.core_memory import (
+        CoreMemoryAppendSkill,
+        CoreMemoryReplaceSkill,
+        CoreMemoryListSkill,
+        ConversationSearchSkill,
+    )
+    from app.domain.skills.archival_memory import (
+        ArchivalMemoryInsertSkill,
+        ArchivalMemorySearchSkill,
+    )
+
+    registry.register(ManageDriversSkill())
+    registry.register(ExplainVarianceSkill())
+    registry.register(RunWhatIfSkill())
+    registry.register(CoreMemoryAppendSkill())
+    registry.register(CoreMemoryReplaceSkill())
+    registry.register(CoreMemoryListSkill())
+    registry.register(ConversationSearchSkill())
+    registry.register(ArchivalMemoryInsertSkill())
+    registry.register(ArchivalMemorySearchSkill())
+
+    # Phase 9 — statistical driver discovery
+    from app.domain.skills.discover_drivers import DiscoverDriversSkill
+
+    registry.register(DiscoverDriversSkill())
 
     logger.info(f"Registered {len(registry.list_names())} skills: {registry.list_names()}")
     return registry

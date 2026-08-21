@@ -12,6 +12,7 @@ Python class for the actual execution.
 """
 
 from abc import ABC, abstractmethod
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import Any
 from sqlalchemy.orm import Session
@@ -27,6 +28,25 @@ class SkillContext:
     user_role: str
     conversation_id: str
     working_memory: dict[str, Any] = field(default_factory=dict)
+    user: Any = None  # optional User for BU scoping inside skills
+
+
+# Request-scoped context so compiled agent tools stay valid across turns
+_active_skill_context: ContextVar[SkillContext | None] = ContextVar(
+    "rf_skill_context", default=None
+)
+
+
+def push_skill_context(ctx: SkillContext) -> Token:
+    return _active_skill_context.set(ctx)
+
+
+def reset_skill_context(token: Token) -> None:
+    _active_skill_context.reset(token)
+
+
+def get_active_skill_context() -> SkillContext | None:
+    return _active_skill_context.get()
 
 
 @dataclass
@@ -40,8 +60,12 @@ class SkillResult:
     error: str | None = None
 
     @staticmethod
-    def ok(message: str, data: dict = None, content_blocks: list = None,
-           panel_payload: dict = None) -> "SkillResult":
+    def ok(
+        message: str,
+        data: dict | None = None,
+        content_blocks: list | None = None,
+        panel_payload: dict | None = None,
+    ) -> "SkillResult":
         return SkillResult(
             success=True,
             message=message,
@@ -51,7 +75,7 @@ class SkillResult:
         )
 
     @staticmethod
-    def fail(message: str, error: str = None) -> "SkillResult":
+    def fail(message: str, error: str | None = None) -> "SkillResult":
         return SkillResult(
             success=False,
             message=message,
@@ -156,6 +180,10 @@ class BaseSkill(ABC):
             "type": "panel_trigger",
             "data": {"panel": panel, "params": params, "label": label},
         }
+
+    def _citations_block(self, citations: list[dict]) -> dict:
+        """Helper to create an inline citations content block."""
+        return {"type": "citations", "data": {"citations": citations}}
 
     def _action_block(self, actions: list[dict]) -> dict:
         """Helper to create an action button content block."""

@@ -1,30 +1,23 @@
+import { useMemo, useState } from 'react';
 import {
   BarChart, Bar, LineChart, Line, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, Cell, ReferenceLine,
-  ComposedChart, PieChart, Pie, Scatter, ScatterChart,
+  ComposedChart, PieChart, Pie, Scatter, Brush,
 } from 'recharts';
+import { usePanelStore } from '../../../store/panelStore';
+import { chartTheme } from '../../../theme/chartTheme';
+import { DataTable, downloadCsv } from '../../ui/DataTable';
 
-// Deloitte palette
 const COLORS = {
-  green: '#86BC25',
-  greenDark: '#046A38',
-  greenLight: '#C4D600',
-  teal: '#0076A8',
-  tealLight: '#00A3E0',
-  blue: '#012169',
-  blueLight: '#0097A9',
-  warmGray: '#53565A',
-  coolGray: '#97999B',
-  lightGray: '#D0D0CE',
-  red: '#E84855',
-  amber: '#FFB547',
+  green: chartTheme.colors.primary,
+  teal: chartTheme.colors.secondary,
+  coolGray: chartTheme.colors.tertiary,
+  red: chartTheme.colors.danger,
+  amber: chartTheme.colors.warning,
 };
 
-const SERIES_COLORS = [
-  COLORS.green, COLORS.teal, COLORS.tealLight,
-  COLORS.greenLight, COLORS.blueLight, COLORS.amber,
-];
+const SERIES_COLORS = [...chartTheme.series];
 
 type ChartType =
   | 'bar' | 'line' | 'area' | 'bridge' | 'confidence'
@@ -42,6 +35,8 @@ interface ChartData {
   show_legend?: boolean;
   format?: 'currency' | 'percent' | 'number';
   height?: number;
+  enable_brush?: boolean;
+  drill_panel?: string;
 }
 
 interface Props {
@@ -78,104 +73,198 @@ export function ChartRenderer({ data }: Props) {
   const {
     chart_type, title, data: chartData, x_key, y_keys,
     y_labels, reference_line, show_legend = true, format, height = 280,
+    enable_brush = true, drill_panel = 'forecast_table',
   } = data;
 
+  const openPanel = usePanelStore((s) => s.openPanel);
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const [viewAsTable, setViewAsTable] = useState(false);
+
   const labelFor = (key: string) => y_labels?.[key] || key.replace(/_/g, ' ');
+  const visibleKeys = useMemo(
+    () => y_keys.filter((k) => !hidden.has(k)),
+    [y_keys, hidden],
+  );
+
+  const tableColumns = useMemo(
+    () => [
+      { key: x_key, label: x_key },
+      ...y_keys.map((k) => ({ key: k, label: labelFor(k) })),
+    ],
+    [x_key, y_keys, y_labels],
+  );
+
+  const onLegendClick = (e: any) => {
+    const key = e?.dataKey;
+    if (!key) return;
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const onPointClick = (payload: any) => {
+    const point = payload?.activePayload?.[0]?.payload || payload;
+    if (!point) return;
+    const period = point[x_key];
+    openPanel(drill_panel, {
+      period: period != null ? String(period) : undefined,
+      chart_title: title,
+    });
+  };
+
+  const brush = enable_brush && chartData.length > 6 ? (
+    <Brush dataKey={x_key} height={18} stroke={COLORS.teal} travellerWidth={8} />
+  ) : null;
+
+  const commonLegend = show_legend ? (
+    <Legend
+      wrapperStyle={{ fontSize: 12, color: chartTheme.axis.fill, cursor: 'pointer' }}
+      onClick={onLegendClick}
+    />
+  ) : null;
 
   return (
-    <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl p-4 my-2">
-      {title && (
-        <h4 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
-          <div className="w-0.5 h-3.5 bg-deloitte-green rounded-full" />
-          {title}
-        </h4>
-      )}
+    <div
+      className="bg-surface-800/60 border border-surface-700/50 rounded-xl p-4 my-2"
+      role="img"
+      aria-label={title ? `Chart: ${title}` : `Chart of type ${chart_type}`}
+    >
+      <div className="flex items-center justify-between gap-2 mb-3">
+        {title ? (
+          <h4 className="text-sm font-semibold text-white flex items-center gap-2">
+            <div className="w-0.5 h-3.5 bg-deloitte-green rounded-full" />
+            {title}
+          </h4>
+        ) : (
+          <span />
+        )}
+        <div className="flex items-center gap-3">
+          {chart_type === 'bridge' && chartData.length > 0 && (
+            <button
+              type="button"
+              className="text-xs text-surface-400 hover:text-deloitte-green underline-offset-2 hover:underline"
+              onClick={() =>
+                downloadCsv(
+                  'bridge_chart',
+                  [
+                    { key: x_key, label: x_key },
+                    { key: 'value', label: 'value' },
+                    { key: 'invisible', label: 'invisible' },
+                  ],
+                  chartData as Record<string, unknown>[],
+                )
+              }
+            >
+              Export CSV
+            </button>
+          )}
+          <button
+            type="button"
+            className="text-xs text-surface-400 hover:text-white underline-offset-2 hover:underline"
+            onClick={() => setViewAsTable((v) => !v)}
+            aria-pressed={viewAsTable}
+          >
+            {viewAsTable ? 'View as chart' : 'View as table'}
+          </button>
+        </div>
+      </div>
 
+      {viewAsTable ? (
+        <DataTable columns={tableColumns} rows={chartData as Record<string, unknown>[]} />
+      ) : (
       <ResponsiveContainer width="100%" height={height}>
         {chart_type === 'bar' ? (
-          <BarChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+          <BarChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
+            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+            <XAxis dataKey={x_key} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} />
+            <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
-            {show_legend && <Legend wrapperStyle={{ fontSize: 11, color: '#97999B' }} />}
-            {y_keys.map((key, i) => (
+            {commonLegend}
+            {visibleKeys.map((key, i) => (
               <Bar key={key} dataKey={key} name={labelFor(key)} fill={SERIES_COLORS[i % SERIES_COLORS.length]} radius={[3, 3, 0, 0]} />
             ))}
-            {reference_line && <ReferenceLine y={reference_line.y} stroke={COLORS.amber} strokeDasharray="5 5" label={{ value: reference_line.label, fill: COLORS.amber, fontSize: 10 }} />}
+            {reference_line && <ReferenceLine y={reference_line.y} stroke={COLORS.amber} strokeDasharray="5 5" label={{ value: reference_line.label, fill: COLORS.amber, fontSize: 12 }} />}
+            {brush}
           </BarChart>
 
         ) : chart_type === 'stacked_bar' ? (
-          <BarChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+          <BarChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
+            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+            <XAxis dataKey={x_key} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} />
+            <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
-            {show_legend && <Legend wrapperStyle={{ fontSize: 11, color: '#97999B' }} />}
-            {y_keys.map((key, i) => (
+            {commonLegend}
+            {visibleKeys.map((key, i) => (
               <Bar key={key} dataKey={key} name={labelFor(key)} stackId="a" fill={SERIES_COLORS[i % SERIES_COLORS.length]} />
             ))}
+            {brush}
           </BarChart>
 
         ) : chart_type === 'line' ? (
-          <LineChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+          <LineChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
+            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+            <XAxis dataKey={x_key} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} />
+            <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
-            {show_legend && <Legend wrapperStyle={{ fontSize: 11, color: '#97999B' }} />}
-            {y_keys.map((key, i) => (
+            {commonLegend}
+            {visibleKeys.map((key, i) => (
               <Line key={key} type="monotone" dataKey={key} name={labelFor(key)} stroke={SERIES_COLORS[i % SERIES_COLORS.length]} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
             ))}
             {reference_line && <ReferenceLine y={reference_line.y} stroke={COLORS.amber} strokeDasharray="5 5" />}
+            {brush}
           </LineChart>
 
         ) : chart_type === 'area' ? (
-          <AreaChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
+          <AreaChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
             <defs>
-              {y_keys.map((key, i) => (
+              {visibleKeys.map((key, i) => (
                 <linearGradient key={key} id={`grad-${key}`} x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor={SERIES_COLORS[i % SERIES_COLORS.length]} stopOpacity={0.3} />
                   <stop offset="95%" stopColor={SERIES_COLORS[i % SERIES_COLORS.length]} stopOpacity={0} />
                 </linearGradient>
               ))}
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+            <XAxis dataKey={x_key} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} />
+            <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
-            {show_legend && <Legend wrapperStyle={{ fontSize: 11, color: '#97999B' }} />}
-            {y_keys.map((key, i) => (
+            {commonLegend}
+            {visibleKeys.map((key, i) => (
               <Area key={key} type="monotone" dataKey={key} name={labelFor(key)} stroke={SERIES_COLORS[i % SERIES_COLORS.length]} fill={`url(#grad-${key})`} strokeWidth={2} />
             ))}
+            {brush}
           </AreaChart>
 
         ) : chart_type === 'confidence' ? (
-          <AreaChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
+          <AreaChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
             <defs>
               <linearGradient id="gradCI" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor={COLORS.teal} stopOpacity={0.2} />
                 <stop offset="95%" stopColor={COLORS.teal} stopOpacity={0} />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+            <XAxis dataKey={x_key} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} />
+            <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
-            {show_legend && <Legend wrapperStyle={{ fontSize: 11, color: '#97999B' }} />}
+            {commonLegend}
             <Area type="monotone" dataKey="p90" name="P90 (Upside)" stroke={COLORS.teal} fill="url(#gradCI)" strokeWidth={1} strokeDasharray="4 4" />
             <Area type="monotone" dataKey="p10" name="P10 (Downside)" stroke={COLORS.teal} fill="url(#gradCI)" strokeWidth={1} strokeDasharray="4 4" />
             <Line type="monotone" dataKey="p50" name="P50 (Forecast)" stroke={COLORS.green} strokeWidth={2.5} dot={{ r: 4, fill: COLORS.green }} />
             {chartData[0]?.actual !== undefined && (
               <Line type="monotone" dataKey="actual" name="Actual" stroke={COLORS.amber} strokeWidth={2} dot={{ r: 3 }} />
             )}
+            {brush}
           </AreaChart>
 
         ) : chart_type === 'bridge' ? (
-          <BarChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+          <BarChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
+            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+            <XAxis dataKey={x_key} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} />
+            <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
             <Bar dataKey="invisible" stackId="bridge" fill="transparent" />
             <Bar dataKey="value" stackId="bridge" radius={[3, 3, 0, 0]}>
@@ -204,40 +293,41 @@ export function ChartRenderer({ data }: Props) {
               nameKey={x_key}
               paddingAngle={3}
               label={({ name, percent }: any) => `${name} ${(percent * 100).toFixed(0)}%`}
+              onClick={(entry: any) => openPanel(drill_panel, { category: entry?.name, chart_title: title })}
             >
               {chartData.map((_: any, i: number) => (
                 <Cell key={i} fill={SERIES_COLORS[i % SERIES_COLORS.length]} />
               ))}
             </Pie>
             <Tooltip content={<CustomTooltip format={format} />} />
-            {show_legend && <Legend wrapperStyle={{ fontSize: 11, color: '#97999B' }} />}
+            {commonLegend}
           </PieChart>
 
         ) : chart_type === 'combo' ? (
-          <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+          <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
+            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+            <XAxis dataKey={x_key} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} />
+            <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
-            {show_legend && <Legend wrapperStyle={{ fontSize: 11, color: '#97999B' }} />}
-            {y_keys.slice(0, 1).map((key) => (
+            {commonLegend}
+            {visibleKeys.slice(0, 1).map((key) => (
               <Bar key={key} dataKey={key} name={labelFor(key)} fill={COLORS.green} radius={[3, 3, 0, 0]} />
             ))}
-            {y_keys.slice(1).map((key, i) => (
+            {visibleKeys.slice(1).map((key, i) => (
               <Line key={key} type="monotone" dataKey={key} name={labelFor(key)} stroke={SERIES_COLORS[(i + 1) % SERIES_COLORS.length]} strokeWidth={2} dot={{ r: 3 }} />
             ))}
+            {brush}
           </ComposedChart>
 
         ) : chart_type === 'variance' ? (
-          /* Variance chart: shows positive/negative deviations with color coding */
-          <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+          <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
+            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+            <XAxis dataKey={x_key} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} />
+            <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
-            {show_legend && <Legend wrapperStyle={{ fontSize: 11, color: '#97999B' }} />}
+            {commonLegend}
             <ReferenceLine y={0} stroke={COLORS.coolGray} strokeDasharray="3 3" />
-            {y_keys.map((key) => (
+            {visibleKeys.map((key) => (
               <Bar key={key} dataKey={key} name={labelFor(key)} radius={[3, 3, 0, 0]}>
                 {chartData.map((entry: any, i: number) => (
                   <Cell key={i} fill={entry[key] >= 0 ? COLORS.green : COLORS.red} />
@@ -246,47 +336,54 @@ export function ChartRenderer({ data }: Props) {
             ))}
             {reference_line && (
               <ReferenceLine y={reference_line.y} stroke={COLORS.amber} strokeDasharray="5 5"
-                label={{ value: reference_line.label, fill: COLORS.amber, fontSize: 10 }} />
+                label={{ value: reference_line.label, fill: COLORS.amber, fontSize: 12 }} />
             )}
+            {brush}
           </ComposedChart>
 
         ) : chart_type === 'grouped_bar' ? (
-          /* Grouped bar: side-by-side bars (forecast vs actual, etc.) */
-          <BarChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} />
+          <BarChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }} onClick={onPointClick}>
+            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+            <XAxis dataKey={x_key} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} />
+            <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} tickFormatter={(v) => formatValue(v, format)} />
             <Tooltip content={<CustomTooltip format={format} />} />
-            {show_legend && <Legend wrapperStyle={{ fontSize: 11, color: '#97999B' }} />}
-            {y_keys.map((key, i) => (
+            {commonLegend}
+            {visibleKeys.map((key, i) => (
               <Bar key={key} dataKey={key} name={labelFor(key)} fill={SERIES_COLORS[i % SERIES_COLORS.length]} radius={[3, 3, 0, 0]} barSize={20} />
             ))}
-            {reference_line && <ReferenceLine y={reference_line.y} stroke={COLORS.amber} strokeDasharray="5 5" label={{ value: reference_line.label, fill: COLORS.amber, fontSize: 10 }} />}
+            {reference_line && <ReferenceLine y={reference_line.y} stroke={COLORS.amber} strokeDasharray="5 5" label={{ value: reference_line.label, fill: COLORS.amber, fontSize: 12 }} />}
+            {brush}
           </BarChart>
 
         ) : chart_type === 'scatter' ? (
-          /* Scatter plot: forecast vs actual correlation */
           <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={y_keys[0] || x_key} tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} name={labelFor(y_keys[0] || x_key)} />
-            <YAxis dataKey={y_keys[1]} tick={{ fill: '#97999B', fontSize: 11 }} axisLine={{ stroke: '#3a3d42' }} tickFormatter={(v) => formatValue(v, format)} name={labelFor(y_keys[1])} />
+            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+            <XAxis dataKey={y_keys[0] || x_key} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} tickFormatter={(v) => formatValue(v, format)} name={labelFor(y_keys[0] || x_key)} />
+            <YAxis dataKey={y_keys[1]} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={{ stroke: chartTheme.grid }} tickFormatter={(v) => formatValue(v, format)} name={labelFor(y_keys[1])} />
             <Tooltip content={<CustomTooltip format={format} />} />
-            {show_legend && <Legend wrapperStyle={{ fontSize: 11, color: '#97999B' }} />}
+            {commonLegend}
             <Scatter name={labelFor(y_keys[1] || 'values')} fill={COLORS.teal} />
           </ComposedChart>
 
         ) : (
-          <BarChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-            <XAxis dataKey={x_key} tick={{ fill: '#97999B', fontSize: 11 }} />
-            <YAxis tick={{ fill: '#97999B', fontSize: 11 }} />
+          <BarChart data={chartData} onClick={onPointClick}>
+            <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+            <XAxis dataKey={x_key} tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} />
+            <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} />
             <Tooltip />
-            {y_keys.map((key, i) => (
+            {visibleKeys.map((key, i) => (
               <Bar key={key} dataKey={key} fill={SERIES_COLORS[i % SERIES_COLORS.length]} />
             ))}
+            {brush}
           </BarChart>
         )}
       </ResponsiveContainer>
+      )}
+      {!viewAsTable && (
+        <p className="text-xs text-surface-500 mt-1">
+          Click legend to toggle series · drag brush to zoom · click a point to drill
+        </p>
+      )}
     </div>
   );
 }

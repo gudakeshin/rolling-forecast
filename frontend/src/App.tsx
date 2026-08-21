@@ -1,12 +1,14 @@
-import { Component, type ErrorInfo, type ReactNode } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { Component, type ErrorInfo, type ReactNode, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from './store/authStore';
+import { useVersionStore } from './store/versionStore';
 import { AppLayout } from './components/common/AppLayout';
 import { LoginForm } from './components/common/LoginForm';
+import { PanelUrlSync } from './components/common/PanelUrlSync';
+import { ToastHost } from './components/ui/ToastHost';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
+import type { TokenResponse } from './types/auth';
 
-// ── Error Boundary ──────────────────────────────
-// Catches render errors so the whole app doesn't go black.
 class ErrorBoundary extends Component<
   { children: ReactNode },
   { hasError: boolean; error: Error | null }
@@ -32,8 +34,7 @@ class ErrorBoundary extends Component<
             <AlertTriangle className="w-10 h-10 text-amber-400 mx-auto" />
             <h2 className="text-lg font-semibold text-white">Something went wrong</h2>
             <p className="text-sm text-surface-400">
-              The application encountered an unexpected error. This is usually caused by
-              a rendering issue with incoming data.
+              The application encountered an unexpected error.
             </p>
             {this.state.error && (
               <pre className="text-xs text-red-400 bg-surface-900 rounded-lg p-3 text-left overflow-auto max-h-32">
@@ -45,7 +46,7 @@ class ErrorBoundary extends Component<
                 this.setState({ hasError: false, error: null });
                 window.location.reload();
               }}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-deloitte-green text-white rounded-lg hover:bg-deloitte-green/90 transition-colors text-sm font-medium"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-deloitte-green text-white rounded-lg text-sm font-medium"
             >
               <RefreshCw className="w-4 h-4" />
               Reload App
@@ -64,12 +65,62 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+function SsoTokenHandler() {
+  const [params, setParams] = useSearchParams();
+  const login = useAuthStore((s) => s.login);
+
+  useEffect(() => {
+    const sso = params.get('sso_token');
+    if (!sso) return;
+    try {
+      const payload = JSON.parse(atob(sso.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+      const response: TokenResponse = {
+        access_token: sso,
+        token_type: 'bearer',
+        user_id: payload.sub,
+        username: payload.sub,
+        role: payload.role || 'analyst',
+      };
+      login(response);
+      params.delete('sso_token');
+      setParams(params, { replace: true });
+      window.location.href = '/';
+    } catch {
+      /* ignore */
+    }
+  }, [params, setParams, login]);
+
+  return null;
+}
+
+/** Hydrate capability flags + forecast versions when a token exists. */
+function AuthBootstrap() {
+  const token = useAuthStore((s) => s.token);
+  const fetchMe = useAuthStore((s) => s.fetchMe);
+  const hydrateVersions = useVersionStore((s) => s.hydrate);
+
+  useEffect(() => {
+    if (token) {
+      void fetchMe();
+      void hydrateVersions();
+    }
+  }, [token, fetchMe, hydrateVersions]);
+
+  return null;
+}
+
 export default function App() {
   return (
     <ErrorBoundary>
       <BrowserRouter>
+        <SsoTokenHandler />
+        <AuthBootstrap />
+        <PanelUrlSync />
+        <ToastHost />
         <Routes>
           <Route path="/login" element={<LoginForm />} />
+          {/* Executive Dashboard and Admin Console are now slide-over panels,
+              not standalone routes — any deep link falls through to the app shell. */}
           <Route
             path="/*"
             element={

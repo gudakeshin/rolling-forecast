@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """P&L line item and dependency graph models."""
 
 from sqlalchemy import String, Integer, Boolean, ForeignKey, Text
@@ -41,6 +43,11 @@ class LineItem(Base):
         Integer, default=0
     )  # For P&L hierarchy display
     is_subtotal: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # False excludes the line from reflection/accuracy learning (memo or non-target lines)
+    is_target_bearing: Mapped[bool | None] = mapped_column(
+        Boolean, nullable=True, default=True
+    )
 
     # Relationships
     actuals_records: Mapped[list["ActualsRecord"]] = relationship(

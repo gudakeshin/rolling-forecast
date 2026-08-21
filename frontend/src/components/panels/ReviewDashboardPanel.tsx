@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   BarChart, Bar, LineChart, Line, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip,
@@ -10,17 +10,24 @@ import {
   ThumbsDown, MessageSquare, Loader2,
   Bot, Eye, ArrowRight, Zap, RefreshCw, TrendingUp,
   TrendingDown, Activity, GitBranch, Edit3, Save, X,
-  DollarSign, BarChart3, PieChart, FileText,
+  DollarSign, BarChart3, PieChart, FileText, Download, Filter,
 } from 'lucide-react';
 import { apiPost } from '../../api/client';
+import { batchReview } from '../../api/dashboard';
+import { usePanelStore } from '../../store/panelStore';
+import { useCan } from '../../store/authStore';
+import { toast } from '../../store/toastStore';
+import { downloadCsv } from '../ui/DataTable';
+import { dispatchRecommendedAction } from '../../utils/recommendedActions';
+import { chartTheme } from '../../theme/chartTheme';
 
 const COLORS = {
-  green: '#86BC25',
-  amber: '#FFB547',
-  red: '#E84855',
-  teal: '#0076A8',
-  coolGray: '#97999B',
-  blue: '#62B5E5',
+  green: chartTheme.colors.primary,
+  amber: chartTheme.colors.warning,
+  red: chartTheme.colors.danger,
+  teal: chartTheme.colors.secondary,
+  coolGray: chartTheme.colors.tertiary,
+  blue: '#3D6E8A',
 };
 
 // ─── Types ─────────────────────────────────────────
@@ -67,6 +74,24 @@ interface DriverContext {
   active_overrides: ActiveOverride[];
 }
 
+interface ExogModeScores {
+  n_folds: number;
+  mase_forecast: number | null;
+  mase_known: number | null;
+}
+
+interface ExogInfo {
+  mode?: string;
+  columns?: string[];
+  drivers?: Array<{
+    driver_id?: number;
+    driver_key?: string;
+    relation?: string;
+    lag?: number;
+  }>;
+  exog_mode_scores?: ExogModeScores | null;
+}
+
 interface ReviewItem {
   id: string;
   line_item_id: number;
@@ -98,6 +123,8 @@ interface ReviewItem {
   review_comment: string | null;
   reviewed_by: string | null;
   history?: { period: string; actual?: number; forecast?: number }[];
+  exog_used?: boolean;
+  exog?: ExogInfo | null;
 }
 
 interface Props {
@@ -118,6 +145,7 @@ interface Props {
     };
   };
   onRefresh?: () => void;
+  focusLineItemId?: number | string;
 }
 
 // ─── Utilities ─────────────────────────────────────
@@ -127,6 +155,15 @@ function formatCurrency(value: number | null | undefined): string {
   if (Math.abs(value) >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
   if (Math.abs(value) >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
   return `$${value.toFixed(0)}`;
+}
+
+function exogGapForItem(item: ReviewItem): number | null {
+  const s = item.exog?.exog_mode_scores;
+  if (!s) return null;
+  const forecast = typeof s.mase_forecast === 'number' ? s.mase_forecast : null;
+  const known = typeof s.mase_known === 'number' ? s.mase_known : null;
+  if (forecast == null || known == null) return null;
+  return forecast - known;
 }
 
 function RiskBar({ score }: { score: number }) {
@@ -139,7 +176,7 @@ function RiskBar({ score }: { score: number }) {
           style={{ width: `${Math.min(score, 100)}%`, backgroundColor: color }}
         />
       </div>
-      <span className="text-[10px] font-mono" style={{ color }}>{score.toFixed(0)}</span>
+      <span className="text-xs font-mono" style={{ color }}>{score.toFixed(0)}</span>
     </div>
   );
 }
@@ -155,7 +192,7 @@ function AIBadge({ recommendation }: { recommendation: string }) {
   const c = config[recommendation] || config.review;
   const Icon = c.icon;
   return (
-    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold border ${c.class}`}>
+    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-semibold border ${c.class}`}>
       <Icon className="w-2.5 h-2.5" />
       {c.label}
     </span>
@@ -168,7 +205,7 @@ function ConfBadge({ score }: { score: number }) {
     : score >= 50 ? 'bg-yellow-500/15 text-yellow-400 border-yellow-500/20'
     : 'bg-red-500/15 text-red-400 border-red-500/20';
   return (
-    <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold border ${cls}`}>
+    <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-semibold border ${cls}`}>
       {Math.round(score)}
     </span>
   );
@@ -199,6 +236,44 @@ const ChartTooltip = ({ active, payload, label }: any) => {
     </div>
   );
 };
+
+function ExogModeScoresCard({ exog }: { exog?: ExogInfo | null }) {
+  const scores = exog?.exog_mode_scores;
+  if (!exog || !scores) return null;
+  const formatMase = (value: number | null | undefined) =>
+    value == null || !Number.isFinite(value) ? 'n/a' : value.toFixed(3);
+  const forecastScore = typeof scores.mase_forecast === 'number' ? scores.mase_forecast : null;
+  const knownScore = typeof scores.mase_known === 'number' ? scores.mase_known : null;
+  const delta = forecastScore != null && knownScore != null ? forecastScore - knownScore : null;
+
+  return (
+    <div className="bg-surface-800/60 border border-deloitte-teal/20 rounded-lg p-2.5 space-y-1.5">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs font-semibold text-deloitte-teal uppercase tracking-wider">
+          Exogenous Validation
+        </span>
+        <span className="text-xs text-surface-500">folds: {scores.n_folds ?? 0}</span>
+        <span className="text-xs text-surface-500">mode: {exog.mode || 'forecast'}</span>
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        <div className="bg-surface-900/50 rounded px-2 py-1">
+          <div className="text-xs text-surface-500">MASE (forecast exog)</div>
+          <div className="text-xs font-mono text-surface-200">{formatMase(scores.mase_forecast)}</div>
+        </div>
+        <div className="bg-surface-900/50 rounded px-2 py-1">
+          <div className="text-xs text-surface-500">MASE (known exog)</div>
+          <div className="text-xs font-mono text-surface-200">{formatMase(scores.mase_known)}</div>
+        </div>
+        <div className="bg-surface-900/50 rounded px-2 py-1">
+          <div className="text-xs text-surface-500">Gap (forecast-known)</div>
+          <div className={`text-xs font-mono ${delta != null && delta > 0 ? 'text-amber-400' : 'text-deloitte-green'}`}>
+            {delta == null ? 'n/a' : `${delta > 0 ? '+' : ''}${delta.toFixed(3)}`}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ─── Business Analysis Summary ─────────────────────
 
@@ -295,19 +370,19 @@ function BusinessAnalysisSummary({ buckets }: {
       <div className="grid grid-cols-4 gap-2">
         <div className="bg-surface-900/50 rounded-lg px-2.5 py-2 text-center">
           <div className="text-sm font-bold text-white">{formatCurrency(totalForecastValue)}</div>
-          <div className="text-[9px] text-surface-500 uppercase tracking-wider">Total Forecast</div>
+          <div className="text-xs text-surface-500 uppercase tracking-wider">Total Forecast</div>
         </div>
         <div className="bg-surface-900/50 rounded-lg px-2.5 py-2 text-center">
           <div className="text-sm font-bold text-red-400">{formatCurrency(valueAtRisk)}</div>
-          <div className="text-[9px] text-surface-500 uppercase tracking-wider">$ Under Review</div>
+          <div className="text-xs text-surface-500 uppercase tracking-wider">$ Under Review</div>
         </div>
         <div className="bg-surface-900/50 rounded-lg px-2.5 py-2 text-center">
           <div className="text-sm font-bold text-red-400">{highMat.length}</div>
-          <div className="text-[9px] text-surface-500 uppercase tracking-wider">High Impact</div>
+          <div className="text-xs text-surface-500 uppercase tracking-wider">High Impact</div>
         </div>
         <div className="bg-surface-900/50 rounded-lg px-2.5 py-2 text-center">
           <div className="text-sm font-bold text-amber-400">{medMat.length}</div>
-          <div className="text-[9px] text-surface-500 uppercase tracking-wider">Med Impact</div>
+          <div className="text-xs text-surface-500 uppercase tracking-wider">Med Impact</div>
         </div>
       </div>
 
@@ -317,19 +392,19 @@ function BusinessAnalysisSummary({ buckets }: {
         <div className="space-y-1.5">
           <div className="flex items-center gap-1.5">
             <BarChart3 className="w-3 h-3 text-surface-500" />
-            <span className="text-[10px] font-semibold text-surface-400 uppercase tracking-wider">$ at Risk by Category</span>
+            <span className="text-xs font-semibold text-surface-400 uppercase tracking-wider">$ at Risk by Category</span>
           </div>
           {topCategoriesByRisk.map(([cat, { value, count }]) => (
             <div key={cat} className="flex items-center gap-2">
-              <span className="text-[10px] text-surface-400 w-20 truncate">{cat}</span>
+              <span className="text-xs text-surface-400 w-20 truncate">{cat}</span>
               <div className="flex-1 h-1.5 bg-surface-700 rounded-full overflow-hidden">
                 <div
                   className="h-full bg-red-500/60 rounded-full"
                   style={{ width: `${Math.min(100, (value / (valueAtRisk || 1)) * 100)}%` }}
                 />
               </div>
-              <span className="text-[10px] text-surface-300 font-mono w-14 text-right">{formatCurrency(value)}</span>
-              <span className="text-[9px] text-surface-600">({count})</span>
+              <span className="text-xs text-surface-300 font-mono w-14 text-right">{formatCurrency(value)}</span>
+              <span className="text-xs text-surface-600">({count})</span>
             </div>
           ))}
         </div>
@@ -338,18 +413,18 @@ function BusinessAnalysisSummary({ buckets }: {
         <div className="space-y-1.5">
           <div className="flex items-center gap-1.5">
             <PieChart className="w-3 h-3 text-surface-500" />
-            <span className="text-[10px] font-semibold text-surface-400 uppercase tracking-wider">Issue Drivers</span>
+            <span className="text-xs font-semibold text-surface-400 uppercase tracking-wider">Issue Drivers</span>
           </div>
           {topRootCauses.map(([cause, count]) => (
             <div key={cause} className="flex items-center gap-2">
-              <span className="text-[10px] text-surface-400 w-24 truncate">{rootCauseLabels[cause] || cause}</span>
+              <span className="text-xs text-surface-400 w-24 truncate">{rootCauseLabels[cause] || cause}</span>
               <div className="flex-1 h-1.5 bg-surface-700 rounded-full overflow-hidden">
                 <div
                   className="h-full bg-amber-500/60 rounded-full"
                   style={{ width: `${Math.min(100, (count / flaggedAndReview.length) * 100)}%` }}
                 />
               </div>
-              <span className="text-[10px] text-surface-300 font-mono w-6 text-right">{count}</span>
+              <span className="text-xs text-surface-300 font-mono w-6 text-right">{count}</span>
             </div>
           ))}
         </div>
@@ -358,15 +433,15 @@ function BusinessAnalysisSummary({ buckets }: {
       {/* Key observations */}
       {(driverObservations.length > 0 || overriddenItems.length > 0) && (
         <div className="border-t border-surface-700/30 pt-2 space-y-1">
-          <span className="text-[10px] font-semibold text-surface-400 uppercase tracking-wider">Key Observations</span>
+          <span className="text-xs font-semibold text-surface-400 uppercase tracking-wider">Key Observations</span>
           {driverObservations.map((obs, i) => (
-            <div key={i} className="flex items-start gap-1.5 text-[10px] text-surface-300 leading-relaxed">
+            <div key={i} className="flex items-start gap-1.5 text-xs text-surface-300 leading-relaxed">
               <Activity className="w-3 h-3 text-deloitte-teal flex-shrink-0 mt-0.5" />
               {obs}
             </div>
           ))}
           {overriddenItems.length > 0 && (
-            <div className="flex items-start gap-1.5 text-[10px] text-surface-300 leading-relaxed">
+            <div className="flex items-start gap-1.5 text-xs text-surface-300 leading-relaxed">
               <Edit3 className="w-3 h-3 text-cyan-400 flex-shrink-0 mt-0.5" />
               {overriddenItems.length} flagged item(s) have active manual overrides that may need re-validation
             </div>
@@ -383,12 +458,22 @@ function ReviewItemRow({
   item,
   onAction,
   isActioning,
+  selected,
+  onToggleSelect,
+  selectable,
+  autoExpand,
+  rowRef,
 }: {
   item: ReviewItem;
   onAction: (id: string, action: string, comment?: string) => void;
   isActioning: string | null;
+  selected?: boolean;
+  onToggleSelect?: (id: string) => void;
+  selectable?: boolean;
+  autoExpand?: boolean;
+  rowRef?: (el: HTMLDivElement | null) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(!!autoExpand);
   const [commenting, setCommenting] = useState(false);
   const [comment, setComment] = useState('');
   const isLoading = isActioning === item.id;
@@ -400,6 +485,10 @@ function ReviewItemRow({
   const [isSaving, setIsSaving] = useState(false);
   const [savedValue, setSavedValue] = useState<number | null>(null);
   const editRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (autoExpand) setExpanded(true);
+  }, [autoExpand]);
 
   useEffect(() => {
     if (isEditing && editRef.current) {
@@ -430,8 +519,9 @@ function ReviewItemRow({
       });
       setSavedValue(numVal);
       setIsEditing(false);
-    } catch (err) {
-      console.error('Override failed:', err);
+      toast.success('Override applied');
+    } catch (err: any) {
+      toast.error(err?.message || 'Override failed');
     } finally {
       setIsSaving(false);
     }
@@ -447,44 +537,71 @@ function ReviewItemRow({
   const driverCtx = item.driver_context;
 
   return (
-    <div className="border-b border-surface-700/20 last:border-0">
-      {/* Main row */}
-      <div
-        className="flex items-center gap-2 px-3 py-2 hover:bg-deloitte-green/5 transition-colors cursor-pointer"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <button className="flex-shrink-0 text-surface-500">
-          {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+    <div
+      ref={rowRef}
+      className={`border-b border-surface-700/20 last:border-0 ${autoExpand ? 'ring-1 ring-deloitte-green/40 bg-deloitte-green/5' : ''}`}
+    >
+      {/* Main row — expand control is a button; actions sit beside it (no nesting) */}
+      <div className="flex items-center gap-2 px-3 py-2 hover:bg-deloitte-green/5 transition-colors">
+        {selectable && (
+          <input
+            type="checkbox"
+            checked={!!selected}
+            onChange={() => onToggleSelect?.(item.id)}
+            onClick={(e) => e.stopPropagation()}
+            className="rounded border-surface-600 bg-surface-800 text-deloitte-green focus:ring-deloitte-green/40"
+            aria-label={`Select ${item.line_item_name}`}
+          />
+        )}
+        <button
+          type="button"
+          className="flex items-center gap-2 flex-1 min-w-0 text-left"
+          onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
+        >
+          <span className="flex-shrink-0 text-surface-500" aria-hidden="true">
+            {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          </span>
+
+          {/* AI recommendation */}
+          <div className="flex-shrink-0 w-16">
+            <AIBadge recommendation={item.ai_recommendation} />
+          </div>
+
+          {/* Name + business context */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5">
+              <MaterialityDot level={item.materiality} />
+              <span className="text-xs text-surface-200 truncate">{item.line_item_name}</span>
+            </div>
+            <span className="text-xs text-surface-500">
+              {item.category}
+              {item.business_unit ? ` · ${item.business_unit}` : ''}
+              {' · '}{item.period_count} periods
+            </span>
+          </div>
+
+          {/* Risk score */}
+          <div className="flex-shrink-0 w-20">
+            <RiskBar score={item.ai_risk_score} />
+          </div>
+
+          {/* Confidence */}
+          <div className="flex-shrink-0 w-10 text-center">
+            <ConfBadge score={item.avg_confidence} />
+          </div>
         </button>
 
-        {/* AI recommendation */}
-        <div className="flex-shrink-0 w-16">
-          <AIBadge recommendation={item.ai_recommendation} />
-        </div>
-
-        {/* Name + business context */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5">
-            <MaterialityDot level={item.materiality} />
-            <span className="text-xs text-surface-200 truncate">{item.line_item_name}</span>
-          </div>
-          <span className="text-[10px] text-surface-500">
-            {item.category}
-            {item.business_unit ? ` · ${item.business_unit}` : ''}
-            {' · '}{item.period_count} periods
-          </span>
-        </div>
-
-        {/* Forecast value (editable) */}
-        <div className="flex-shrink-0 w-20 text-right" onClick={(e) => e.stopPropagation()}>
+        {/* Forecast value (editable) — outside expand button */}
+        <div className="flex-shrink-0 w-20 text-right">
           {isEditing ? (
-            <div className="space-y-1" onClick={(e) => e.stopPropagation()}>
+            <div className="space-y-1">
               <input
                 ref={editRef}
                 type="number"
                 value={editValue}
                 onChange={(e) => setEditValue(e.target.value)}
-                className="w-full px-1 py-0.5 bg-surface-800 border border-cyan-500/50 rounded text-[10px] text-white text-right font-mono focus:outline-none"
+                className="w-full px-1 py-0.5 bg-surface-800 border border-cyan-500/50 rounded text-xs text-white text-right font-mono focus:outline-none"
                 onKeyDown={(e) => {
                   if (e.key === 'Escape') handleCancelEdit();
                   if (e.key === 'Enter' && editReason.trim().length >= 10) handleSaveEdit();
@@ -495,7 +612,7 @@ function ReviewItemRow({
                 placeholder="Reason (min 10 chars)"
                 value={editReason}
                 onChange={(e) => setEditReason(e.target.value)}
-                className="w-full px-1 py-0.5 bg-surface-800 border border-surface-600 rounded text-[9px] text-surface-300 placeholder-surface-600 focus:outline-none focus:border-cyan-500/50"
+                className="w-full px-1 py-0.5 bg-surface-800 border border-surface-600 rounded text-xs text-surface-300 placeholder-surface-600 focus:outline-none focus:border-cyan-500/50"
                 onKeyDown={(e) => {
                   if (e.key === 'Escape') handleCancelEdit();
                   if (e.key === 'Enter' && editReason.trim().length >= 10) handleSaveEdit();
@@ -503,50 +620,42 @@ function ReviewItemRow({
               />
               <div className="flex gap-1 justify-end">
                 <button
+                  type="button"
                   onClick={handleSaveEdit}
                   disabled={isSaving || editReason.trim().length < 10}
                   className="p-0.5 bg-deloitte-green/20 text-deloitte-green rounded hover:bg-deloitte-green/30 disabled:opacity-30"
                 >
                   {isSaving ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Save className="w-2.5 h-2.5" />}
                 </button>
-                <button onClick={handleCancelEdit} className="p-0.5 bg-surface-700 text-surface-400 rounded hover:bg-surface-600">
+                <button type="button" onClick={handleCancelEdit} className="p-0.5 bg-surface-700 text-surface-400 rounded hover:bg-surface-600">
                   <X className="w-2.5 h-2.5" />
                 </button>
               </div>
             </div>
           ) : (
-            <div
-              className="group/val cursor-text"
+            <button
+              type="button"
+              className="group/val cursor-text w-full text-right"
               onClick={handleStartEdit}
               title="Click to edit"
             >
-              <span className={`text-[10px] font-mono font-medium ${wasOverridden ? 'text-cyan-400' : 'text-surface-200'} group-hover/val:text-cyan-300 group-hover/val:underline group-hover/val:decoration-dashed group-hover/val:underline-offset-2`}>
+              <span className={`text-xs font-mono font-medium ${wasOverridden ? 'text-cyan-400' : 'text-surface-200'} group-hover/val:text-cyan-300 group-hover/val:underline group-hover/val:decoration-dashed group-hover/val:underline-offset-2`}>
                 {formatCurrency(displayValue)}
                 <Edit3 className="w-2 h-2 inline-block ml-0.5 opacity-0 group-hover/val:opacity-50" />
               </span>
               {wasOverridden && (
-                <span className="block text-[8px] text-surface-500 line-through">
+                <span className="block text-xs text-surface-500 line-through">
                   was {formatCurrency(item.avg_p50)}
                 </span>
               )}
-            </div>
+            </button>
           )}
         </div>
 
-        {/* Risk score */}
-        <div className="flex-shrink-0 w-20">
-          <RiskBar score={item.ai_risk_score} />
-        </div>
-
-        {/* Confidence */}
-        <div className="flex-shrink-0 w-10 text-center">
-          <ConfBadge score={item.avg_confidence} />
-        </div>
-
         {/* Actions */}
-        <div className="flex-shrink-0 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+        <div className="flex-shrink-0 flex items-center gap-1">
           {item.review_status ? (
-            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded ${
+            <span className={`text-xs font-semibold px-2 py-0.5 rounded ${
               item.review_status === 'approved'
                 ? 'bg-deloitte-green/15 text-deloitte-green'
                 : 'bg-red-500/15 text-red-400'
@@ -558,6 +667,7 @@ function ReviewItemRow({
           ) : (
             <>
               <button
+                type="button"
                 onClick={() => onAction(item.id, 'approve')}
                 className="p-1 hover:bg-deloitte-green/20 rounded text-deloitte-green/60 hover:text-deloitte-green transition-colors"
                 title="Approve"
@@ -565,6 +675,7 @@ function ReviewItemRow({
                 <ThumbsUp className="w-3.5 h-3.5" />
               </button>
               <button
+                type="button"
                 onClick={() => setCommenting(true)}
                 className="p-1 hover:bg-amber-500/20 rounded text-amber-500/60 hover:text-amber-400 transition-colors"
                 title="Comment & Reject"
@@ -584,7 +695,7 @@ function ReviewItemRow({
             <div className="bg-surface-800/60 border border-deloitte-teal/20 rounded-lg p-2.5 space-y-2">
               <div className="flex items-center gap-1.5">
                 <Activity className="w-3.5 h-3.5 text-deloitte-teal" />
-                <span className="text-[10px] font-semibold text-deloitte-teal uppercase tracking-wider">Business Drivers</span>
+                <span className="text-xs font-semibold text-deloitte-teal uppercase tracking-wider">Business Drivers</span>
               </div>
 
               <p className="text-xs text-surface-300 leading-relaxed">
@@ -595,9 +706,9 @@ function ReviewItemRow({
               {driverCtx.dependencies.length > 0 && (
                 <div className="flex items-center gap-2 flex-wrap">
                   <GitBranch className="w-3 h-3 text-surface-500 flex-shrink-0" />
-                  <span className="text-[10px] text-surface-500">Composed of:</span>
+                  <span className="text-xs text-surface-500">Composed of:</span>
                   {driverCtx.dependencies.map((dep, i) => (
-                    <span key={i} className="text-[10px] px-1.5 py-0.5 bg-surface-700/80 rounded text-surface-300 font-mono">
+                    <span key={i} className="text-xs px-1.5 py-0.5 bg-surface-700/80 rounded text-surface-300 font-mono">
                       {dep.relationship === 'subtract' ? '−' : '+'} {dep.name}
                       {dep.forecast_total ? ` (${formatCurrency(dep.forecast_total)})` : ''}
                     </span>
@@ -607,7 +718,7 @@ function ReviewItemRow({
 
               {/* Actuals trend */}
               {driverCtx.actuals_trend && (
-                <div className="flex items-center gap-3 text-[10px] flex-wrap">
+                <div className="flex items-center gap-3 text-xs flex-wrap">
                   {driverCtx.actuals_trend.direction === 'upward' ? (
                     <TrendingUp className="w-3 h-3 text-deloitte-green flex-shrink-0" />
                   ) : driverCtx.actuals_trend.direction === 'downward' ? (
@@ -635,7 +746,7 @@ function ReviewItemRow({
 
               {/* Active overrides */}
               {driverCtx.active_overrides.length > 0 && (
-                <div className="flex items-start gap-2 text-[10px]">
+                <div className="flex items-start gap-2 text-xs">
                   <Edit3 className="w-3 h-3 text-cyan-400 flex-shrink-0 mt-0.5" />
                   <div className="text-surface-400">
                     <span className="text-cyan-400 font-semibold">Active overrides: </span>
@@ -652,7 +763,7 @@ function ReviewItemRow({
 
               {/* Driver inputs */}
               {driverCtx.driver_inputs.length > 0 && (
-                <div className="flex items-start gap-2 text-[10px]">
+                <div className="flex items-start gap-2 text-xs">
                   <DollarSign className="w-3 h-3 text-amber-400 flex-shrink-0 mt-0.5" />
                   <div className="text-surface-400">
                     <span className="text-amber-400 font-semibold">BU inputs: </span>
@@ -673,14 +784,14 @@ function ReviewItemRow({
             <Bot className="w-3.5 h-3.5 text-deloitte-teal mt-0.5 flex-shrink-0" />
             <div className="flex-1">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[10px] font-semibold text-deloitte-teal uppercase tracking-wider">Statistical Analysis</span>
+                <span className="text-xs font-semibold text-deloitte-teal uppercase tracking-wider">Statistical Analysis</span>
                 {item.root_cause && item.root_cause !== 'none' && (
-                  <span className="text-[9px] font-semibold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                  <span className="text-xs font-semibold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
                     {item.root_cause.replace(/_/g, ' ')}
                   </span>
                 )}
                 {item.materiality && item.materiality !== 'low' && (
-                  <span className={`text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded border ${
+                  <span className={`text-xs font-semibold uppercase px-1.5 py-0.5 rounded border ${
                     item.materiality === 'high'
                       ? 'text-red-400 bg-red-500/10 border-red-500/20'
                       : 'text-amber-400 bg-amber-500/10 border-amber-500/20'
@@ -704,21 +815,47 @@ function ReviewItemRow({
             </div>
           </div>
 
+          <ExogModeScoresCard exog={item.exog} />
+
           {/* Structured actions */}
           {item.ai_actions && item.ai_actions.length > 0 && item.ai_recommendation !== 'approve' && (
             <div className="bg-surface-800/50 border border-cyan-500/15 rounded-lg p-2.5">
               <div className="flex items-center gap-1.5 mb-2">
                 <ArrowRight className="w-3 h-3 text-cyan-400" />
-                <span className="text-[10px] font-semibold text-cyan-400 uppercase tracking-wider">Recommended Actions</span>
+                <span className="text-xs font-semibold text-cyan-400 uppercase tracking-wider">Recommended Actions</span>
               </div>
               <div className="space-y-1.5">
                 {item.ai_actions.map((action, idx) => (
                   <div key={idx} className="flex items-start gap-2">
-                    <span className="text-[10px] font-bold text-surface-500 mt-0.5">{idx + 1}.</span>
-                    <div>
-                      <span className="text-[10px] font-semibold text-surface-200">{action.label}</span>
-                      <p className="text-[10px] text-surface-400 leading-relaxed">{action.detail}</p>
+                    <span className="text-xs font-bold text-surface-500 mt-0.5">{idx + 1}.</span>
+                    <div className="flex-1 min-w-0">
+                      <span className="text-xs font-semibold text-surface-200">{action.label}</span>
+                      <p className="text-xs text-surface-300 leading-relaxed">{action.detail}</p>
                     </div>
+                    <button
+                      type="button"
+                      disabled={isLoading}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void dispatchRecommendedAction(
+                          {
+                            type: action.type,
+                            label: action.label,
+                            detail: action.detail,
+                            item_id: item.id,
+                          },
+                          {
+                            openPanel: (type, params) => usePanelStore.getState().openPanel(type, params),
+                            onApproveItem: (id) => onAction(id, 'approve'),
+                            onRejectItem: (id) => onAction(id, 'reject'),
+                            lineItemName: item.line_item_name,
+                          },
+                        );
+                      }}
+                      className="flex-shrink-0 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 transition-colors min-h-[36px]"
+                    >
+                      {action.type === 'confirm_zero' || action.type === 'approve' ? 'Apply' : 'Go'}
+                    </button>
                   </div>
                 ))}
               </div>
@@ -726,7 +863,7 @@ function ReviewItemRow({
           )}
 
           {/* Detail cards */}
-          <div className="grid grid-cols-4 gap-2 text-[10px]">
+          <div className="grid grid-cols-4 gap-2 text-xs">
             <div className="bg-surface-800/50 rounded px-2 py-1.5">
               <span className="text-surface-500 block">Forecast Range</span>
               <span className="text-surface-200 font-mono">{item.p50_range}</span>
@@ -750,26 +887,23 @@ function ReviewItemRow({
             <div className="bg-surface-800/50 border border-surface-700/30 rounded-lg p-2.5">
               <div className="flex items-center gap-1.5 mb-1.5">
                 <TrendingUp className="w-3 h-3 text-deloitte-teal" />
-                <span className="text-[10px] font-semibold text-surface-400 uppercase tracking-wider">Historical Context</span>
+                <span className="text-xs font-semibold text-surface-400 uppercase tracking-wider">Historical Context</span>
               </div>
               <ResponsiveContainer width="100%" height={80}>
                 <AreaChart data={item.history} margin={{ top: 2, right: 5, left: -20, bottom: 2 }}>
                   <defs>
                     <linearGradient id={`histGrad-${item.id}`} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#0076A8" stopOpacity={0.2} />
-                      <stop offset="95%" stopColor="#0076A8" stopOpacity={0} />
+                      <stop offset="5%" stopColor={COLORS.teal} stopOpacity={0.2} />
+                      <stop offset="95%" stopColor={COLORS.teal} stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <XAxis dataKey="period" tick={{ fill: '#97999B', fontSize: 8 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: '#97999B', fontSize: 8 }} axisLine={false} tickLine={false} />
-                  <Tooltip
-                    contentStyle={{ background: '#1a1d21', border: '1px solid #3a3d42', borderRadius: '8px', fontSize: '10px' }}
-                    labelStyle={{ color: '#97999B', fontSize: '9px' }}
-                  />
+                  <XAxis dataKey="period" tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} axisLine={false} tickLine={false} />
+                  <Tooltip contentStyle={chartTheme.tooltip.contentStyle} labelStyle={{ color: chartTheme.axis.fill, fontSize: '9px' }} />
                   {item.history[0]?.actual !== undefined && (
-                    <Area type="monotone" dataKey="actual" name="Actual" stroke="#FFB547" fill="none" strokeWidth={1.5} dot={{ r: 2, fill: '#FFB547' }} />
+                    <Area type="monotone" dataKey="actual" name="Actual" stroke={COLORS.amber} fill="none" strokeWidth={1.5} dot={{ r: 2, fill: COLORS.amber }} />
                   )}
-                  <Area type="monotone" dataKey="forecast" name="Forecast" stroke="#0076A8" fill={`url(#histGrad-${item.id})`} strokeWidth={1.5} dot={{ r: 2, fill: '#0076A8' }} />
+                  <Area type="monotone" dataKey="forecast" name="Forecast" stroke={COLORS.teal} fill={`url(#histGrad-${item.id})`} strokeWidth={1.5} dot={{ r: 2, fill: COLORS.teal }} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -777,7 +911,7 @@ function ReviewItemRow({
 
           {/* Review comment */}
           {item.review_comment && (
-            <div className="flex items-start gap-1.5 text-[10px] text-surface-400">
+            <div className="flex items-start gap-1.5 text-xs text-surface-400">
               <MessageSquare className="w-3 h-3 mt-0.5 flex-shrink-0" />
               <span>"{item.review_comment}"</span>
             </div>
@@ -787,7 +921,8 @@ function ReviewItemRow({
 
       {/* Rejection comment */}
       {commenting && (
-        <div className="px-3 pb-2 ml-5" onClick={(e) => e.stopPropagation()}>
+        // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- event barrier only
+        <div className="px-3 pb-2 ml-5" onMouseDown={(e) => e.stopPropagation()}>
           <div className="flex gap-2">
             <input
               type="text"
@@ -795,7 +930,6 @@ function ReviewItemRow({
               onChange={(e) => setComment(e.target.value)}
               placeholder="Rejection reason..."
               className="flex-1 px-2 py-1 bg-surface-800 border border-surface-600 rounded text-xs text-white placeholder-surface-500 focus:outline-none focus:border-amber-500/50"
-              autoFocus
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && comment.trim()) {
                   onAction(item.id, 'reject', comment);
@@ -805,6 +939,7 @@ function ReviewItemRow({
               }}
             />
             <button
+              type="button"
               onClick={() => { onAction(item.id, 'reject', comment); setCommenting(false); setComment(''); }}
               disabled={!comment.trim()}
               className="px-2 py-1 bg-red-500/20 text-red-400 rounded text-xs hover:bg-red-500/30 disabled:opacity-40 transition-colors"
@@ -812,6 +947,7 @@ function ReviewItemRow({
               Reject
             </button>
             <button
+              type="button"
               onClick={() => { setCommenting(false); setComment(''); }}
               className="px-2 py-1 bg-surface-700 text-surface-400 rounded text-xs hover:bg-surface-600 transition-colors"
             >
@@ -828,57 +964,105 @@ function ReviewItemRow({
 
 type BucketKey = 'flagged' | 'needs_review' | 'ai_approved' | 'already_reviewed';
 
-export function ReviewDashboardPanel({ data, onRefresh }: Props) {
+export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props) {
   const { version, buckets, confidence_trend, category_flag_chart, summary } = data.data;
+  const openPanel = usePanelStore((s) => s.openPanel);
+  const canGenerate = useCan('can_generate');
   const [activeBucket, setActiveBucket] = useState<BucketKey>('flagged');
   const [actioningItem, setActioningItem] = useState<string | null>(null);
   const [isAcceptingAll, setIsAcceptingAll] = useState(false);
   const [isRescoring, setIsRescoring] = useState(false);
   const [localBuckets, setLocalBuckets] = useState(buckets);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchComment, setBatchComment] = useState('');
+  const [batchRejecting, setBatchRejecting] = useState(false);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [filterExog, setFilterExog] = useState<string>('all');
+  const [sortBy, setSortBy] = useState<string>('default');
+  const focusRowRef = useRef<HTMLDivElement | null>(null);
+  const focusApplied = useRef(false);
+
+  // Soft poll while review queue is open
+  useEffect(() => {
+    if (!onRefresh) return;
+    const id = window.setInterval(() => onRefresh(), 60_000);
+    return () => window.clearInterval(id);
+  }, [onRefresh]);
+
+  // Deep-link: switch bucket + scroll to focused line item
+  useEffect(() => {
+    if (focusLineItemId == null || focusApplied.current) return;
+    const target = Number(focusLineItemId);
+    const keys: BucketKey[] = ['flagged', 'needs_review', 'ai_approved', 'already_reviewed'];
+    for (const key of keys) {
+      const found = localBuckets[key].items.find(
+        (i: ReviewItem) => i.line_item_id === target || String(i.line_item_id) === String(focusLineItemId),
+      );
+      if (found) {
+        setActiveBucket(key);
+        focusApplied.current = true;
+        requestAnimationFrame(() => {
+          focusRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
+        break;
+      }
+    }
+  }, [focusLineItemId, localBuckets]);
 
   const handleRescore = useCallback(async () => {
     setIsRescoring(true);
     try {
       await apiPost(`/panel/rescore-forecasts/${version.id}`, {});
+      toast.success('Rescore complete');
       onRefresh?.();
-    } catch (error) {
-      console.error('Rescore failed:', error);
+    } catch (error: any) {
+      toast.error(error?.message || 'Rescore failed');
     } finally {
       setIsRescoring(false);
     }
   }, [version.id, onRefresh]);
 
+  const moveItemsToReviewed = useCallback((itemIds: string[], action: string, comment?: string) => {
+    setLocalBuckets((prev) => {
+      const updated = { ...prev };
+      const moved: ReviewItem[] = [];
+      for (const key of ['flagged', 'needs_review', 'ai_approved'] as BucketKey[]) {
+        const bucket = { ...updated[key], items: [...updated[key].items] };
+        for (const id of itemIds) {
+          const idx = bucket.items.findIndex((i: ReviewItem) => i.id === id);
+          if (idx >= 0) {
+            const [item] = bucket.items.splice(idx, 1);
+            item.review_status = action === 'approve' ? 'approved' : 'rejected';
+            item.review_comment = comment || null;
+            moved.push(item);
+          }
+        }
+        bucket.total = bucket.items.length;
+        updated[key] = bucket;
+      }
+      if (moved.length) {
+        updated.already_reviewed = {
+          ...updated.already_reviewed,
+          items: [...moved, ...updated.already_reviewed.items],
+          total: updated.already_reviewed.total + moved.length,
+        };
+      }
+      return updated;
+    });
+  }, []);
+
   const handleItemAction = useCallback(async (itemId: string, action: string, comment?: string) => {
     setActioningItem(itemId);
     try {
       await apiPost('/panel/review-item', { item_id: itemId, action, comment });
-
-      setLocalBuckets((prev) => {
-        const updated = { ...prev };
-        for (const key of ['flagged', 'needs_review', 'ai_approved'] as BucketKey[]) {
-          const bucket = updated[key];
-          const idx = bucket.items.findIndex((i: ReviewItem) => i.id === itemId);
-          if (idx >= 0) {
-            const [item] = bucket.items.splice(idx, 1);
-            bucket.total -= 1;
-            item.review_status = action === 'approve' ? 'approved' : 'rejected';
-            item.review_comment = comment || null;
-            updated.already_reviewed = {
-              ...updated.already_reviewed,
-              items: [item, ...updated.already_reviewed.items],
-              total: updated.already_reviewed.total + 1,
-            };
-            break;
-          }
-        }
-        return { ...updated };
-      });
-    } catch (error) {
-      console.error('Review action failed:', error);
+      moveItemsToReviewed([itemId], action, comment);
+      toast.success(action === 'approve' ? 'Item approved' : 'Item rejected');
+    } catch (error: any) {
+      toast.error(error?.message || 'Review action failed');
     } finally {
       setActioningItem(null);
     }
-  }, []);
+  }, [moveItemsToReviewed]);
 
   const handleAcceptAll = useCallback(async () => {
     setIsAcceptingAll(true);
@@ -901,12 +1085,87 @@ export function ReviewDashboardPanel({ data, onRefresh }: Props) {
           },
         };
       });
-    } catch (error) {
-      console.error('Accept all failed:', error);
+      toast.success('Accepted all AI recommendations');
+    } catch (error: any) {
+      toast.error(error?.message || 'Accept all failed');
     } finally {
       setIsAcceptingAll(false);
     }
   }, [version.id]);
+
+  const selectableBucket = activeBucket === 'flagged' || activeBucket === 'needs_review';
+  const activeItems = localBuckets[activeBucket].items;
+
+  const displayItems = useMemo(() => {
+    let items = activeItems as ReviewItem[];
+    if (filterExog === 'with_exog') {
+      items = items.filter((i) => Boolean(i.exog_used));
+    } else if (filterExog === 'with_scores') {
+      items = items.filter((i) => exogGapForItem(i) != null);
+    }
+    if (sortBy === 'exog_gap_desc') {
+      return [...items].sort(
+        (a, b) => Math.abs(exogGapForItem(b) ?? -1) - Math.abs(exogGapForItem(a) ?? -1),
+      );
+    }
+    if (sortBy === 'risk_desc') {
+      return [...items].sort((a, b) => b.ai_risk_score - a.ai_risk_score);
+    }
+    return items;
+  }, [activeItems, filterExog, sortBy]);
+
+  const exogFilterActive = filterExog !== 'all' || sortBy !== 'default';
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === displayItems.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(displayItems.map((i: ReviewItem) => i.id)));
+    }
+  };
+
+  const handleBatch = async (action: 'approve' | 'reject') => {
+    if (action === 'reject' && !batchComment.trim()) {
+      toast.error('Comment required when rejecting');
+      return;
+    }
+    const ids = Array.from(selectedIds);
+    if (!ids.length) return;
+    setBatchBusy(true);
+    try {
+      await batchReview(version.id, ids, action, batchComment.trim() || undefined);
+      moveItemsToReviewed(ids, action, batchComment.trim() || undefined);
+      setSelectedIds(new Set());
+      setBatchRejecting(false);
+      setBatchComment('');
+      toast.success(`${action === 'approve' ? 'Approved' : 'Rejected'} ${ids.length} item(s)`);
+    } catch (e: any) {
+      toast.error(e?.message || 'Batch review failed');
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
+  const allReviewed =
+    localBuckets.flagged.total === 0 &&
+    localBuckets.needs_review.total === 0 &&
+    localBuckets.ai_approved.total === 0;
+
+  const statusBadge =
+    version.status === 'draft'
+      ? 'bg-blue-500/10 border-blue-500/20 text-blue-400'
+      : version.status === 'in_review'
+      ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+      : 'bg-deloitte-green/10 border-deloitte-green/20 text-deloitte-green';
 
   const bucketConfig: { key: BucketKey; label: string; icon: any; color: string; bg: string }[] = [
     { key: 'flagged', label: 'Flagged', icon: XCircle, color: 'text-red-400', bg: 'bg-red-500/10 border-red-500/20' },
@@ -916,22 +1175,82 @@ export function ReviewDashboardPanel({ data, onRefresh }: Props) {
   ];
 
   const activeBucketData = localBuckets[activeBucket];
+  const focusIdNum = focusLineItemId != null ? Number(focusLineItemId) : null;
+
+  const reviewExportColumns = [
+    { key: 'line_item_name', label: 'Line Item' },
+    { key: 'category', label: 'Category' },
+    { key: 'business_unit', label: 'Business Unit' },
+    { key: 'avg_confidence', label: 'Confidence' },
+    { key: 'ai_recommendation', label: 'Recommendation' },
+    { key: 'review_status', label: 'Review Status' },
+    { key: 'ai_risk_score', label: 'Risk Score' },
+    { key: 'model_type', label: 'Model' },
+    { key: 'materiality', label: 'Materiality' },
+    { key: 'root_cause', label: 'Root Cause' },
+  ];
+
+  const handleExportBucket = () => {
+    downloadCsv(
+      `review_${activeBucket}_${version?.name || 'export'}`,
+      reviewExportColumns,
+      displayItems.map((item: ReviewItem) => ({
+        line_item_name: item.line_item_name,
+        category: item.category,
+        business_unit: item.business_unit || '',
+        avg_confidence: item.avg_confidence,
+        ai_recommendation: item.ai_recommendation,
+        review_status: item.review_status || '',
+        ai_risk_score: item.ai_risk_score,
+        model_type: item.model_type || '',
+        materiality: item.materiality || '',
+        root_cause: item.root_cause || '',
+      })) as Record<string, unknown>[],
+    );
+  };
 
   return (
     <div className="space-y-3">
       {/* AI Analysis Banner */}
       <div className="flex items-center gap-2 px-3 py-2 bg-deloitte-green/8 border border-deloitte-green/20 rounded-xl">
         <Bot className="w-4 h-4 text-deloitte-green flex-shrink-0" />
-        <div className="flex-1">
-          <span className="text-xs font-semibold text-deloitte-green">AI Review Complete</span>
-          <p className="text-[10px] text-surface-400">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-deloitte-green">AI Review Complete</span>
+            <button
+              type="button"
+              onClick={() => openPanel('approvals', { version_id: version.id })}
+              className={`px-1.5 py-0.5 text-xs font-medium rounded border ${statusBadge}`}
+              title="Open approvals"
+            >
+              {version.status}
+            </button>
+          </div>
+          <p className="text-xs text-surface-400">
             Analyzed {summary.total_line_items} line items —{' '}
             <span className="text-deloitte-green font-medium">{localBuckets.ai_approved.total} auto-approvable</span>,{' '}
             <span className="text-amber-400 font-medium">{localBuckets.needs_review.total} need review</span>,{' '}
             <span className="text-red-400 font-medium">{localBuckets.flagged.total} flagged</span>
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            type="button"
+            onClick={() => openPanel('approvals', { version_id: version.id })}
+            className="flex items-center gap-1 px-2 py-1.5 bg-surface-700/60 border border-surface-600/50 text-surface-300 text-xs font-medium rounded-lg hover:bg-surface-700 transition-colors whitespace-nowrap"
+          >
+            <Shield className="w-3 h-3" />
+            Approvals
+          </button>
+          {version.status === 'draft' && allReviewed && canGenerate && (
+            <button
+              type="button"
+              onClick={() => openPanel('approvals', { version_id: version.id })}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-deloitte-green text-white text-xs font-semibold rounded-lg hover:bg-deloitte-green/90 transition-colors whitespace-nowrap"
+            >
+              Submit for approval
+            </button>
+          )}
           <button
             onClick={handleRescore}
             disabled={isRescoring}
@@ -941,11 +1260,22 @@ export function ReviewDashboardPanel({ data, onRefresh }: Props) {
             {isRescoring ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
             Rescore
           </button>
+          {activeItems.length > 0 && (
+            <button
+              type="button"
+              onClick={handleExportBucket}
+              className="inline-flex items-center gap-1.5 text-xs text-surface-300 hover:text-white px-2 py-1 rounded-md border border-surface-600 hover:border-deloitte-green/40 whitespace-nowrap"
+              title="Export active bucket CSV"
+            >
+              <Download className="w-3.5 h-3.5" />
+              CSV
+            </button>
+          )}
           {localBuckets.ai_approved.total > 0 && (
             <button
               onClick={handleAcceptAll}
               disabled={isAcceptingAll}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-deloitte-green text-black text-xs font-semibold rounded-lg hover:bg-deloitte-green/90 disabled:opacity-50 transition-colors whitespace-nowrap"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-deloitte-green text-white text-xs font-semibold rounded-lg hover:bg-deloitte-green/90 disabled:opacity-50 transition-colors whitespace-nowrap"
             >
               {isAcceptingAll ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
               Accept All AI ({localBuckets.ai_approved.total})
@@ -962,14 +1292,20 @@ export function ReviewDashboardPanel({ data, onRefresh }: Props) {
         {bucketConfig.map(({ key, label, icon: Icon, color, bg }) => (
           <button
             key={key}
-            onClick={() => setActiveBucket(key)}
+            onClick={() => {
+              setActiveBucket(key);
+              setSelectedIds(new Set());
+              setBatchRejecting(false);
+              setFilterExog('all');
+              setSortBy('default');
+            }}
             className={`p-2 border rounded-xl text-center transition-all ${bg} ${
               activeBucket === key ? 'ring-1 ring-white/20 scale-[1.02]' : 'opacity-70 hover:opacity-100'
             }`}
           >
             <Icon className={`w-3.5 h-3.5 mx-auto mb-0.5 ${color}`} />
             <div className={`text-base font-bold ${color}`}>{localBuckets[key].total}</div>
-            <div className="text-[8px] text-surface-400 uppercase tracking-wider font-medium leading-tight">{label}</div>
+            <div className="text-xs text-surface-400 uppercase tracking-wider font-medium leading-tight">{label}</div>
           </button>
         ))}
       </div>
@@ -980,19 +1316,104 @@ export function ReviewDashboardPanel({ data, onRefresh }: Props) {
           <div className="flex items-center gap-2">
             <Sparkles className="w-3 h-3 text-deloitte-green" />
             <span className="text-xs font-semibold text-white">
-              {bucketConfig.find(b => b.key === activeBucket)?.label} ({activeBucketData.total})
+              {bucketConfig.find(b => b.key === activeBucket)?.label}{' '}
+              ({exogFilterActive ? `${displayItems.length} of ${activeBucketData.total}` : activeBucketData.total})
             </span>
+            {selectableBucket && displayItems.length > 0 && (
+              <button
+                type="button"
+                onClick={toggleSelectAll}
+                className="text-xs text-surface-400 hover:text-white ml-2"
+              >
+                {selectedIds.size === displayItems.length ? 'Deselect all' : 'Select all'}
+              </button>
+            )}
           </div>
           {activeBucket !== 'already_reviewed' && activeBucketData.items.length > 0 && (
-            <span className="text-[10px] text-surface-500 italic">
+            <span className="text-xs text-surface-500 italic">
               {activeBucketData.description}
             </span>
           )}
         </div>
 
-        {/* Column headers */}
         {activeBucketData.items.length > 0 && (
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-800/80 border-b border-surface-700/30 text-[9px] text-surface-500 uppercase tracking-wider font-semibold">
+          <div className="px-3 py-2 border-b border-surface-700/40 flex items-center gap-2 flex-wrap">
+            <Filter className="w-3.5 h-3.5 text-surface-500" />
+            <select
+              value={filterExog}
+              onChange={(e) => {
+                setFilterExog(e.target.value);
+                setSelectedIds(new Set());
+              }}
+              className="text-xs bg-surface-800 border border-surface-700 text-surface-300 rounded-lg px-2 py-1.5 focus:border-deloitte-green/50 focus:outline-none"
+            >
+              <option value="all">All Exog Modes</option>
+              <option value="with_exog">Exog Enabled</option>
+              <option value="with_scores">Exog Scores Available</option>
+            </select>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              className="text-xs bg-surface-800 border border-surface-700 text-surface-300 rounded-lg px-2 py-1.5 focus:border-deloitte-green/50 focus:outline-none"
+            >
+              <option value="default">Default Order</option>
+              <option value="risk_desc">Risk: High → Low</option>
+              <option value="exog_gap_desc">Exog Gap: Largest First</option>
+            </select>
+          </div>
+        )}
+
+        {selectableBucket && selectedIds.size > 0 && (
+          <div className="px-3 py-2 bg-surface-900/60 border-b border-surface-700/40 flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-surface-300">{selectedIds.size} selected</span>
+            {batchRejecting ? (
+              <>
+                <input
+                  type="text"
+                  value={batchComment}
+                  onChange={(e) => setBatchComment(e.target.value)}
+                  placeholder="Rejection reason..."
+                  className="flex-1 min-w-[140px] px-2 py-1 bg-surface-800 border border-surface-600 rounded text-xs text-white"
+                />
+                <button
+                  type="button"
+                  disabled={batchBusy || !batchComment.trim()}
+                  onClick={() => handleBatch('reject')}
+                  className="px-2 py-1 bg-red-500/20 text-red-400 rounded text-xs disabled:opacity-40"
+                >
+                  Reject {selectedIds.size}
+                </button>
+                <button type="button" onClick={() => setBatchRejecting(false)} className="text-xs text-surface-500">
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  disabled={batchBusy}
+                  onClick={() => handleBatch('approve')}
+                  className="px-2 py-1 bg-deloitte-green/20 text-deloitte-green rounded text-xs font-medium disabled:opacity-50"
+                >
+                  Approve {selectedIds.size}
+                </button>
+                <button
+                  type="button"
+                  disabled={batchBusy}
+                  onClick={() => setBatchRejecting(true)}
+                  className="px-2 py-1 bg-red-500/15 text-red-400 rounded text-xs disabled:opacity-50"
+                >
+                  Reject {selectedIds.size}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Column headers */}
+        {displayItems.length > 0 && (
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-800/80 border-b border-surface-700/30 text-xs text-surface-500 uppercase tracking-wider font-semibold">
+            {selectableBucket && <span className="w-4" />}
             <span className="w-4" />
             <span className="w-16">AI</span>
             <span className="flex-1">Line Item</span>
@@ -1004,19 +1425,33 @@ export function ReviewDashboardPanel({ data, onRefresh }: Props) {
         )}
 
         <div className="max-h-[320px] overflow-y-auto">
-          {activeBucketData.items.length > 0 ? (
-            activeBucketData.items.map((item: ReviewItem) => (
-              <ReviewItemRow
-                key={item.id}
-                item={item}
-                onAction={handleItemAction}
-                isActioning={actioningItem}
-              />
-            ))
+          {displayItems.length > 0 ? (
+            displayItems.map((item: ReviewItem) => {
+              const isFocus =
+                focusIdNum != null &&
+                (item.line_item_id === focusIdNum || String(item.line_item_id) === String(focusLineItemId));
+              return (
+                <ReviewItemRow
+                  key={item.id}
+                  item={item}
+                  onAction={handleItemAction}
+                  isActioning={actioningItem}
+                  selectable={selectableBucket}
+                  selected={selectedIds.has(item.id)}
+                  onToggleSelect={toggleSelect}
+                  autoExpand={isFocus}
+                  rowRef={isFocus ? (el) => { focusRowRef.current = el; } : undefined}
+                />
+              );
+            })
           ) : (
             <div className="py-8 text-center">
               <CheckCircle className="w-6 h-6 text-deloitte-green/40 mx-auto mb-2" />
-              <p className="text-xs text-surface-500">No items in this bucket</p>
+              <p className="text-xs text-surface-500">
+                {exogFilterActive && activeBucketData.items.length > 0
+                  ? 'No items match the exog filter'
+                  : 'No items in this bucket'}
+              </p>
             </div>
           )}
         </div>
@@ -1025,35 +1460,35 @@ export function ReviewDashboardPanel({ data, onRefresh }: Props) {
       {/* Charts row */}
       <div className="grid grid-cols-2 gap-3">
         <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl p-3">
-          <h4 className="text-[10px] font-semibold text-surface-400 uppercase tracking-wider mb-2">Confidence Trend</h4>
+          <h4 className="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-2">Confidence Trend</h4>
           {confidence_trend.length > 1 ? (
             <ResponsiveContainer width="100%" height={120}>
               <LineChart data={confidence_trend} margin={{ top: 5, right: 5, left: -15, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-                <XAxis dataKey="version" tick={{ fill: '#97999B', fontSize: 9 }} />
-                <YAxis tick={{ fill: '#97999B', fontSize: 9 }} domain={[0, 100]} />
+                <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+                <XAxis dataKey="version" tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} />
+                <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} domain={[0, 100]} />
                 <Tooltip content={<ChartTooltip />} />
                 <Line type="monotone" dataKey="avg_confidence" name="Avg Confidence" stroke={COLORS.green} strokeWidth={2} dot={{ r: 3 }} />
               </LineChart>
             </ResponsiveContainer>
           ) : (
-            <p className="text-surface-500 text-[10px] text-center py-4">More versions needed for trend</p>
+            <p className="text-surface-500 text-xs text-center py-4">More versions needed for trend</p>
           )}
         </div>
 
         <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl p-3">
-          <h4 className="text-[10px] font-semibold text-surface-400 uppercase tracking-wider mb-2">Issues by Category</h4>
+          <h4 className="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-2">Issues by Category</h4>
           {category_flag_chart.length > 0 ? (
             <ResponsiveContainer width="100%" height={120}>
               <BarChart data={category_flag_chart.slice(0, 6)} layout="vertical" margin={{ left: 60, right: 5, top: 5, bottom: 5 }}>
-                <XAxis type="number" tick={{ fill: '#97999B', fontSize: 9 }} />
-                <YAxis type="category" dataKey="category" tick={{ fill: '#97999B', fontSize: 9 }} width={55} />
+                <XAxis type="number" tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} />
+                <YAxis type="category" dataKey="category" tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} width={55} />
                 <Tooltip content={<ChartTooltip />} />
                 <Bar dataKey="count" name="Issues" fill={COLORS.red} radius={[0, 3, 3, 0]} />
               </BarChart>
             </ResponsiveContainer>
           ) : (
-            <p className="text-surface-500 text-[10px] text-center py-4">No flagged items</p>
+            <p className="text-surface-500 text-xs text-center py-4">No flagged items</p>
           )}
         </div>
       </div>

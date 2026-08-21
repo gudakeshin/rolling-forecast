@@ -3,10 +3,12 @@
 import logging
 from typing import Any
 
+import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.services.ingestion.csv_adapter import CSVActualsProvider
+from app.services.upsert import bulk_upsert
 from app.models.actuals import ActualsDataset, ActualsRecord
 from app.models.line_item import LineItem
 
@@ -74,25 +76,50 @@ class IngestActualsSkill(BaseSkill):
             )
 
         df = result.dataframe
+        if df is None:
+            # A provider reporting success with no frame would otherwise blow up
+            # on .groupby() further down with an opaque AttributeError.
+            return SkillResult.fail(
+                "Ingestion reported success but returned no data frame — "
+                "nothing to load."
+            )
 
-        # Create ActualsDataset record
-        dataset = ActualsDataset(
-            source_type=source_type,
-            source_name=file_path.split("/")[-1],
-            file_hash=result.file_hash,
-            row_count=result.row_count,
-            period_start=result.period_start,
-            period_end=result.period_end,
-            periods_count=result.periods_count,
-            missing_periods=",".join(result.missing_periods) if result.missing_periods else None,
-            completeness_pct=result.completeness_pct,
+        # Idempotent on file hash: re-ingest updates the same dataset in place
+        dataset = (
+            db.query(ActualsDataset)
+            .filter(ActualsDataset.file_hash == result.file_hash)
+            .first()
         )
-        db.add(dataset)
-        db.flush()  # Get ID
+        if dataset is None:
+            dataset = ActualsDataset(
+                source_type=source_type,
+                source_name=file_path.split("/")[-1],
+                file_hash=result.file_hash,
+                row_count=result.row_count,
+                period_start=result.period_start,
+                period_end=result.period_end,
+                periods_count=result.periods_count,
+                missing_periods=",".join(result.missing_periods) if result.missing_periods else None,
+                completeness_pct=result.completeness_pct,
+            )
+            db.add(dataset)
+            db.flush()
+        else:
+            dataset.source_type = source_type
+            dataset.source_name = file_path.split("/")[-1]
+            dataset.row_count = result.row_count
+            dataset.period_start = result.period_start
+            dataset.period_end = result.period_end
+            dataset.periods_count = result.periods_count
+            dataset.missing_periods = (
+                ",".join(result.missing_periods) if result.missing_periods else None
+            )
+            dataset.completeness_pct = result.completeness_pct
+            db.flush()
 
         # Create/update LineItems
         existing_items = {li.account_code: li for li in db.query(LineItem).all()}
-        line_item_map = {}  # account_code -> LineItem
+        line_item_map: dict[str, LineItem] = {}  # account_code -> LineItem
         new_items_count = 0
 
         accounts = df.groupby("account_code").first().reset_index()
@@ -115,22 +142,44 @@ class IngestActualsSkill(BaseSkill):
                 existing_items[code] = li
                 new_items_count += 1
 
-        # Store actuals records
-        records = []
+        # Upsert actuals records (dedupe within CSV + safe re-ingest)
+        by_key: dict[tuple[int, str], dict[str, Any]] = {}
         for _, row in df.iterrows():
             code = str(row["account_code"])
-            li = line_item_map.get(code)
-            if li:
-                records.append(ActualsRecord(
-                    dataset_id=dataset.id,
-                    line_item_id=li.id,
-                    period=str(row["period"]),
-                    value=float(row["value"]),
-                    currency=str(row.get("currency", "USD")),
-                ))
+            mapped_li = line_item_map.get(code)
+            if not mapped_li:
+                continue
+            period = str(row["period"])
+            by_key[(mapped_li.id, period)] = {
+                "dataset_id": dataset.id,
+                "line_item_id": mapped_li.id,
+                "period": period,
+                "value": float(row["value"]),
+                "currency": str(row.get("currency", "USD")),
+            }
 
-        db.bulk_save_objects(records)
+        bulk_upsert(
+            db,
+            ActualsRecord,
+            list(by_key.values()),
+            conflict_cols=("dataset_id", "line_item_id", "period"),
+            update_cols=("value", "currency"),
+        )
+        db.flush()
+
+        # Wire standard P&L CoA dependencies so override recalc works
+        from app.services.coa_dependencies import ensure_standard_dependencies
+
+        deps_created = ensure_standard_dependencies(db, list(line_item_map.values()))
         db.commit()
+
+        # Vintage accuracy: match new actuals against prior forecast versions
+        try:
+            from app.services.accuracy_snapshot import AccuracySnapshotService
+            AccuracySnapshotService(db).on_actuals_ingested(dataset.id)
+            db.commit()
+        except Exception as e:
+            logger.warning("Accuracy snapshot failed: %s", e)
 
         # Update working memory
         context.context_manager.set_memory("last_dataset_id", dataset.id)
@@ -159,6 +208,7 @@ class IngestActualsSkill(BaseSkill):
                     {"metric": "Business units", "value": str(bus)},
                     {"metric": "Categories", "value": ", ".join(categories[:5])},
                     {"metric": "Completeness", "value": f"{result.completeness_pct}%"},
+                    {"metric": "P&L dependencies", "value": str(deps_created)},
                     {"metric": "Data hash", "value": result.file_hash[:12] + "..."},
                 ],
             ),
@@ -186,10 +236,7 @@ class IngestActualsSkill(BaseSkill):
                 "period_start": result.period_start,
                 "period_end": result.period_end,
                 "file_hash": result.file_hash,
+                "dependencies_created": deps_created,
             },
             content_blocks=content_blocks,
         )
-
-
-# Need this import for pd.notna
-import pandas as pd

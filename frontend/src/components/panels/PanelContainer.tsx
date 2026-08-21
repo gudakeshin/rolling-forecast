@@ -1,10 +1,14 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  X, Loader2, Table, GitCompare, Edit, ClipboardList, Settings2,
+  Loader2, Table, GitCompare, Edit, ClipboardList, Settings2,
   LayoutDashboard, Shield, Target, FileInput, AlertTriangle, FolderOpen,
+  CheckSquare, Activity, Sparkles, GitBranch, Brain,
 } from 'lucide-react';
 import { usePanelStore } from '../../store/panelStore';
+import { toast } from '../../store/toastStore';
 import { apiGet } from '../../api/client';
+import { useI18n } from '../../i18n/useI18n';
+import { SlidePanel } from '../ui/SlidePanel';
 import { ForecastTablePanel } from './ForecastTablePanel';
 import { OverridesPanel } from './OverridesPanel';
 import { ComparisonPanel } from './ComparisonPanel';
@@ -15,6 +19,12 @@ import { AccuracyTrackingPanel } from './AccuracyTrackingPanel';
 import { DriverInputPanel } from './DriverInputPanel';
 import { AnomalyPanel } from './AnomalyPanel';
 import { DocumentLibraryPanel } from './DocumentLibraryPanel';
+import { ApprovalsPanel } from './ApprovalsPanel';
+import { DriversPanel } from './DriversPanel';
+import { ExplainabilityPanel } from './ExplainabilityPanel';
+import { WhatIfPanel } from './WhatIfPanel';
+import { HeuristicsPanel } from './HeuristicsPanel';
+import { AdminConsolePanel } from './AdminConsolePanel';
 
 const panelIcons: Record<string, any> = {
   forecast_table: Table,
@@ -26,31 +36,81 @@ const panelIcons: Record<string, any> = {
   review_dashboard: Shield,
   accuracy_tracking: Target,
   driver_inputs: FileInput,
+  drivers: Activity,
+  explainability: Sparkles,
+  what_if: GitBranch,
+  heuristics: Brain,
   anomaly_dashboard: AlertTriangle,
   document_library: FolderOpen,
+  approvals: CheckSquare,
+  admin_console: Shield,
 };
 
 export function PanelContainer() {
-  const { panelType, panelParams, panelData, isLoading, closePanel, setPanelData, setLoading } =
-    usePanelStore();
+  const { t } = useI18n();
+  const {
+    panelType,
+    panelParams,
+    panelData,
+    isLoading,
+    closePanel,
+    setPanelData,
+    setLoading,
+    widthMode,
+    toggleWidth,
+    refreshPanel,
+  } = usePanelStore();
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!panelType || !panelParams) return;
 
-    // Skill editor doesn't need API data fetch — it handles its own data
-    if (panelType === 'skill_editor') {
-      setPanelData({ panel_type: 'skill_editor', title: 'Skill Editor', data: {} });
+    if (
+      panelType === 'skill_editor'
+      || panelType === 'approvals'
+      || panelType === 'drivers'
+      || panelType === 'explainability'
+      || panelType === 'what_if'
+      || panelType === 'heuristics'
+      || panelType === 'admin_console'
+    ) {
+      const titles: Record<string, string> = {
+        skill_editor: 'Skill Editor',
+        approvals: 'Approvals',
+        drivers: t('panel.drivers'),
+        explainability: t('panel.explainability'),
+        what_if: t('panel.whatIf'),
+        heuristics: t('panel.heuristics'),
+        admin_console: 'Admin Console',
+      };
+      setPanelData({
+        panel_type: panelType,
+        title: titles[panelType] || panelType,
+        data: {},
+      });
       return;
     }
 
+    const controller = new AbortController();
+    const append = Boolean(panelParams._append);
+    const offset = Number(panelParams.offset || 0);
+
     const fetchData = async () => {
-      setLoading(true);
+      if (!append) setLoading(true);
+      setLoadError(null);
       try {
         let url = '';
         switch (panelType) {
-          case 'forecast_table':
-            url = `/panel/forecast-table/${panelParams.version_id}`;
+          case 'forecast_table': {
+            const qs = new URLSearchParams();
+            if (panelParams.view) qs.set('view', String(panelParams.view));
+            if (panelParams.category) qs.set('category', String(panelParams.category));
+            if (panelParams.confidence_level) qs.set('confidence_level', String(panelParams.confidence_level));
+            qs.set('offset', String(offset));
+            if (panelParams.limit) qs.set('limit', String(panelParams.limit));
+            url = `/panel/forecast-table/${panelParams.version_id}?${qs.toString()}`;
             break;
+          }
           case 'review_queue':
             url = `/panel/review-queue/${panelParams.version_id}`;
             break;
@@ -82,93 +142,206 @@ export function PanelContainer() {
             setLoading(false);
             return;
         }
-        const data = await apiGet(url);
-        setPanelData(data as any);
-      } catch (error) {
+        const data = await apiGet<any>(url, { signal: controller.signal });
+        if (append && panelType === 'forecast_table') {
+          const current = usePanelStore.getState().panelData;
+          const prevRows = (current?.data?.rows as unknown[]) || [];
+          const newRows = data?.data?.rows || [];
+          setPanelData({
+            ...data,
+            data: {
+              ...data.data,
+              rows: [...prevRows, ...newRows],
+            },
+          });
+        } else {
+          setPanelData(data);
+        }
+      } catch (error: any) {
+        if (error?.name === 'AbortError' || controller.signal.aborted) return;
         console.error('Failed to load panel data:', error);
-        setLoading(false);
+        if (!append) {
+          const message = error?.message || 'Failed to load panel data';
+          setPanelData(null);
+          setLoadError(message);
+          toast.error(message);
+        }
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
       }
     };
     fetchData();
-  }, [panelType, panelParams]);
+    return () => controller.abort();
+    // `t` is intentionally omitted: useI18n() returns a new function identity
+    // every render, so including it here re-runs the fetch (and setPanelData)
+    // on every render — an infinite update loop. Locale-driven titles inside
+    // this effect only need the current translation at fetch time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panelType, panelParams, setLoading, setPanelData]);
 
   const Icon = panelIcons[panelType || ''] || Table;
 
-  // Skill editor gets a full-height, no-header treatment
   if (panelType === 'skill_editor') {
     return (
-      <div className="h-full flex flex-col">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-surface-700/50 bg-surface-800">
-          <div className="flex items-center gap-2">
-            <div className="w-0.5 h-4 bg-deloitte-green rounded-full" />
-            <Settings2 className="w-4 h-4 text-deloitte-green" />
-            <h3 className="text-sm font-semibold text-white">Skill Editor</h3>
-          </div>
-          <button
-            onClick={closePanel}
-            className="p-1.5 hover:bg-surface-700 rounded-lg transition-colors text-surface-400 hover:text-white"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-        <div className="flex-1 overflow-hidden">
+      <SlidePanel
+        title="Skill Editor"
+        icon={<Settings2 className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
+        onClose={closePanel}
+        widthExpanded={widthMode === 'wide'}
+        onToggleWidth={toggleWidth}
+      >
+        <div className="-m-4 h-[calc(100%+2rem)] overflow-hidden">
           <SkillEditorPanel />
         </div>
-      </div>
+      </SlidePanel>
+    );
+  }
+
+  if (panelType === 'approvals') {
+    return (
+      <SlidePanel
+        title="Approvals"
+        icon={<CheckSquare className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
+        onClose={closePanel}
+        widthExpanded={widthMode === 'wide'}
+        onToggleWidth={toggleWidth}
+      >
+        <ApprovalsPanel />
+      </SlidePanel>
+    );
+  }
+
+  if (panelType === 'drivers') {
+    return (
+      <SlidePanel
+        title={t('panel.drivers')}
+        icon={<Activity className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
+        onClose={closePanel}
+        widthExpanded={widthMode === 'wide'}
+        onToggleWidth={toggleWidth}
+      >
+        <DriversPanel />
+      </SlidePanel>
+    );
+  }
+
+  if (panelType === 'explainability') {
+    return (
+      <SlidePanel
+        title={t('panel.explainability')}
+        icon={<Sparkles className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
+        onClose={closePanel}
+        widthExpanded={widthMode === 'wide'}
+        onToggleWidth={toggleWidth}
+      >
+        <ExplainabilityPanel />
+      </SlidePanel>
+    );
+  }
+
+  if (panelType === 'what_if') {
+    return (
+      <SlidePanel
+        title={t('panel.whatIf')}
+        icon={<GitBranch className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
+        onClose={closePanel}
+        widthExpanded={widthMode === 'wide'}
+        onToggleWidth={toggleWidth}
+      >
+        <WhatIfPanel />
+      </SlidePanel>
+    );
+  }
+
+  if (panelType === 'heuristics') {
+    return (
+      <SlidePanel
+        title={t('panel.heuristics')}
+        icon={<Brain className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
+        onClose={closePanel}
+        widthExpanded={widthMode === 'wide'}
+        onToggleWidth={toggleWidth}
+      >
+        <HeuristicsPanel />
+      </SlidePanel>
+    );
+  }
+
+  if (panelType === 'admin_console') {
+    return (
+      <SlidePanel
+        title="Admin Console"
+        icon={<Shield className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
+        onClose={closePanel}
+        widthExpanded={widthMode === 'wide'}
+        onToggleWidth={toggleWidth}
+      >
+        <AdminConsolePanel />
+      </SlidePanel>
     );
   }
 
   return (
-    <div className="h-full flex flex-col">
-      {/* Panel header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-surface-700/50 bg-surface-800">
-        <div className="flex items-center gap-2">
-          <div className="w-0.5 h-4 bg-deloitte-green rounded-full" />
-          <Icon className="w-4 h-4 text-deloitte-green" />
-          <h3 className="text-sm font-semibold text-white">
-            {panelData?.title || panelType?.replace(/_/g, ' ') || 'Details'}
-          </h3>
+    <SlidePanel
+      title={panelData?.title || panelType?.replace(/_/g, ' ') || 'Details'}
+      icon={<Icon className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
+      onClose={closePanel}
+      widthExpanded={widthMode === 'wide'}
+      onToggleWidth={toggleWidth}
+    >
+      {isLoading ? (
+        <div className="flex flex-col items-center justify-center h-32 gap-2">
+          <Loader2 className="w-6 h-6 animate-spin text-deloitte-green" />
+          <span className="text-xs text-surface-500">Loading data...</span>
         </div>
-        <button
-          onClick={closePanel}
-          className="p-1.5 hover:bg-surface-700 rounded-lg transition-colors text-surface-400 hover:text-white"
-        >
-          <X className="w-4 h-4" />
-        </button>
-      </div>
-
-      {/* Panel content */}
-      <div className="flex-1 overflow-y-auto p-4">
-        {isLoading ? (
-          <div className="flex flex-col items-center justify-center h-32 gap-2">
-            <Loader2 className="w-6 h-6 animate-spin text-deloitte-green" />
-            <span className="text-xs text-surface-500">Loading data...</span>
-          </div>
-        ) : panelData ? (
-          <PanelContent type={panelType} data={panelData} />
-        ) : (
-          <p className="text-surface-500 text-sm text-center">No data available</p>
-        )}
-      </div>
-    </div>
+      ) : loadError ? (
+        <div className="flex flex-col items-center justify-center h-32 gap-2 text-center px-4">
+          <AlertTriangle className="w-6 h-6 text-amber-400" />
+          <p className="text-sm text-amber-300">{loadError}</p>
+          <p className="text-xs text-surface-500">
+            Ensure the forecast version exists and required upstream steps have completed.
+          </p>
+        </div>
+      ) : panelData ? (
+        <PanelContent type={panelType} data={panelData} onRefresh={refreshPanel} />
+      ) : (
+        <p className="text-surface-500 text-sm text-center">No data available</p>
+      )}
+    </SlidePanel>
   );
 }
 
-function PanelContent({ type, data }: { type: string | null; data: any }) {
+function PanelContent({
+  type,
+  data,
+  onRefresh,
+}: {
+  type: string | null;
+  data: any;
+  onRefresh: () => void;
+}) {
+  const focusLineItemId = usePanelStore((s) => s.panelParams.focus_line_item_id);
+
   switch (type) {
     case 'forecast_table':
     case 'review_queue':
-      return <ForecastTablePanel data={data} />;
+      return <ForecastTablePanel data={data} onRefresh={onRefresh} />;
     case 'overrides':
-      return <OverridesPanel data={data} />;
+      return <OverridesPanel data={data} onRefresh={onRefresh} />;
     case 'comparison':
       return <ComparisonPanel data={data} />;
     case 'executive_dashboard':
-      return <ExecutiveDashboardPanel data={data} />;
+      return <ExecutiveDashboardPanel data={data} onRefresh={onRefresh} />;
     case 'review_dashboard':
-      return <ReviewDashboardPanel data={data} />;
+      return (
+        <ReviewDashboardPanel
+          data={data}
+          onRefresh={onRefresh}
+          focusLineItemId={focusLineItemId}
+        />
+      );
     case 'accuracy_tracking':
-      return <AccuracyTrackingPanel data={data} />;
+      return <AccuracyTrackingPanel data={data} onRefresh={onRefresh} />;
     case 'driver_inputs':
       return <DriverInputPanel data={data} />;
     case 'anomaly_dashboard':

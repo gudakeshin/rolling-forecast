@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 """Override model -- tracks human overrides to forecast values."""
 
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, Float, ForeignKey, Text
+from sqlalchemy import String, DateTime, Float, ForeignKey, Text, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -11,6 +13,7 @@ class Override(Base):
     """A human override of a model-generated forecast value."""
 
     __tablename__ = "overrides"
+    __table_args__ = (Index("ix_overrides_version_id", "version_id"),)
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())
@@ -21,7 +24,7 @@ class Override(Base):
     line_item_id: Mapped[int] = mapped_column(
         ForeignKey("line_items.id"), nullable=False
     )
-    period: Mapped[str] = mapped_column(String(7), nullable=False)
+    period: Mapped[str] = mapped_column(String(16), nullable=False)
 
     # Values
     original_model_value: Mapped[float] = mapped_column(Float, nullable=False)

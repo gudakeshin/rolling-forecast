@@ -1,8 +1,19 @@
+from __future__ import annotations
+
 """Actuals data models -- datasets and individual records."""
 
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, Float, Integer, ForeignKey, Text
+from sqlalchemy import (
+    String,
+    DateTime,
+    Float,
+    Integer,
+    ForeignKey,
+    Text,
+    UniqueConstraint,
+    Index,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -26,9 +37,9 @@ class ActualsDataset(Base):
     )  # SHA-256 of source data
     row_count: Mapped[int] = mapped_column(Integer, default=0)
     period_start: Mapped[str] = mapped_column(
-        String(7), nullable=False
-    )  # "2023-01" format
-    period_end: Mapped[str] = mapped_column(String(7), nullable=False)
+        String(16), nullable=False
+    )  # "2023-01" or FY2026-P01
+    period_end: Mapped[str] = mapped_column(String(16), nullable=False)
     periods_count: Mapped[int] = mapped_column(Integer, default=0)
     missing_periods: Mapped[str | None] = mapped_column(
         Text, nullable=True
@@ -51,6 +62,15 @@ class ActualsRecord(Base):
     """Individual GL-level actual value for a line item in a period."""
 
     __tablename__ = "actuals_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "dataset_id",
+            "line_item_id",
+            "period",
+            name="uq_actuals_dataset_line_period",
+        ),
+        Index("ix_actuals_line_item_period", "line_item_id", "period"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     dataset_id: Mapped[str] = mapped_column(
@@ -60,8 +80,8 @@ class ActualsRecord(Base):
         ForeignKey("line_items.id"), nullable=False
     )
     period: Mapped[str] = mapped_column(
-        String(7), nullable=False
-    )  # "2024-03" format
+        String(16), nullable=False
+    )  # "2024-03" or FY2026-P01
     value: Mapped[float] = mapped_column(Float, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), default="USD")
 

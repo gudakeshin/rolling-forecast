@@ -5,11 +5,14 @@ import pytest
 import asyncio
 from datetime import datetime, timezone
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
 # Override database before importing app modules
-os.environ["DATABASE_URL"] = "sqlite:///./test_rolling_forecast.db"
+os.environ.setdefault("DATABASE_URL", "sqlite:///./test_app.db")
+os.environ.setdefault("APP_ENV", "test")
+os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-ci-at-least-32-chars")
+os.environ.setdefault("SEED_DEMO_USERS", "true")
 
 from app.database import Base
 from app.models.user import Role, User
@@ -21,7 +24,42 @@ from app.domain.base_skill import SkillContext
 from passlib.context import CryptContext
 
 
-TEST_DB_URL = "sqlite:///./test_rolling_forecast.db"
+# Unit-test DB is isolated from the app's test_app.db used by TestClient
+UNIT_DB_URL = "sqlite:///:memory:"
+
+
+def ensure_app_db_schema_columns() -> None:
+    """Persistent test_app.db may predate new columns; create_all won't ALTER."""
+    from app.database import engine
+
+    try:
+        flr_cols = {c["name"] for c in inspect(engine).get_columns("forecast_line_results")}
+    except Exception:
+        return
+    with engine.begin() as conn:
+        if "pre_reconcile_p50" not in flr_cols:
+            conn.execute(text("ALTER TABLE forecast_line_results ADD COLUMN pre_reconcile_p50 FLOAT"))
+        if "selection_rule" not in {
+            c["name"] for c in inspect(engine).get_columns("forecast_versions")
+        }:
+            conn.execute(text("ALTER TABLE forecast_versions ADD COLUMN selection_rule VARCHAR(64)"))
+        if "model_mase" not in flr_cols:
+            conn.execute(text("ALTER TABLE forecast_line_results ADD COLUMN model_mase FLOAT"))
+        if "model_pinball" not in flr_cols:
+            conn.execute(text("ALTER TABLE forecast_line_results ADD COLUMN model_pinball FLOAT"))
+        if "is_target_bearing" not in {
+            c["name"] for c in inspect(engine).get_columns("line_items")
+        }:
+            conn.execute(
+                text("ALTER TABLE line_items ADD COLUMN is_target_bearing BOOLEAN DEFAULT 1")
+            )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _patch_persistent_app_db_schema():
+    """Keep TestClient's sqlite file compatible with current ORM columns."""
+    ensure_app_db_schema_columns()
+    yield
 
 
 @pytest.fixture(scope="session")
@@ -34,15 +72,19 @@ def event_loop():
 
 @pytest.fixture(scope="function")
 def db_engine():
-    """Create a fresh test database for each test."""
-    engine = create_engine(TEST_DB_URL, echo=False)
+    """In-memory DB for unit tests — never touches the app TestClient database file."""
+    from sqlalchemy.pool import StaticPool
+
+    engine = create_engine(
+        UNIT_DB_URL,
+        echo=False,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(engine)
     yield engine
     Base.metadata.drop_all(engine)
     engine.dispose()
-    # Clean up test db file
-    if os.path.exists("test_rolling_forecast.db"):
-        os.remove("test_rolling_forecast.db")
 
 
 @pytest.fixture(scope="function")
@@ -57,40 +99,56 @@ def db_session(db_engine):
 
 @pytest.fixture
 def seed_roles(db_session):
-    """Seed default roles."""
-    roles = [
-        Role(name="admin", description="Admin", can_input=True, can_generate=True,
-             can_override=True, can_review=True, can_publish=True, can_admin=True),
-        Role(name="analyst", description="Analyst", can_input=True, can_generate=True,
-             can_override=True, can_review=False, can_publish=False, can_admin=False),
+    """Seed default roles (idempotent — lifespan may have already created them)."""
+    specs = [
+        dict(name="admin", description="Admin", can_input=True, can_generate=True,
+             can_override=True, can_review=True, can_publish=True, can_admin=True,
+             can_view_all_bus=True, can_manage_drivers=True),
+        dict(name="analyst", description="Analyst", can_input=True, can_generate=True,
+             can_override=True, can_review=False, can_publish=False, can_admin=False,
+             can_view_all_bus=False, can_manage_drivers=True),
     ]
-    for r in roles:
-        db_session.add(r)
+    out = {}
+    for spec in specs:
+        existing = db_session.query(Role).filter(Role.name == spec["name"]).first()
+        if existing:
+            for k, v in spec.items():
+                if k != "name" and hasattr(existing, k):
+                    setattr(existing, k, v)
+            out[spec["name"]] = existing
+        else:
+            role = Role(**spec)
+            db_session.add(role)
+            out[spec["name"]] = role
     db_session.commit()
-    return {r.name: r for r in roles}
+    return out
 
 
 @pytest.fixture
 def seed_users(db_session, seed_roles):
-    """Seed test users."""
+    """Seed test users (idempotent)."""
     pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-    admin = User(
-        email="admin@test.local",
-        username="admin",
-        hashed_password=pwd_ctx.hash("admin"),
-        full_name="Test Admin",
-        role_id=seed_roles["admin"].id,
+    def _user(username, email, role_key, **extra):
+        existing = db_session.query(User).filter(User.username == username).first()
+        if existing:
+            return existing
+        u = User(
+            email=email,
+            username=username,
+            hashed_password=pwd_ctx.hash(username),
+            full_name=extra.pop("full_name", username),
+            role_id=seed_roles[role_key].id,
+            **extra,
+        )
+        db_session.add(u)
+        return u
+
+    admin = _user("admin", "admin@test.local", "admin", full_name="Test Admin")
+    analyst = _user(
+        "analyst", "analyst@test.local", "analyst",
+        full_name="Test Analyst", business_unit="North America",
     )
-    analyst = User(
-        email="analyst@test.local",
-        username="analyst",
-        hashed_password=pwd_ctx.hash("analyst"),
-        full_name="Test Analyst",
-        business_unit="North America",
-        role_id=seed_roles["analyst"].id,
-    )
-    db_session.add_all([admin, analyst])
     db_session.commit()
     return {"admin": admin, "analyst": analyst}
 
@@ -181,8 +239,11 @@ def seed_actuals(db_session, seed_line_items):
 class MockContextManager:
     """Lightweight context manager for testing without a full Conversation model."""
 
-    def __init__(self):
+    def __init__(self, permissions: set[str] | None = None):
         self._memory: dict = {}
+        # None = allow all (legacy default). Pass an explicit set to enforce RBAC in tests.
+        self.permissions = permissions
+        self.user = None
 
     def get_memory(self, key, default=None):
         return self._memory.get(key, default)
@@ -197,7 +258,9 @@ class MockContextManager:
         self.set_memory("active_version_id", version_id)
 
     def has_permission(self, permission):
-        return True  # Allow all permissions in tests
+        if self.permissions is None:
+            return True
+        return permission in self.permissions
 
 
 @pytest.fixture
@@ -208,11 +271,15 @@ def context_manager():
 
 @pytest.fixture
 def skill_context(db_session, seed_users, context_manager):
-    """Create a SkillContext for testing skills."""
+    """Create a SkillContext for testing skills (analyst — no review permission)."""
+    analyst = seed_users["analyst"]
+    context_manager.user = analyst
+    context_manager.permissions = {"input", "generate", "override"}
     return SkillContext(
         db=db_session,
         context_manager=context_manager,
-        user_id=seed_users["analyst"].id,
+        user_id=analyst.id,
         user_role="analyst",
         conversation_id="test-conversation-001",
+        user=analyst,
     )

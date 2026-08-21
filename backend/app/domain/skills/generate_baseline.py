@@ -18,19 +18,25 @@ import logging
 from typing import Any
 from datetime import datetime, timezone
 
-import numpy as np
 import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
-from app.domain.engines.model_registry import get_model_registry
+from app.domain.engines.model_registry import (
+    effective_selection_rule,
+    get_model_registry,
+    reset_model_registry,
+)
 from app.models.actuals import ActualsDataset, ActualsRecord
 from app.models.line_item import LineItem
 from app.models.forecast import ForecastVersion, ForecastLineResult, ModelMetadata
 from app.config import settings
+from app.services.confidence import (
+    MODEL_BASE_SCORES as _MODEL_BASE_SCORES,
+    compute_confidence_score as _compute_confidence_score,
+    classify_confidence as _classify_confidence,
+)
 from app.services.error_handlers import (
-    HistoryAnalysis,
-    clamp_forecast_values,
     check_generation_timeout,
     ForecastTimeoutError,
 )
@@ -38,66 +44,13 @@ from app.services.error_handlers import (
 logger = logging.getLogger(__name__)
 
 
+# Re-export for any lingering importers; prefer app.services.confidence.
+__all__ = ["GenerateBaselineSkill", "_compute_confidence_score", "_classify_confidence", "_MODEL_BASE_SCORES"]
+
+
 # ──────────────────────────────────────────────────────
-# Inline confidence scoring & remediation logic
+# Remediation / recommendation helpers (scoring in confidence.py)
 # ──────────────────────────────────────────────────────
-
-# Model type base confidence scores (simpler models = lower base)
-_MODEL_BASE_SCORES = {"prophet": 65, "arima": 60, "ets": 55, "linear": 40, "average": 25, "zero": 0}
-
-
-def _compute_confidence_score(result: ForecastLineResult) -> float:
-    """Compute composite confidence score (0-100) for a single forecast line.
-
-    Blends:
-    - Model fit MAPE (40%): lower MAPE = higher confidence
-    - Prediction interval width (25%): narrower = more confident
-    - R-squared goodness of fit (20%): higher = better
-    - Model type base score (15%): sophisticated models get higher base
-    """
-    scores: list[float] = []
-    weights: list[float] = []
-
-    # 1. MAPE (40%)
-    if result.model_mape is not None and result.model_mape > 0:
-        mape_score = max(0, 100 - result.model_mape * 5)  # 20% MAPE -> score 0
-        scores.append(mape_score)
-        weights.append(0.40)
-
-    # 2. Prediction interval width (25%)
-    if result.p10 is not None and result.p90 is not None and result.p50 != 0:
-        interval_width = abs(result.p90 - result.p10)
-        relative_width = interval_width / (abs(result.p50) + 1e-10)
-        width_score = max(0, 100 - relative_width * 100)
-        scores.append(width_score)
-        weights.append(0.25)
-
-    # 3. R-squared (20%)
-    if result.model_r_squared is not None:
-        r2_score = max(0, result.model_r_squared * 100)
-        scores.append(r2_score)
-        weights.append(0.20)
-
-    # 4. Model type base score (15%)
-    base = _MODEL_BASE_SCORES.get(result.model_type, 50)
-    scores.append(base)
-    weights.append(0.15)
-
-    if not scores:
-        return 50.0
-
-    total_weight = sum(weights)
-    weighted_score = sum(s * w for s, w in zip(scores, weights)) / total_weight
-    return round(max(0, min(100, weighted_score)), 1)
-
-
-def _classify_confidence(score: float, threshold_low: int = 50, threshold_medium: int = 70) -> str:
-    """Classify confidence score into high / medium / low."""
-    if score >= threshold_medium:
-        return "high"
-    elif score >= threshold_low:
-        return "medium"
-    return "low"
 
 
 def _generate_remediation(
@@ -197,6 +150,110 @@ def _generate_remediation(
     }
 
 
+def forecast_linked_drivers(
+    db: Session,
+    *,
+    version_id: str,
+    horizon: int,
+    random_seed: int,
+    model_registry,
+    cal_cfg,
+) -> dict[str, Any]:
+    """Stage 0 (Phase 8): forecast linked drivers into driver_values(value_type='forecast').
+
+    This keeps driver->driver recursion out of scope by using only non-exog models.
+    Forecast horizon is extended by each driver's max active lag so line models can
+    consume lagged future exog columns safely.
+    """
+    from app.models.driver import DriverLink
+    from app.services.driver_series import materialize_driver_series, upsert_driver_values
+    from app.services.period_calendar import period_to_date
+
+    links = (
+        db.query(DriverLink)
+        .filter(DriverLink.status == "active")
+        .all()
+    )
+    if not links:
+        return {"drivers_considered": 0, "drivers_forecasted": 0, "rows_written": 0, "warnings": []}
+
+    lag_by_driver: dict[int, int] = {}
+    for link in links:
+        lag_by_driver[link.driver_id] = max(lag_by_driver.get(link.driver_id, 0), int(link.lag or 0))
+
+    candidate_models = [
+        n
+        for n in model_registry.list_models_by_complexity()
+        if (
+            (m := model_registry.get(n))
+            and m.capabilities.auto_selectable
+            and not m.capabilities.supports_exog
+        )
+    ]
+    warnings: list[str] = []
+    rows_written = 0
+    done = 0
+    min_points = 12
+
+    for driver_id, max_lag in lag_by_driver.items():
+        series = materialize_driver_series(db, driver_id=driver_id, value_type="actual")
+        if series.empty or len(series) < min_points:
+            continue
+        periods = [str(p) for p in series.index]
+        values = pd.Series(series.values.astype(float))
+        dates = pd.DatetimeIndex([pd.Timestamp(period_to_date(p, cal_cfg)) for p in periods])
+
+        try:
+            best_model, _, _ = model_registry.auto_select(
+                values,
+                dates,
+                random_seed=random_seed,
+                models_to_test=candidate_models,
+                selection_rule=effective_selection_rule(),
+                two_stage=True,
+                is_material=True,
+            )
+            if not best_model:
+                warnings.append(f"driver {driver_id}: no eligible model")
+                continue
+            out = model_registry.fit_and_predict(
+                best_model,
+                values,
+                dates,
+                horizon + max_lag,
+                random_seed=random_seed,
+            )
+            payload = []
+            for i, period in enumerate(out.periods):
+                payload.append(
+                    {
+                        "period": period,
+                        "value": float(out.point_forecast[i]),
+                        "p10": float(out.lower_bound[i]) if out.lower_bound is not None else None,
+                        "p90": float(out.upper_bound[i]) if out.upper_bound is not None else None,
+                    }
+                )
+            n = upsert_driver_values(
+                db,
+                driver_id=driver_id,
+                rows=payload,
+                value_type="forecast",
+                version_id=version_id,
+                actor=None,
+            )
+            rows_written += int(n)
+            done += 1
+        except Exception as e:
+            warnings.append(f"driver {driver_id}: {str(e)[:120]}")
+
+    return {
+        "drivers_considered": len(lag_by_driver),
+        "drivers_forecasted": done,
+        "rows_written": rows_written,
+        "warnings": warnings,
+    }
+
+
 class GenerateBaselineSkill(BaseSkill):
     """Skill to generate a statistical baseline forecast for all P&L line items."""
 
@@ -231,19 +288,35 @@ class GenerateBaselineSkill(BaseSkill):
                 },
                 "model_type": {
                     "type": "string",
-                    "description": "Force a single model type for ALL line items. Default 'auto' runs walk-forward cross-validation to pick the BEST model per line item (ARIMA, ETS, Prophet, or Linear). Only use a specific model if the user explicitly requests it.",
-                    "enum": ["auto", "arima", "prophet", "ets", "linear"],
+                    "description": (
+                        "Force a single model for ALL line items, or 'auto' (default) to "
+                        "run walk-forward CV per line. Valid names come from the model "
+                        "registry (validated at execute time)."
+                    ),
                     "default": "auto",
                 },
                 "models_to_test": {
                     "type": "array",
-                    "items": {"type": "string", "enum": ["arima", "prophet", "ets", "linear"]},
-                    "description": "Subset of models to test during auto-selection. If not specified, all 4 models are tested. Use this when the user wants to limit which algorithms are compared.",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Subset of registry models to test during auto-selection. "
+                        "If omitted, all registered models (subject to cost screen) are tested."
+                    ),
                 },
                 "random_seed": {
                     "type": "integer",
                     "description": "Random seed for reproducibility (default: 42)",
                     "default": 42,
+                },
+                "async_job": {
+                    "type": "boolean",
+                    "description": "If true and REDIS_URL is set, enqueue generation on the arq worker and return a job_id",
+                    "default": False,
+                },
+                "scenario": {
+                    "type": "string",
+                    "description": "Scenario label for this version (default: base). Examples: base, upside, downside.",
+                    "default": "base",
                 },
             },
         }
@@ -257,10 +330,76 @@ class GenerateBaselineSkill(BaseSkill):
         db: Session = context.db
         start_time = time.time()
 
+        # Async enqueue: default in production (or when REQUIRE_ASYNC_JOBS=true).
+        # Worker passes async_job=False explicitly to run in-process.
+        want_async = params.get("async_job")
+        if want_async is None and settings.async_jobs_required:
+            want_async = True
+        if want_async:
+            from app.services.job_queue import enqueue_generate_baseline
+
+            job = await enqueue_generate_baseline(
+                version_name="pending",
+                params={k: v for k, v in params.items() if k != "async_job"},
+                user_id=context.user_id,
+                conversation_id=context.conversation_id,
+            )
+            if job.get("status") == "sync_required":
+                if settings.async_jobs_required:
+                    return SkillResult.fail(
+                        job.get("message")
+                        or "Async job queue unavailable (Redis/arq required in production)",
+                        error="async_unavailable",
+                    )
+                # Dev fallback: continue synchronously
+                params = {**params, "async_job": False}
+            else:
+                status = self._status_block(
+                    label="Queued forecast generation",
+                    progress=0.05,
+                    step=f"job_id={job['job_id']}",
+                )
+                status["data"]["job_id"] = job["job_id"]
+                return SkillResult.ok(
+                    message=f"Baseline generation queued (job {job['job_id']})",
+                    data=job,
+                    content_blocks=[
+                        status,
+                        self._text_block(
+                            f"Job `{job['job_id']}` queued. Poll `GET /api/jobs/{job['job_id']}` for status."
+                        ),
+                    ],
+                )
+
         horizon = params.get("horizon_months", settings.default_horizon_months)
         model_type = params.get("model_type", "auto")
         models_to_test = params.get("models_to_test", None)  # None = all models
         random_seed = params.get("random_seed", 42)
+
+        # Settings flips (benchmarks / metric) must refresh the singleton
+        reset_model_registry()
+        model_registry = get_model_registry()
+        registered = set(model_registry.list_models())
+        if model_type != "auto" and model_type not in registered:
+            return SkillResult.fail(
+                f"Unknown model_type '{model_type}'. Registered: {sorted(registered)}"
+            )
+        if models_to_test:
+            unknown = [m for m in models_to_test if m not in registered]
+            if unknown:
+                return SkillResult.fail(
+                    f"Unknown models_to_test {unknown}. Registered: {sorted(registered)}"
+                )
+        selection_rule = effective_selection_rule()
+
+        # Soft gate: prefer plan_forecast before baseline (warn, do not hard-block)
+        plan_done = context.context_manager.get_memory("last_plan_id") or context.context_manager.get_memory("plan_forecast_complete")
+        plan_warning = None
+        if not plan_done and not params.get("skip_plan_check"):
+            plan_warning = (
+                "Note: plan_forecast was not run in this session. "
+                "Proceeding with baseline generation; run plan_forecast first for model selection guidance."
+            )
 
         # Get dataset
         dataset_id = params.get("dataset_id") or context.context_manager.get_memory("last_dataset_id")
@@ -274,8 +413,13 @@ class GenerateBaselineSkill(BaseSkill):
             if not dataset:
                 return SkillResult.fail(f"Dataset '{dataset_id}' not found.")
 
-        # Get all non-calculated line items
-        line_items = db.query(LineItem).filter(LineItem.is_calculated == False).all()
+        # Get non-calculated line items in the caller's BU scope
+        from app.services.permissions import resolve_skill_user, scoped_line_items
+
+        actor = resolve_skill_user(context)
+        line_items = scoped_line_items(
+            db, actor, LineItem.is_calculated == False  # noqa: E712
+        ).all()
         if not line_items:
             return SkillResult.fail("No line items found. Please ingest actuals data first.")
 
@@ -284,21 +428,52 @@ class GenerateBaselineSkill(BaseSkill):
         now = datetime.now(timezone.utc)
         version_name = f"FC-{now.strftime('%Y-%m')}-v{existing_count + 1}"
 
+        scenario = (params.get("scenario") or "base").strip() or "base"
         version = ForecastVersion(
             name=version_name,
             status="draft",
             version_type="scheduled",
+            scenario=scenario,
             actuals_dataset_id=dataset_id,
             actuals_hash=dataset.file_hash,
             horizon_months=horizon,
             base_period=dataset.period_end,
             random_seed=random_seed,
+            selection_rule=selection_rule,
+            created_by=context.user_id,  # SoD: creator cannot self-approve
         )
+        # FX: resolve reporting currency up front
+        from app.services.fx import get_reporting_currency, MissingFxRateError, convert_series_values
+        reporting_ccy = get_reporting_currency(db)
+        version.reporting_currency = reporting_ccy
         db.add(version)
         db.flush()
+        fx_hashes: list[str] = []
+
+        from app.services.period_calendar import (
+            get_calendar_config,
+            period_to_date,
+            push_calendar,
+            reset_calendar,
+        )
+        from app.services.reconciliation import reconcile_version
+
+        cal_cfg = get_calendar_config(db)
+        cal_token = push_calendar(cal_cfg)
+
+        # Preload all actuals for this dataset once (avoids N+1 per line item)
+        from collections import defaultdict
+
+        actuals_by_li: dict[int, list[ActualsRecord]] = defaultdict(list)
+        for rec in (
+            db.query(ActualsRecord)
+            .filter(ActualsRecord.dataset_id == dataset_id)
+            .order_by(ActualsRecord.period)
+            .all()
+        ):
+            actuals_by_li[rec.line_item_id].append(rec)
 
         # Generate forecast for each line item
-        model_registry = get_model_registry()
         summary: dict[str, Any] = {
             "total": 0,
             "success": 0,
@@ -309,13 +484,54 @@ class GenerateBaselineSkill(BaseSkill):
             "negative_clamped": 0,
             "model_distribution": {},
             "model_comparisons": {},  # line_item_name -> comparison results
+            "selection_rule": selection_rule,
+            "n_downgraded": 0,
+            "driver_forecasts_written": 0,
+            "drivers_forecasted": 0,
         }
         all_warnings: list[str] = []
         all_flags: list[dict] = []
+        pending_line_rows: list[dict[str, Any]] = []
+        pending_metadata: list[ModelMetadata] = []
+
+        # Materiality vs CoA total trailing actuals (for two-stage expensive admit)
+        trailing_abs = {
+            li_id: float(sum(abs(r.value) for r in recs))
+            for li_id, recs in actuals_by_li.items()
+        }
+        grand_abs = sum(trailing_abs.values()) or 1.0
+        materiality_share = float(settings.materiality_share)
+
+        job_id = params.get("_job_id")
+        n_line_items = len(line_items)
+
+        # Phase 8 stage 0: materialize forecasted driver paths for this version.
+        if settings.enable_driver_forecasting:
+            driver_stage = forecast_linked_drivers(
+                db,
+                version_id=version.id,
+                horizon=horizon,
+                random_seed=random_seed,
+                model_registry=model_registry,
+                cal_cfg=cal_cfg,
+            )
+            summary["driver_forecasts_written"] = int(driver_stage.get("rows_written", 0) or 0)
+            summary["drivers_forecasted"] = int(driver_stage.get("drivers_forecasted", 0) or 0)
+            all_warnings.extend(driver_stage.get("warnings") or [])
 
         try:
             for li in line_items:
                 summary["total"] += 1
+
+                if job_id and (n_line_items <= 5 or summary["total"] % 5 == 0):
+                    from app.services.job_queue import update_job
+
+                    update_job(
+                        job_id,
+                        status="running",
+                        progress=min(0.9, summary["total"] / max(n_line_items, 1)),
+                        step=f"{li.name} ({summary['total']}/{n_line_items})",
+                    )
 
                 # EC11: Check timeout periodically
                 try:
@@ -324,193 +540,110 @@ class GenerateBaselineSkill(BaseSkill):
                         context=f"Processing line {summary['total']}/{len(line_items)}: {li.name}",
                     )
                 except ForecastTimeoutError as e:
-                    # Save partial results
+                    # Flush any pending rows before returning
+                    self._flush_forecast_batch(db, pending_line_rows, pending_metadata)
                     version.generation_time_seconds = time.time() - start_time
                     db.commit()
                     all_warnings.append(str(e))
                     return self._build_timeout_response(version, summary, all_warnings, all_flags)
 
-                # Get actuals for this line item
-                records = (
-                    db.query(ActualsRecord)
-                    .filter(
-                        ActualsRecord.dataset_id == dataset_id,
-                        ActualsRecord.line_item_id == li.id,
-                    )
-                    .order_by(ActualsRecord.period)
-                    .all()
-                )
+                records = actuals_by_li.get(li.id, [])
 
                 if not records:
                     summary["skipped"] += 1
                     continue
 
-                # Build time series
-                values = pd.Series([r.value for r in records])
+                # Build time series — convert to reporting currency at construction time
+                raw_values = [float(r.value) for r in records]
                 periods = [r.period for r in records]
-                dates = pd.DatetimeIndex([pd.Timestamp(p + "-01") for p in periods])
-
-                # Run history analysis (EC1, EC2, EC4, EC12)
-                analysis = HistoryAnalysis(values, dates, li.name)
-                analysis_result = analysis.analyze()
-
-                for w in analysis_result["warnings"]:
-                    all_warnings.append(w)
-
-                if analysis_result["flags"]:
-                    all_flags.append({
-                        "line_item": li.name,
-                        "flags": analysis_result["flags"],
-                    })
-
-                # EC2: All zeros -- skip modeling
-                if analysis.is_all_zeros:
-                    summary["zero_lines"] += 1
-                    for i in range(horizon):
-                        current = dates[-1] + pd.offsets.MonthBegin(i + 1)
-                        line_result = ForecastLineResult(
-                            version_id=version.id,
-                            line_item_id=li.id,
-                            period=current.strftime("%Y-%m"),
-                            p10=0.0, p50=0.0, p90=0.0,
-                            confidence_score=0,
-                            confidence_level="low",
-                            model_type="zero",
-                        )
-                        db.add(line_result)
-                    summary["success"] += 1
-                    continue
-
-                # EC1: Very sparse data -- use simple average
-                if analysis.is_very_sparse:
-                    summary["sparse_lines"] += 1
-                    avg_val = float(values.mean())
-                    std_val = float(values.std()) if len(values) > 1 else avg_val * 0.2
-                    for i in range(horizon):
-                        current = dates[-1] + pd.offsets.MonthBegin(i + 1)
-                        p50 = max(0, avg_val) if not li.allow_negative else avg_val
-                        line_result = ForecastLineResult(
-                            version_id=version.id,
-                            line_item_id=li.id,
-                            period=current.strftime("%Y-%m"),
-                            p10=max(0, p50 - 1.28 * std_val) if not li.allow_negative else p50 - 1.28 * std_val,
-                            p50=p50,
-                            p90=p50 + 1.28 * std_val,
-                            confidence_score=0,
-                            confidence_level="low",
-                            model_type="average",
-                        )
-                        db.add(line_result)
-                    summary["success"] += 1
-                    continue
-
-                # EC12: Structural break -- use post-break data only
-                effective_values = values
-                effective_dates = dates
-                if analysis.has_structural_break and analysis.structural_break_period:
-                    summary["structural_breaks"] += 1
-                    break_idx = None
-                    for idx, d in enumerate(dates):
-                        if d.strftime("%Y-%m") == analysis.structural_break_period:
-                            break_idx = idx
-                            break
-                    if break_idx is not None and (len(values) - break_idx) >= 6:
-                        effective_values = values[break_idx:]
-                        effective_dates = dates[break_idx:]
-
-                # Select and run model
+                currencies = [getattr(r, "currency", None) or reporting_ccy for r in records]
                 try:
-                    # EC1: Force simpler model for sparse data
-                    effective_model_type = model_type
-                    if analysis.is_sparse and model_type == "auto":
-                        effective_model_type = "linear"
+                    converted, fx_hash = convert_series_values(
+                        db, raw_values, currencies, periods, reporting_ccy
+                    )
+                    fx_hashes.append(fx_hash)
+                except MissingFxRateError as e:
+                    return SkillResult.fail(str(e))
+                values = pd.Series(converted)
+                dates = pd.DatetimeIndex([
+                    pd.Timestamp(period_to_date(p, cal_cfg)) for p in periods
+                ])
 
-                    if effective_model_type == "auto":
-                        selected_model, selection_mape, comparison = model_registry.auto_select(
-                            effective_values, effective_dates,
-                            random_seed=random_seed,
-                            models_to_test=models_to_test,
-                        )
-                        # Store comparison results per line item
-                        summary["model_comparisons"][li.name] = comparison.to_dict()
-                    else:
-                        selected_model = effective_model_type
-                        selection_mape = 0
+                is_material = (trailing_abs.get(li.id, 0.0) / grand_abs) >= materiality_share
+                from app.services.forecast_pipeline import LineForecastContext, forecast_line_item
 
-                    forecast_output = model_registry.fit_and_predict(
-                        selected_model, effective_values, effective_dates, horizon,
+                line_out = forecast_line_item(
+                    db,
+                    li,
+                    values,
+                    dates,
+                    periods,
+                    LineForecastContext(
+                        version_id=version.id,
+                        horizon=horizon,
                         random_seed=random_seed,
-                    )
+                        model_type=model_type,
+                        models_to_test=models_to_test,
+                        selection_rule=selection_rule,
+                        is_material=is_material,
+                        cal_cfg=cal_cfg,
+                        model_registry=model_registry,
+                        enable_driver_forecasting=settings.enable_driver_forecasting,
+                    ),
+                )
 
-                    # EC9: Clamp negative values
-                    point_forecast = forecast_output.point_forecast.copy()
-                    lower_bound = forecast_output.lower_bound.copy() if forecast_output.lower_bound is not None else None
+                all_warnings.extend(line_out.warnings)
+                if line_out.flags:
+                    all_flags.append({"line_item": li.name, "flags": line_out.flags})
+                if line_out.was_zero:
+                    summary["zero_lines"] += 1
+                if line_out.was_sparse:
+                    summary["sparse_lines"] += 1
+                if line_out.had_structural_break:
+                    summary["structural_breaks"] += 1
+                if line_out.was_clamped:
+                    summary["negative_clamped"] += 1
 
-                    point_forecast, clamp_warnings = clamp_forecast_values(
-                        point_forecast, li.allow_negative, li.name
-                    )
-                    if clamp_warnings:
-                        summary["negative_clamped"] += 1
-                        all_warnings.extend(clamp_warnings)
-
-                    if lower_bound is not None and not li.allow_negative:
-                        lower_bound = np.maximum(lower_bound, 0)
-
-                    # Track model distribution
-                    summary["model_distribution"][selected_model] = (
-                        summary["model_distribution"].get(selected_model, 0) + 1
-                    )
-
-                    # Store results for each forecast period
-                    for i, period in enumerate(forecast_output.periods):
-                        p50 = float(point_forecast[i])
-                        p10 = float(lower_bound[i]) if lower_bound is not None else None
-                        p90 = float(forecast_output.upper_bound[i]) if forecast_output.upper_bound is not None else None
-
-                        line_result = ForecastLineResult(
-                            version_id=version.id,
-                            line_item_id=li.id,
-                            period=period,
-                            p10=p10, p50=p50, p90=p90,
-                            confidence_score=0,
-                            confidence_level="pending",
-                            model_type=selected_model,
-                            model_mape=forecast_output.fit_metrics.get("mape"),
-                            model_r_squared=forecast_output.fit_metrics.get("r_squared"),
-                        )
-                        db.add(line_result)
-                        db.flush()  # Ensure line_result.id is assigned
-
-                        # Store model metadata (first period only)
-                        if i == 0:
-                            metadata = ModelMetadata(
-                                line_result_id=line_result.id,
-                                model_type=selected_model,
-                                parameters=forecast_output.parameters,
-                                training_window_start=periods[0],
-                                training_window_end=periods[-1],
-                                training_points=len(records),
-                                mape=forecast_output.fit_metrics.get("mape"),
-                                r_squared=forecast_output.fit_metrics.get("r_squared"),
-                                aic=forecast_output.fit_metrics.get("aic"),
-                                seasonality_detected=forecast_output.diagnostics.get("seasonality_detected", False),
-                                seasonality_period=forecast_output.diagnostics.get("seasonality_period"),
-                                structural_break_detected=analysis.has_structural_break,
-                                structural_break_period=analysis.structural_break_period,
-                                random_seed=random_seed,
-                            )
-                            db.add(metadata)
-
-                    summary["success"] += 1
-
-                except Exception as e:
-                    logger.error(f"Forecast failed for {li.account_code}: {e}", exc_info=True)
+                if line_out.skipped:
                     summary["skipped"] += 1
-                    all_warnings.append(f"Model failed for '{li.name}': {str(e)[:100]}")
+                    continue
+
+                if line_out.comparison:
+                    summary["model_comparisons"][li.name] = line_out.comparison
+                summary["n_downgraded"] += line_out.n_downgraded
+                if line_out.selected_model:
+                    summary["model_distribution"][line_out.selected_model] = (
+                        summary["model_distribution"].get(line_out.selected_model, 0) + 1
+                    )
+
+                pending_line_rows.extend(line_out.line_rows)
+                pending_metadata.extend(line_out.metadata_rows)
+
+                if len(pending_line_rows) >= 1000:
+                    self._flush_forecast_batch(db, pending_line_rows, pending_metadata)
+                    pending_line_rows.clear()
+                    pending_metadata.clear()
+
+                summary["success"] += 1
 
         except Exception as e:
             logger.error(f"Forecast generation error: {e}", exc_info=True)
             all_warnings.append(f"Generation error: {str(e)[:200]}")
+        finally:
+            reset_calendar(cal_token)
+
+        # Persist batched forecast rows before reconciliation / scoring
+        self._flush_forecast_batch(db, pending_line_rows, pending_metadata)
+        pending_line_rows.clear()
+        pending_metadata.clear()
+
+        # Reconcile CoA parents (p50 identities + full MinT correlation-aware bounds)
+        try:
+            recon = reconcile_version(db, version.id)
+            logger.info("MinT reconciliation: %s", recon)
+        except Exception as e:
+            logger.warning("Reconciliation skipped: %s", e)
+            all_warnings.append(f"CoA reconciliation skipped: {str(e)[:120]}")
 
         # ──────────────────────────────────────────────────
         # PHASE: Inline confidence scoring & remediation
@@ -585,9 +718,14 @@ class GenerateBaselineSkill(BaseSkill):
         elapsed = time.time() - start_time
         version.total_line_items = summary["success"]
         version.generation_time_seconds = elapsed
+        if fx_hashes:
+            import hashlib
+            version.fx_rate_set_hash = hashlib.sha256(
+                "|".join(sorted(set(fx_hashes))).encode()
+            ).hexdigest()
         version.model_versions = {
             "models": model_registry.list_models(),
-            "selection_method": "walk_forward_cv" if model_type == "auto" else "manual",
+            "selection_method": "rolling_origin_cv" if model_type == "auto" else "manual",
         }
 
         db.commit()
@@ -607,20 +745,31 @@ class GenerateBaselineSkill(BaseSkill):
                 seen_lines.add(item["line_item"])
                 unique_remediation.append(item)
 
+        if job_id:
+            from app.services.job_queue import update_job
+
+            update_job(job_id, status="running", progress=0.95, step="Finalizing")
+
         return self._build_success_response(
             version, horizon, dataset, model_type, summary, elapsed,
             all_warnings, all_flags, high_count, medium_count, low_count,
             unique_remediation,
+            plan_warning=plan_warning,
         )
 
     def _build_success_response(
         self, version, horizon, dataset, model_type, summary, elapsed,
         warnings, flags, high_count, medium_count, low_count, remediation_items,
+        plan_warning=None,
     ) -> SkillResult:
         """Build the rich response with confidence scores, remediation, and actions."""
         total_scored = high_count + medium_count + low_count
 
-        content_blocks = [
+        content_blocks = []
+        if plan_warning:
+            content_blocks.append(self._text_block(f"**Planning note:** {plan_warning}"))
+
+        content_blocks.extend([
             self._text_block(
                 f"Generated baseline forecast **{version.name}** with a {horizon}-month horizon. "
                 f"Confidence scoring complete."
@@ -643,9 +792,11 @@ class GenerateBaselineSkill(BaseSkill):
                     {"metric": "Base period", "value": dataset.period_end},
                     {"metric": "Generation time", "value": f"{elapsed:.1f}s"},
                     {"metric": "Model selection", "value": "Auto (walk-forward CV)" if model_type == "auto" else model_type},
+                    {"metric": "Drivers forecasted (stage 0)", "value": str(summary.get("drivers_forecasted", 0))},
+                    {"metric": "Driver forecast rows written", "value": str(summary.get("driver_forecasts_written", 0))},
                 ],
             ),
-        ]
+        ])
 
         # Confidence distribution table
         content_blocks.append(
@@ -705,6 +856,9 @@ class GenerateBaselineSkill(BaseSkill):
             for li_name, comp_data in sorted(summary["model_comparisons"].items()):
                 row = {"line_item": li_name, "selected": comp_data["best_model"]}
                 for c in comp_data.get("comparisons", []):
+                    model_key = c.get("model") or c.get("model_name")
+                    if not model_key:
+                        continue
                     mape_val = c.get("mape")
                     if mape_val is not None:
                         label = f"{mape_val:.1f}%"
@@ -714,7 +868,7 @@ class GenerateBaselineSkill(BaseSkill):
                         label = "N/A"
                     else:
                         label = "-"
-                    row[c["model"]] = label
+                    row[model_key] = label
                 comparison_rows.append(row)
 
             if comparison_rows:
@@ -847,6 +1001,31 @@ class GenerateBaselineSkill(BaseSkill):
                 )
             )
 
+        actions = [
+            {
+                "id": "open_forecast_table",
+                "label": "View Forecast Table",
+                "variant": "primary",
+                "panel": "forecast_table",
+                "version_id": version.id,
+            },
+        ]
+        if critical_items or warning_items:
+            actions.append({
+                "id": "open_review_dashboard",
+                "label": "Open Review Dashboard",
+                "panel": "review_dashboard",
+                "version_id": version.id,
+            })
+        else:
+            actions.append({
+                "id": "submit_for_review",
+                "label": "Submit for Review",
+                "variant": "secondary",
+                "version_id": version.id,
+            })
+        content_blocks.append(self._action_block(actions))
+
         return SkillResult.ok(
             message=(
                 f"Generated forecast {version.name}: {summary['success']} lines forecasted "
@@ -863,6 +1042,8 @@ class GenerateBaselineSkill(BaseSkill):
                 "sparse_lines": summary["sparse_lines"],
                 "structural_breaks": summary["structural_breaks"],
                 "model_distribution": summary["model_distribution"],
+                "drivers_forecasted": summary.get("drivers_forecasted", 0),
+                "driver_forecasts_written": summary.get("driver_forecasts_written", 0),
                 "generation_time": elapsed,
                 "warnings_count": len(warnings),
                 "confidence": {
@@ -877,6 +1058,43 @@ class GenerateBaselineSkill(BaseSkill):
             },
             content_blocks=content_blocks,
         )
+
+    @staticmethod
+    def _flush_forecast_batch(
+        db: Session,
+        line_rows: list[dict[str, Any]],
+        metadata_rows: list[ModelMetadata],
+    ) -> None:
+        """Bulk-upsert forecast line results then attach model metadata."""
+        if not line_rows:
+            return
+        from app.services.upsert import bulk_upsert
+
+        bulk_upsert(
+            db,
+            ForecastLineResult,
+            line_rows,
+            conflict_cols=("version_id", "line_item_id", "period"),
+            update_cols=(
+                "p10",
+                "p50",
+                "p90",
+                "model_p50",
+                "confidence_score",
+                "confidence_level",
+                "model_type",
+                "model_mape",
+                "model_mase",
+                "model_pinball",
+                "model_r_squared",
+                "bounds_method",
+                "is_overridden",
+                "is_calculated",
+            ),
+        )
+        for meta in metadata_rows:
+            db.add(meta)
+        db.flush()
 
     def _build_timeout_response(self, version, summary, warnings, flags) -> SkillResult:
         """Build response when generation times out (EC11)."""

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.domain.engines.model_registry import get_model_registry
-from app.models.forecast import ForecastVersion, ForecastLineResult, ModelMetadata
+from app.models.forecast import ForecastVersion, ForecastLineResult
 from app.models.actuals import ActualsDataset, ActualsRecord
 from app.models.line_item import LineItem
 
@@ -80,8 +80,17 @@ class RunEnsembleSkill(BaseSkill):
 
         weighting = params.get("weighting_method", "inverse_mape")
         top_k = params.get("top_k", 3)
-        model_names = params.get("models") or ["arima", "ets", "linear"]  # prophet excluded for speed in ensemble
         model_registry = get_model_registry()
+        model_names = params.get("models")
+        if not model_names:
+            # Prefer cheap/moderate cost classes — skip expensive (prophet) by default
+            model_names = [
+                n for n in model_registry.list_models()
+                if (m := model_registry.get(n)) is not None
+                and m.capabilities.cost_class in ("trivial", "cheap", "moderate")
+                and not m.capabilities.is_benchmark
+                and m.capabilities.auto_selectable
+            ] or ["arima", "ets", "linear"]
 
         # Determine target line items
         line_item_name = params.get("line_item_name")
@@ -165,8 +174,47 @@ class RunEnsembleSkill(BaseSkill):
                         random_seed=version.random_seed or 42,
                     )
                     model_forecasts[model_name] = output.point_forecast
-                    mape = output.fit_metrics.get("mape", 100.0)
-                    model_mapes[model_name] = max(mape, 0.01)  # Avoid div-by-zero
+
+                    # Weight on out-of-sample CV MAPE (same pattern as generate_baseline).
+                    # Fall back to in-sample only when history is too short for CV.
+                    mape: float | None = None
+                    mape_source = "cv"
+                    model = model_registry.get(model_name)
+                    if model is not None:
+                        try:
+                            cv = model.evaluate_cv(
+                                values, dates, n_folds=3, fold_horizon=3
+                            )
+                            mean_mape = cv.get("mean_mape")
+                            if (
+                                mean_mape is not None
+                                and mean_mape != float("inf")
+                                and (cv.get("n_folds_used") or 0) > 0
+                            ):
+                                mape = float(mean_mape)
+                        except Exception as cv_err:
+                            logger.debug(
+                                "Ensemble CV MAPE failed for %s/%s: %s",
+                                model_name,
+                                li.name,
+                                cv_err,
+                            )
+                    if mape is None:
+                        mape = (
+                            output.fit_metrics.get("in_sample_mape")
+                            or output.fit_metrics.get("mape")
+                        )
+                        mape_source = "in_sample_fallback"
+                        if mape is None:
+                            mape = 100.0
+                        logger.info(
+                            "Ensemble weight for %s/%s uses %s MAPE=%.2f",
+                            model_name,
+                            li.name,
+                            mape_source,
+                            mape,
+                        )
+                    model_mapes[model_name] = max(float(mape), 0.01)
                 except Exception as e:
                     logger.warning(f"Ensemble: model '{model_name}' failed for {li.name}: {e}")
 
@@ -224,7 +272,7 @@ class RunEnsembleSkill(BaseSkill):
                 .all()
             )
 
-            avg_mape = np.mean(list(selected_mapes.values()))
+            avg_mape = float(np.mean(list(selected_mapes.values())))
             new_confidence_base = max(0, min(100, 100 - avg_mape * 3))  # Ensemble bonus
             new_confidence = min(100, new_confidence_base + 10)  # +10 ensemble bonus
 
@@ -326,5 +374,5 @@ class RunEnsembleSkill(BaseSkill):
 
         else:  # inverse_mape
             inv = {m: 1.0 / mape for m, mape in model_mapes.items()}
-            total = sum(inv.values())
-            return {m: v / total for m, v in inv.items()}
+            inv_total = sum(inv.values())
+            return {m: v / inv_total for m, v in inv.items()}
