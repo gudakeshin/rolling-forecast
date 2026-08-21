@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any, Literal
+from typing import Any, Literal, Protocol, cast
 
 import numpy as np
 import pandas as pd
@@ -41,7 +41,10 @@ class ForecastOutput:
     periods: list[str]          # Period labels (YYYY-MM or FY2026-P01)
     model_type: str
     parameters: dict[str, Any] = field(default_factory=dict)
-    fit_metrics: dict[str, float] = field(default_factory=dict)  # MAPE, R², AIC, etc.
+    # float | None: AIC/AICc are genuinely unavailable for some engines, and
+    # 0.0 is a meaningful AIC — collapsing None to 0.0 would corrupt
+    # model comparison. Consumers already treat missing as None.
+    fit_metrics: dict[str, float | None] = field(default_factory=dict)
     diagnostics: dict[str, Any] = field(default_factory=dict)    # Seasonality, breaks, etc.
 
 
@@ -123,6 +126,49 @@ def _weighted_mean(values: list[float]) -> float:
         return float("inf")
     weights = list(range(1, len(finite) + 1))
     return float(sum(v * w for v, w in zip(finite, weights)) / sum(weights))
+
+
+class SupportsExog(Protocol):
+    """The subset of IForecastModel that accepts exogenous regressors.
+
+    Only models declaring ``capabilities.supports_exog`` implement these
+    keyword arguments (today: ARIMA/SARIMAX). Keeping them off the base ABC
+    means the other engines are not forced into a signature they cannot honour.
+    """
+
+    def fit(
+        self,
+        series: pd.Series,
+        dates: pd.DatetimeIndex,
+        *,
+        exog: pd.DataFrame | np.ndarray | None = None,
+    ) -> dict[str, Any]: ...
+
+    def predict(
+        self,
+        params: dict[str, Any],
+        horizon: int,
+        last_date: pd.Timestamp,
+        confidence_level: float = 0.80,
+        *,
+        exog_future: pd.DataFrame | np.ndarray | None = None,
+    ) -> ForecastOutput: ...
+
+
+def as_exog_model(model: IForecastModel) -> SupportsExog:
+    """Narrow a registry model to its exog-capable interface.
+
+    Raises when the model does not declare ``supports_exog``. Previously such a
+    call raised TypeError deep inside a broad ``except Exception`` that recorded
+    the fold as ``inf`` — so a misconfigured exog run looked like a model that
+    simply scored badly. Call this outside the try block.
+    """
+    if not model.capabilities.supports_exog:
+        raise TypeError(
+            f"model {model.name!r} does not support exogenous regressors "
+            "(capabilities.supports_exog is False)"
+        )
+    return cast(SupportsExog, model)
 
 
 class IForecastModel(ABC):

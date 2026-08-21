@@ -18,7 +18,6 @@ import logging
 from typing import Any
 from datetime import datetime, timezone
 
-import numpy as np
 import pandas as pd
 from sqlalchemy.orm import Session
 

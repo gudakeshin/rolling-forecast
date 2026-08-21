@@ -94,11 +94,11 @@ async def _persist_actuals_df(db: Session, result, source_type: str, source_name
     records = []
     for _, row in df.iterrows():
         code = str(row["account_code"])
-        li = line_map.get(code)
-        if li:
+        mapped_li = line_map.get(code)
+        if mapped_li:
             records.append(ActualsRecord(
                 dataset_id=dataset.id,
-                line_item_id=li.id,
+                line_item_id=mapped_li.id,
                 period=str(row["period"]),
                 value=float(row["value"]),
                 currency=str(row.get("currency", "USD")),

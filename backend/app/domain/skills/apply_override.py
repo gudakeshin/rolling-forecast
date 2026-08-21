@@ -191,7 +191,7 @@ class ApplyOverrideSkill(BaseSkill):
             )
 
         # EC6: Validate override value (soft warnings)
-        override_warnings = []
+        override_warnings: list[dict[str, str]] = []
         for r in results:
             warnings = OverrideValidator.validate(
                 line_item_name=line_item.name,

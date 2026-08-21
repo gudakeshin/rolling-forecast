@@ -207,6 +207,14 @@ app = FastAPI(
 from app.middleware import RequestLoggingMiddleware, register_exception_handlers
 
 app.add_middleware(RequestLoggingMiddleware)
+
+# Host-header allowlist — opt-in via ALLOWED_HOSTS, since deriving it from
+# CORS origins would silently break deployments fronted by a different name.
+if settings.allowed_host_list:
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_host_list)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -222,7 +230,9 @@ from slowapi.errors import RateLimitExceeded
 from app.rate_limit import limiter
 
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+# slowapi types its handler as (Request, RateLimitExceeded) while Starlette
+# declares (Request, Exception); the narrowing is upstream, not ours.
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
 from app.api.health import router as health_router
 from app.api.auth import router as auth_router

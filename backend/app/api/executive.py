@@ -352,7 +352,7 @@ async def driver_drilldown(
         overrides = overrides.filter(Override.line_item_id == line_item_id)
     if allowed_ids is not None:
         overrides = overrides.filter(Override.line_item_id.in_(allowed_ids))
-    overrides = overrides.all()
+    override_rows = overrides.all()
 
     drivers = db.query(DriverInput).filter(DriverInput.version_id == version_id).all()
     if not getattr(current_user.role, "can_view_all_bus", False) and not (
@@ -361,7 +361,7 @@ async def driver_drilldown(
         bu = current_user.business_unit
         drivers = [d for d in drivers if not d.business_unit or d.business_unit == bu]
 
-    target_ids = sorted({o.line_item_id for o in overrides})
+    target_ids = sorted({o.line_item_id for o in override_rows})
     if line_item_id and line_item_id not in target_ids:
         target_ids = [line_item_id]
     if not target_ids and line_item_id:

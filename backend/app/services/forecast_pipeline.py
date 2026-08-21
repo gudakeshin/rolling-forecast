@@ -16,7 +16,7 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.domain.engines.base_model import make_period_labels, mase_denominator
+from app.domain.engines.base_model import as_exog_model, make_period_labels, mase_denominator
 from app.domain.engines.model_registry import ModelRegistry, get_model_registry
 from app.models.forecast import ModelMetadata
 from app.models.line_item import LineItem
@@ -131,6 +131,8 @@ def _evaluate_plain_vs_exog(
         return None
     if exog_train is None or exog_train.shape[1] == 0:
         return None
+    # Guarded above, so this only narrows the type — it cannot raise here.
+    exog_model = as_exog_model(model)
 
     n = len(values)
     m = 12
@@ -161,16 +163,16 @@ def _evaluate_plain_vs_exog(
             continue
 
         try:
-            p_plain = model.fit(y_train, d_train, exog=None)
-            fc_plain = model.predict(p_plain, len(y_test), d_train[-1], exog_future=None)
+            p_plain = exog_model.fit(y_train, d_train, exog=None)
+            fc_plain = exog_model.predict(p_plain, len(y_test), d_train[-1], exog_future=None)
             err_p = np.abs(y_test - np.asarray(fc_plain.point_forecast[: len(y_test)], dtype=float))
             mase_plain.append(float(np.mean(err_p) / denom))
         except Exception:
             mase_plain.append(float("inf"))
 
         try:
-            p_ex = model.fit(y_train, d_train, exog=ex_tr)
-            fc_ex = model.predict(p_ex, len(y_test), d_train[-1], exog_future=ex_te)
+            p_ex = exog_model.fit(y_train, d_train, exog=ex_tr)
+            fc_ex = exog_model.predict(p_ex, len(y_test), d_train[-1], exog_future=ex_te)
             err_e = np.abs(y_test - np.asarray(fc_ex.point_forecast[: len(y_test)], dtype=float))
             mase_exog.append(float(np.mean(err_e) / denom))
         except Exception:
@@ -238,6 +240,9 @@ def _evaluate_arima_exog_modes(
     model = registry.get("arima")
     if model is None:
         return None
+    # ARIMA is the only exog-capable engine; assert that explicitly rather than
+    # letting a TypeError get swallowed by the per-fold `except Exception`.
+    exog_model = as_exog_model(model)
 
     # Specs / train matrix from known actuals (no leakage in training block)
     bundle_known = build_exog_for_line(
@@ -309,8 +314,8 @@ def _evaluate_arima_exog_modes(
                 mase_forecast.append(float("inf"))
             else:
                 try:
-                    p_f = model.fit(y_train, d_train, exog=ex_f_train[common])
-                    fc_f = model.predict(
+                    p_f = exog_model.fit(y_train, d_train, exog=ex_f_train[common])
+                    fc_f = exog_model.predict(
                         p_f, len(y_test), d_train[-1], exog_future=ex_f_test[common]
                     )
                     err_f = np.abs(
@@ -328,8 +333,8 @@ def _evaluate_arima_exog_modes(
             continue
 
         try:
-            p_k = model.fit(y_train, d_train, exog=ex_k_train)
-            fc_k = model.predict(p_k, len(y_test), d_train[-1], exog_future=ex_k_test)
+            p_k = exog_model.fit(y_train, d_train, exog=ex_k_train)
+            fc_k = exog_model.predict(p_k, len(y_test), d_train[-1], exog_future=ex_k_test)
             err_k = np.abs(y_test - np.asarray(fc_k.point_forecast[: len(y_test)], dtype=float))
             mase_known.append(float(np.mean(err_k) / denom))
         except Exception:
@@ -668,7 +673,7 @@ def forecast_line_item(
                 selected_model=selected_model,
                 allow_override=li.is_target_bearing is False,
             )
-        if heuristic_nudge is not None:
+        if heuristic_nudge is not None and selection_result is not None:
             statistical_best = heuristic_nudge["from_model"]
             if heuristic_nudge["applied"]:
                 selected_model = heuristic_nudge["to_model"]
@@ -721,11 +726,12 @@ def forecast_line_item(
             if ctx.enable_driver_forecasting is None
             else bool(ctx.enable_driver_forecasting)
         )
+        selected_impl = registry.get(selected_model) if selected_model else None
         if (
             exog_enabled
             and selected_model
-            and registry.get(selected_model) is not None
-            and registry.get(selected_model).capabilities.supports_exog
+            and selected_impl is not None
+            and selected_impl.capabilities.supports_exog
         ):
             future_periods = make_period_labels(effective_dates[-1], horizon)
             exog_bundle = build_exog_for_line(

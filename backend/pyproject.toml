@@ -51,7 +51,8 @@ ignore_missing_imports = true
 warn_unused_ignores = false
 check_untyped_defs = false
 allow_untyped_defs = true
-# Hard gate in CI: remaining debt isolated via overrides below
+# Hard gate in CI. app/ is fully type-clean — do not reintroduce a per-module
+# ignore_errors block; fix the module instead.
 disable_error_code = ["import-untyped"]
 
 [[tool.mypy.overrides]]
@@ -65,32 +66,4 @@ module = [
   "migration_helpers",
 ]
 # Alembic migration scripts are imperative and heavily dynamic
-ignore_errors = true
-
-# Remaining typing debt — shrink as modules are cleaned.
-# Now type-checked (removed from ignore): app.api.approvals, app.api.panel, app.domain.composer
-[[tool.mypy.overrides]]
-module = [
-  "app.api.dashboard",
-  "app.api.executive",
-  "app.api.integrations",
-  "app.domain.skills.generate_commentary",
-  "app.domain.skills.ingest_actuals",
-  "app.domain.skills.collect_driver_input",
-  "app.domain.skills.detect_anomalies",
-  "app.domain.skills.auto_accuracy_report",
-  "app.domain.skills.run_ensemble",
-  "app.domain.skills.apply_override",
-  "app.domain.skills.score_confidence",
-  "app.domain.engines.arima",
-  "app.domain.engines.ets",
-  "app.domain.skill_loader",
-  "app.services.error_handlers",
-  "app.services.vector_store",
-  "app.services.context_engine",
-  "app.orchestration.context_manager",
-  "app.orchestration.task_planner",
-  "app.main",
-  "seed_data.generate_seed",
-]
 ignore_errors = true

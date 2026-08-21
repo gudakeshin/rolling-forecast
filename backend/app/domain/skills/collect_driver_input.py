@@ -392,7 +392,7 @@ class CollectDriverInputSkill(BaseSkill):
             .filter(DriverInput.version_id == version_id)
             .all()
         )
-        submissions_by_form = {}
+        submissions_by_form: dict[int, list[Any]] = {}
         for s in submissions:
             if s.form_config_id not in submissions_by_form:
                 submissions_by_form[s.form_config_id] = []

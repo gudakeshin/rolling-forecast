@@ -113,11 +113,12 @@ class ContextManager:
 
         budget = max_tokens
         kept: list[dict[str, str]] = []
-        for msg in reversed(history):
-            cost = max(1, len(msg["content"]) // 4)
+        # NB: distinct name from the ORM `msg` above — these are plain dicts.
+        for entry in reversed(history):
+            cost = max(1, len(entry["content"]) // 4)
             if budget - cost < 0 and kept:
                 break
-            kept.append(msg)
+            kept.append(entry)
             budget -= cost
         kept.reverse()
         kept = kept[-max_messages:]

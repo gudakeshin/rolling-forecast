@@ -88,11 +88,11 @@ def create_what_if_scenario(
         if not base_map:
             continue
         shocked = _apply_shock(base_map, s)
-        rows = [{"period": p, "value": v} for p, v in sorted(shocked.items())]
+        driver_rows = [{"period": p, "value": v} for p, v in sorted(shocked.items())]
         upsert_driver_values(
             db,
             driver_id=s.driver_id,
-            rows=rows,
+            rows=driver_rows,
             value_type="scenario",
             version_id=child.id,
             actor=None,
@@ -139,12 +139,12 @@ def create_what_if_scenario(
 
     # Apply link-based effect (fast approximation; no model refit)
     for link in links:
-        shocked = shocked_by_driver.get(link.driver_id)
-        if not shocked:
+        link_shocks = shocked_by_driver.get(link.driver_id)
+        if not link_shocks:
             continue
         base_series = materialize_driver_series(db, driver_id=link.driver_id, value_type="actual")
         base_map = {str(p): float(v) for p, v in base_series.items()}
-        for period, new_driver in shocked.items():
+        for period, new_driver in link_shocks.items():
             row = by_key.get((link.line_item_id, period))
             if row is None:
                 continue

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from fastapi import Depends, HTTPException, status
+from typing import TypeVar
+
 from sqlalchemy.orm import Query, Session
 
 from app.models.user import User
@@ -39,7 +41,10 @@ def can_view_all_bus(user: User) -> bool:
     return user.role.name == "admin"
 
 
-def line_item_scope_filter(query: Query, user: User, line_item_model) -> Query:
+_Q = TypeVar("_Q", bound=Query)
+
+
+def line_item_scope_filter(query: _Q, user: User, line_item_model) -> _Q:
     """Restrict a LineItem query to the caller's BU unless they can view all.
 
     Line items with NULL business_unit are treated as shared (visible to all).

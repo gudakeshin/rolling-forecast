@@ -52,8 +52,8 @@ class ETSModel(IForecastModel):
         specs: list[dict[str, Any]] = []
         errors = ("add",)
         # multiplicative error needs strictly positive data — gated at fit time
-        trends = (None, "add")
-        seasonals = (None,)
+        trends: tuple[str | None, ...] = (None, "add")
+        seasonals: tuple[str | None, ...] = (None,)
         if n >= 2 * m:
             seasonals = (None, "add")
         for err in errors:

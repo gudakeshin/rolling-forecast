@@ -274,9 +274,11 @@ class PlanForecastSkill(BaseSkill):
         )
 
         # Model comparison table — columns follow registry complexity order
+        # NB: a walrus inside a comprehension binds in the *enclosing* scope, so
+        # this name must not collide with anything used later in the function.
         display_models = [
             n for n in model_registry.list_models_by_complexity()
-            if (m := model_registry.get(n)) and m.capabilities.auto_selectable
+            if (candidate := model_registry.get(n)) and candidate.capabilities.auto_selectable
         ]
         if comparison_results:
             metric_label = (
@@ -296,8 +298,8 @@ class PlanForecastSkill(BaseSkill):
                 {"key": "line_item", "label": "Line Item"},
                 {"key": "data_points", "label": "Months"},
             ]
-            for m in display_models:
-                comp_columns.append({"key": m, "label": m.upper()})
+            for model_name in display_models:
+                comp_columns.append({"key": model_name, "label": model_name.upper()})
             comp_columns.append({"key": "best_model", "label": "Winner"})
 
             content_blocks.append(

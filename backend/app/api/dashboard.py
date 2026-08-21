@@ -598,7 +598,7 @@ async def get_executive_dashboard(
     priority_items = priority_items[:12]
 
     # ─── 5. Risk & Opportunity by Category ────────────
-    risk_opportunity = []
+    risk_opportunity: list[dict[str, Any]] = []
     for cat, totals in sorted(cat_totals.items(), key=lambda x: -abs(x[1]["p50"])):
         downside = totals["p50"] - totals["p10"]
         upside = totals["p90"] - totals["p50"]

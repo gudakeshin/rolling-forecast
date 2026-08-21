@@ -100,7 +100,7 @@ class FinancialLookupSkill(BaseSkill):
         from app.services.permissions import resolve_skill_user
 
         helper = CSVActualsProvider()
-        rows = []
+        rows: list[dict[str, Any]] = []
         for d, v in zip(dates, values):
             period = helper._normalize_period(d)
             try:
@@ -112,7 +112,7 @@ class FinancialLookupSkill(BaseSkill):
         # Monthly series: last observation wins per period
         by_period: dict[str, float] = {}
         for r in rows:
-            by_period[r["period"]] = r["value"]
+            by_period[str(r["period"])] = float(r["value"])
         deduped = [{"period": p, "value": v} for p, v in sorted(by_period.items())]
         actor = resolve_skill_user(context)
         meta = persist_macro_as_driver(

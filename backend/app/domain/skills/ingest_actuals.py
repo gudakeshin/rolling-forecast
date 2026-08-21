@@ -76,6 +76,13 @@ class IngestActualsSkill(BaseSkill):
             )
 
         df = result.dataframe
+        if df is None:
+            # A provider reporting success with no frame would otherwise blow up
+            # on .groupby() further down with an opaque AttributeError.
+            return SkillResult.fail(
+                "Ingestion reported success but returned no data frame — "
+                "nothing to load."
+            )
 
         # Idempotent on file hash: re-ingest updates the same dataset in place
         dataset = (
@@ -112,7 +119,7 @@ class IngestActualsSkill(BaseSkill):
 
         # Create/update LineItems
         existing_items = {li.account_code: li for li in db.query(LineItem).all()}
-        line_item_map = {}  # account_code -> LineItem
+        line_item_map: dict[str, LineItem] = {}  # account_code -> LineItem
         new_items_count = 0
 
         accounts = df.groupby("account_code").first().reset_index()
@@ -139,13 +146,13 @@ class IngestActualsSkill(BaseSkill):
         by_key: dict[tuple[int, str], dict[str, Any]] = {}
         for _, row in df.iterrows():
             code = str(row["account_code"])
-            li = line_item_map.get(code)
-            if not li:
+            mapped_li = line_item_map.get(code)
+            if not mapped_li:
                 continue
             period = str(row["period"])
-            by_key[(li.id, period)] = {
+            by_key[(mapped_li.id, period)] = {
                 "dataset_id": dataset.id,
-                "line_item_id": li.id,
+                "line_item_id": mapped_li.id,
                 "period": period,
                 "value": float(row["value"]),
                 "currency": str(row.get("currency", "USD")),

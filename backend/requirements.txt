@@ -41,7 +41,10 @@ sse-starlette>=2.2.0
 
 # Context Engine / RAG
 chromadb>=0.4.0
-sentence-transformers>=2.2.0
+# sentence-transformers intentionally NOT installed: it pulls in torch
+# (multi-GB CUDA wheels) purely to run all-MiniLM-L6-v2, which Chroma
+# already bundles as ONNX. Set EMBEDDING_BACKEND=sentence_transformers
+# and install it explicitly only if you need a different model.
 langchain-text-splitters>=0.3.0
 pypdf>=4.0.0
 docx2txt>=0.8

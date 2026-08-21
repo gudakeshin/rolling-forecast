@@ -10,13 +10,26 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 connect_args = {}
+engine_kwargs: dict = {}
+
 if settings.database_url.startswith("sqlite"):
     connect_args["check_same_thread"] = False
+else:
+    # Server-side pools go stale across idle timeouts and failovers; without
+    # pre-ping the first request after one surfaces as a user-facing 500.
+    engine_kwargs.update(
+        pool_pre_ping=True,
+        pool_recycle=settings.db_pool_recycle_seconds,
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_max_overflow,
+        pool_timeout=settings.db_pool_timeout_seconds,
+    )
 
 engine = create_engine(
     settings.database_url,
     connect_args=connect_args,
     echo=(settings.app_env == "development"),
+    **engine_kwargs,
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

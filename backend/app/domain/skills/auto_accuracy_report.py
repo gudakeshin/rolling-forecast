@@ -391,7 +391,7 @@ class AutoAccuracyReportSkill(BaseSkill):
                 ],
             )
 
-        version_metrics = []
+        version_metrics: list[dict[str, Any]] = []
         for v in versions:
             recs = (
                 db.query(ForecastAccuracyRecord)

@@ -350,7 +350,9 @@ class GenerateCommentarySkill(BaseSkill):
                 messages=[{"role": "user", "content": prompt}],
             )
             text = "".join(
-                block.text for block in resp.content if getattr(block, "type", None) == "text"
+                getattr(block, "text", "")
+                for block in resp.content
+                if getattr(block, "type", None) == "text"
             ).strip()
             if not text:
                 return None
@@ -418,11 +420,14 @@ class GenerateCommentarySkill(BaseSkill):
 
     def _category_commentary(self, ctx: dict, tone: str) -> list[str]:
         """Generate category-level commentary."""
-        sections = []
+        sections: list[str] = []
         detail = ctx.get("category_detail", [])
 
         if not detail:
-            return [self._text_block("No data found for the specified category.")]
+            # Every other branch returns markdown strings; the caller pipes each
+            # section through render_fact_placeholders(text: str) before wrapping
+            # it in a text block, so returning a block dict here broke that path.
+            return ["No data found for the specified category."]
 
         total = sum(d["value"] for d in detail)
         overridden = sum(1 for d in detail if d["overridden"])

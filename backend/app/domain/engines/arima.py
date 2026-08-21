@@ -68,8 +68,10 @@ class ARIMAModel(IForecastModel):
         has_seasonality = len(values) >= 2 * m
 
         best_aic = float("inf")
-        best_order = None
-        best_seasonal = None
+        # Seeded with the fallback spec used below; the search overwrites both
+        # whenever it sets best_fitted, so they are never meaningfully unset.
+        best_order: tuple[int, int, int] = (1, 1, 0)
+        best_seasonal: tuple[int, int, int, int] = (0, 0, 0, 0)
         best_fitted = None
 
         orders = [(1, 1, 1), (1, 1, 0), (0, 1, 1), (2, 1, 1), (1, 0, 1)]
@@ -101,10 +103,8 @@ class ARIMAModel(IForecastModel):
 
         if best_fitted is None:
             try:
-                model = SARIMAX(values, exog=exog_arr, order=(1, 1, 0))
+                model = SARIMAX(values, exog=exog_arr, order=best_order)
                 best_fitted = model.fit(disp=False)
-                best_order = (1, 1, 0)
-                best_seasonal = (0, 0, 0, 0)
             except Exception as e:
                 logger.warning("ARIMA fit failed completely: %s", e)
                 return {
@@ -175,10 +175,11 @@ class ARIMAModel(IForecastModel):
             param_vec = np.asarray(params["_params"], dtype=float)
             exog_cols = params.get("_exog_columns")
             has_exog = bool(exog_cols)
-            if has_exog and exog_future_arr is None:
-                raise ValueError("exog_future required for exogenous ARIMA predict")
-            if has_exog and len(exog_future_arr) < horizon:
-                raise ValueError("exog_future shorter than forecast horizon")
+            if has_exog:
+                if exog_future_arr is None:
+                    raise ValueError("exog_future required for exogenous ARIMA predict")
+                if len(exog_future_arr) < horizon:
+                    raise ValueError("exog_future shorter than forecast horizon")
 
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -199,7 +200,11 @@ class ARIMAModel(IForecastModel):
                 pred = fitted.get_forecast(
                     steps=horizon,
                     alpha=alpha,
-                    exog=(exog_future_arr[:horizon] if has_exog else None),
+                    exog=(
+                        exog_future_arr[:horizon]
+                        if has_exog and exog_future_arr is not None
+                        else None
+                    ),
                 )
                 forecast = np.asarray(pred.predicted_mean, dtype=float)
                 ci = pred.conf_int()

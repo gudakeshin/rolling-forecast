@@ -124,7 +124,7 @@ async def promote(
         raise HTTPException(404 if "not found" in str(e) else 400, str(e)) from e
     return {
         **_serialize(row),
-        "superseded_ids": getattr(row, "superseded_ids", []),
+        "superseded_ids": row.superseded_ids or [],
     }
 
 

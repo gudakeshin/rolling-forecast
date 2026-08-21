@@ -15,7 +15,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from app.domain.engines.base_model import ForecastOutput, IForecastModel
+from app.domain.engines.base_model import ForecastOutput, IForecastModel, as_exog_model
 from app.domain.engines.linear import LinearTrendModel
 from app.domain.engines.ets import ETSModel
 from app.domain.engines.arima import ARIMAModel
@@ -513,8 +513,9 @@ class ModelRegistry:
         if model is None:
             raise ValueError(f"Model '{model_name}' not found in registry")
         if model.capabilities.supports_exog and exog is not None:
-            params = model.fit(series, dates, exog=exog)
-            return model.predict(params, horizon, dates[-1], exog_future=exog_future)
+            exog_model = as_exog_model(model)
+            params = exog_model.fit(series, dates, exog=exog)
+            return exog_model.predict(params, horizon, dates[-1], exog_future=exog_future)
         params = model.fit(series, dates)
         return model.predict(params, horizon, dates[-1])
 

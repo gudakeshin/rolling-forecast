@@ -45,6 +45,8 @@ class HistoryAnalysis:
         self.n_points = len(values)
         self.warnings: list[str] = []
         self.flags: list[str] = []
+        # Memoised (detected, period, index) from the structural-break scan.
+        self._break_cache: tuple[bool, str | None, int | None] | None = None
 
     @property
     def is_all_zeros(self) -> bool:
@@ -69,8 +71,8 @@ class HistoryAnalysis:
         """
         if self.n_points < 12:
             return False, None, None
-        if getattr(self, "_break_cache", None) is not None:
-            return self._break_cache  # type: ignore[return-value]
+        if self._break_cache is not None:
+            return self._break_cache
 
         y = self.values.values.astype(float)
         if float(np.std(y)) < 1e-12:
@@ -171,7 +173,7 @@ class HistoryAnalysis:
 
     def analyze(self) -> dict[str, Any]:
         """Run full analysis and return recommendations."""
-        result = {
+        result: dict[str, Any] = {
             "n_points": self.n_points,
             "recommended_model": self.recommended_model,
             "warnings": [],
@@ -338,7 +340,7 @@ def check_driver_deadline(
 
     days_elapsed = (now - cycle_start).days
 
-    result = {
+    result: dict[str, Any] = {
         "is_late": False,
         "is_past_soft": False,
         "is_past_hard": False,

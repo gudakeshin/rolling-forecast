@@ -181,7 +181,7 @@ class DetectAnomaliesSkill(BaseSkill):
         self, db: Session, params: dict, method: str, thresholds: dict, user=None
     ) -> list[dict]:
         """Scan actuals data for anomalies."""
-        anomalies = []
+        anomalies: list[dict[str, Any]] = []
 
         # Get all line items (filtered + BU-scoped)
         from app.services.permissions import line_item_scope_filter
@@ -241,7 +241,7 @@ class DetectAnomaliesSkill(BaseSkill):
         self, db: Session, version_id: str, params: dict, method: str, thresholds: dict, user=None
     ) -> list[dict]:
         """Scan forecast data for anomalies."""
-        anomalies = []
+        anomalies: list[dict[str, Any]] = []
 
         from app.services.permissions import line_item_scope_filter
 
@@ -322,7 +322,7 @@ class DetectAnomaliesSkill(BaseSkill):
         self, values: np.ndarray, periods: list, li: LineItem, source: str, threshold: float
     ) -> list[dict]:
         """Detect anomalies using Z-score method."""
-        anomalies = []
+        anomalies: list[dict[str, Any]] = []
         if len(values) < 3:
             return anomalies
 
@@ -370,7 +370,7 @@ class DetectAnomaliesSkill(BaseSkill):
             dates = pd.date_range("2020-01-01", periods=len(values), freq="MS")
         series = pd.Series(values.astype(float))
         result = detect_outliers_stl_mad(series, dates, mad_z=mad_z)
-        anomalies = []
+        anomalies: list[dict[str, Any]] = []
         for i in result.outlier_indices:
             severity = self._classify_severity(mad_z + 0.5, mad_z)
             anomalies.append({
@@ -390,7 +390,7 @@ class DetectAnomaliesSkill(BaseSkill):
         self, values: np.ndarray, periods: list, li: LineItem, source: str, multiplier: float
     ) -> list[dict]:
         """Detect anomalies using IQR method."""
-        anomalies = []
+        anomalies: list[dict[str, Any]] = []
         if len(values) < 4:
             return anomalies
 
@@ -426,7 +426,7 @@ class DetectAnomaliesSkill(BaseSkill):
         self, values: np.ndarray, periods: list, li: LineItem, source: str, pct_threshold: float
     ) -> list[dict]:
         """Detect anomalies as large deviations from the trend line."""
-        anomalies = []
+        anomalies: list[dict[str, Any]] = []
         if len(values) < 4:
             return anomalies
 

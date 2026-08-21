@@ -34,7 +34,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install --require-hashes -r requirements.lock
       - name: Run pytest with coverage
         env:
           APP_ENV: test
@@ -50,7 +50,7 @@ jobs:
           pip install pip-audit bandit
           # Fail on new vulns; ignore known unfixed transitive issues
           # (starlette awaiting FastAPI pin bump; chromadb has no fix release yet)
-          pip-audit -r requirements.txt \
+          pip-audit -r requirements.lock \
             --ignore-vuln GHSA-wj6h-64fc-37mp \
             --ignore-vuln PYSEC-2026-311 \
             --ignore-vuln PYSEC-2026-161 \
@@ -86,7 +86,7 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
+          pip install --require-hashes -r requirements.lock
       - name: Alembic upgrade head (clean Postgres)
         env:
           APP_ENV: test
@@ -98,7 +98,11 @@ jobs:
           test "$(alembic heads | wc -l)" -eq 1
           alembic upgrade head
           alembic current | tee /tmp/current.txt
-          grep -q "012_forecast_scenario" /tmp/current.txt
+          # Assert the DB is stamped at whatever the script head is, rather than
+          # hard-coding a revision id that goes stale on every new migration.
+          HEAD_REV="$(alembic heads | head -1 | awk '{print $1}')"
+          echo "script head: $HEAD_REV"
+          grep -q "$HEAD_REV" /tmp/current.txt
 
   frontend:
     runs-on: ubuntu-latest
@@ -142,7 +146,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install backend
         working-directory: backend
-        run: pip install -r requirements.txt
+        run: pip install --require-hashes -r requirements.lock
       - name: Start backend
         working-directory: backend
         env:

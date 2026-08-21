@@ -16,18 +16,26 @@ services:
     restart: unless-stopped
 
   backend:
+    # Not published: nginx is the only ingress. This is what makes
+    # FORWARDED_ALLOW_IPS=* safe below — nothing else can reach :8000 to
+    # spoof X-Forwarded-For and poison the rate-limit key.
+    ports: []
     command: >
       sh -c "alembic upgrade head &&
       uvicorn app.main:app
       --host 0.0.0.0
       --port 8000
-      --workers 2"
+      --workers 2
+      --proxy-headers"
     volumes:
-      - forecast-db:/app/data
+      # No forecast-db volume — production is Postgres, not SQLite.
       - forecast-uploads:/app/uploads
       - forecast-exports:/app/exports
     environment:
       - APP_ENV=production
+      # Trust nginx's X-Forwarded-For so rate limiting keys on the real
+      # client IP instead of collapsing every user into the proxy's bucket.
+      - FORWARDED_ALLOW_IPS=*
       - LOG_LEVEL=WARNING
       - SEED_DEMO_USERS=false
       - ALLOW_OPEN_REGISTRATION=false
@@ -44,6 +52,11 @@ services:
 
   worker:
     profiles: []
+    volumes:
+      # Drop the dev bind-mounts of host source — production runs the image.
+      # Uploads stay shared with the backend so queued jobs can read them.
+      - forecast-uploads:/app/uploads
+      - forecast-exports:/app/exports
     environment:
       - APP_ENV=production
       - LOG_LEVEL=WARNING

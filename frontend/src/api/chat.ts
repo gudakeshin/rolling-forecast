@@ -2,8 +2,7 @@ import { useAuthStore } from '../store/authStore';
 import type { Conversation, ChatMessage } from '../types/chat';
 import { apiGet, apiDelete, tryRefreshAccessToken } from './client';
 
-// SSE parser v2 — handles \r\n line endings from sse-starlette
-console.log('[chat] SSE parser v2 loaded');
+// SSE parser — handles \r\n line endings from sse-starlette
 
 async function postChatMessage(
   content: string,

@@ -11,6 +11,12 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = "sqlite:///./rolling_forecast.db"
+    # Connection pool (non-SQLite only). Defaults sized for the 2-worker
+    # uvicorn prod command; raise pool_size before raising --workers.
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
+    db_pool_timeout_seconds: int = 30
+    db_pool_recycle_seconds: int = 1800
 
     # Auth
     jwt_secret_key: str = "dev-secret-key-change-in-production"
@@ -31,6 +37,10 @@ class Settings(BaseSettings):
 
     # CORS (comma-separated)
     cors_origins: str = "http://localhost:5173,http://localhost:3000"
+    # Host header allowlist (comma-separated). Opt-in: the middleware is only
+    # installed when this is set, so existing deployments are unaffected.
+    # Loopback is always appended so container healthchecks keep working.
+    allowed_hosts: str = ""
 
     # App
     app_name: str = "Rolling Forecast Assistant"
@@ -115,6 +125,10 @@ class Settings(BaseSettings):
     # Context Engine
     chroma_persist_dir: str = str(Path(__file__).parent.parent / "data" / "chroma")
     embedding_model: str = "all-MiniLM-L6-v2"
+    # "onnx" uses the all-MiniLM-L6-v2 graph bundled with Chroma — same weights
+    # as the sentence-transformers build, but without the torch dependency.
+    # "sentence_transformers" is opt-in and needs that extra installed.
+    embedding_backend: str = "onnx"
     context_chunk_size: int = 1500
     context_chunk_overlap: int = 200
     context_top_k: int = 5
@@ -139,6 +153,17 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def allowed_host_list(self) -> list[str]:
+        """Configured hosts plus loopback (Docker HEALTHCHECK hits localhost)."""
+        hosts = [h.strip() for h in self.allowed_hosts.split(",") if h.strip()]
+        if not hosts:
+            return []
+        for loopback in ("localhost", "127.0.0.1"):
+            if loopback not in hosts:
+                hosts.append(loopback)
+        return hosts
 
     def validate_production_secrets(self) -> None:
         if not self.is_production:

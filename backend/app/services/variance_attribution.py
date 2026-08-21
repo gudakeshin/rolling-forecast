@@ -222,7 +222,7 @@ def _override_reason_attribution(
         if period_to:
             overrides = [o for o in overrides if o.period <= period_to]
 
-    items = []
+    items: list[dict[str, Any]] = []
     total_delta = 0.0
     for o in overrides:
         delta = float(o.override_value) - float(o.original_model_value)
@@ -251,10 +251,12 @@ def _override_reason_attribution(
         "waterfall": _bridge_waterfall(
             title="Override variance (unattributed)",
             start_label="Model",
-            start_value=sum(i["model_value"] for i in items) if items else 0.0,
+            start_value=sum(float(i["model_value"]) for i in items) if items else 0.0,
             buckets=[("Unattributed", total_delta)],
             end_label="Override",
-            end_value=sum(i["override_value"] for i in items) if items else total_delta,
+            end_value=(
+                sum(float(i["override_value"]) for i in items) if items else total_delta
+            ),
         ) if items else None,
     }
 
@@ -284,28 +286,29 @@ def _line_series(
         )
         if not rows:
             return pd.Series(dtype=float)
-        vals = {}
+        vals: dict[str, float] = {}
         for r in rows:
             published = float(
                 r.override_value if r.is_overridden and r.override_value is not None else r.p50
             )
-            if prefer_pre_reconcile and getattr(r, "pre_reconcile_p50", None) is not None:
-                vals[r.period] = float(r.pre_reconcile_p50)
+            pre_reconcile = getattr(r, "pre_reconcile_p50", None)
+            if prefer_pre_reconcile and pre_reconcile is not None:
+                vals[r.period] = float(pre_reconcile)
             else:
                 vals[r.period] = published
         return pd.Series(vals, dtype=float).sort_index()
 
-    rows = (
+    actual_rows = (
         db.query(ActualsRecord.period, ActualsRecord.value)
         .filter(ActualsRecord.line_item_id == line_item_id)
         .order_by(ActualsRecord.period)
         .all()
     )
-    if not rows:
+    if not actual_rows:
         return pd.Series(dtype=float)
     out: dict[str, float] = {}
-    for p, v in rows:
-        out[p] = out.get(p, 0.0) + float(v)
+    for period, value in actual_rows:
+        out[period] = out.get(period, 0.0) + float(value)
     return pd.Series(out, dtype=float).sort_index()
 
 

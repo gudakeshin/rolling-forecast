@@ -25,14 +25,30 @@ MODEL_BASE_SCORES: dict[str, float] = {
 
 
 class _ConfidenceInputs(Protocol):
-    """Minimal shape shared by ForecastLineResult (and test doubles)."""
+    """Minimal shape shared by ForecastLineResult (and test doubles).
 
-    model_mape: float | None
-    p10: float | None
-    p50: float | None
-    p90: float | None
-    model_r_squared: float | None
-    model_type: str | None
+    Declared read-only (properties rather than plain attributes) so a supplier
+    with narrower types — ForecastLineResult.p50 is non-nullable — still
+    satisfies the protocol; mutable protocol attributes are invariant.
+    """
+
+    @property
+    def model_mape(self) -> float | None: ...
+
+    @property
+    def p10(self) -> float | None: ...
+
+    @property
+    def p50(self) -> float | None: ...
+
+    @property
+    def p90(self) -> float | None: ...
+
+    @property
+    def model_r_squared(self) -> float | None: ...
+
+    @property
+    def model_type(self) -> str | None: ...
 
 
 def _base_confidence(model_type: str | None) -> float:
@@ -66,7 +82,14 @@ def compute_confidence_score(result: _ConfidenceInputs) -> float:
         scores.append(mape_score)
         weights.append(0.40)
 
-    if result.p10 is not None and result.p90 is not None and result.p50 != 0:
+    # `result.p50 != 0` alone is True when p50 is None, which used to reach
+    # abs(None) and raise TypeError.
+    if (
+        result.p10 is not None
+        and result.p90 is not None
+        and result.p50 is not None
+        and result.p50 != 0
+    ):
         interval_width = abs(result.p90 - result.p10)
         relative_width = interval_width / (abs(result.p50) + 1e-10)
         width_score = max(0, 100 - relative_width * 100)

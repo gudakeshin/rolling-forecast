@@ -7,9 +7,10 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from typing import Protocol
+
 from app.models.forecast import ForecastLineResult, ForecastVersion
 from app.models.override import Override
-from app.models.user import User
 from app.services.audit import record_audit
 from app.services.dependency_graph import DependencyGraphManager
 from app.services.reconciliation import reconcile_version
@@ -50,7 +51,22 @@ def recalculate_and_reconcile(
     return total
 
 
-def revert_override(db: Session, override_id: str, user: User) -> dict:
+class ActorLike(Protocol):
+    """Minimal actor shape: id for attribution, username for the audit trail.
+
+    Deliberately not ``User`` — skills pass a lightweight stand-in built from
+    the skill context when no ORM user is loaded, and this function only ever
+    reads these two fields.
+    """
+
+    @property
+    def id(self) -> str: ...
+
+    @property
+    def username(self) -> str | None: ...
+
+
+def revert_override(db: Session, override_id: str, user: ActorLike) -> dict:
     """Revert a single active override and recalculate dependents.
 
     Sets status/reverted_at/by, restores ForecastLineResult from original_model_value,

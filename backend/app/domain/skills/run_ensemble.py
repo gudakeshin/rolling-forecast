@@ -272,7 +272,7 @@ class RunEnsembleSkill(BaseSkill):
                 .all()
             )
 
-            avg_mape = np.mean(list(selected_mapes.values()))
+            avg_mape = float(np.mean(list(selected_mapes.values())))
             new_confidence_base = max(0, min(100, 100 - avg_mape * 3))  # Ensemble bonus
             new_confidence = min(100, new_confidence_base + 10)  # +10 ensemble bonus
 
@@ -374,5 +374,5 @@ class RunEnsembleSkill(BaseSkill):
 
         else:  # inverse_mape
             inv = {m: 1.0 / mape for m, mape in model_mapes.items()}
-            total = sum(inv.values())
-            return {m: v / total for m, v in inv.items()}
+            inv_total = sum(inv.values())
+            return {m: v / inv_total for m, v in inv.items()}

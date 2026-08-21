@@ -180,7 +180,7 @@ def load_skill_definition(skill_name: str) -> SkillDefinition | None:
 
 def load_all_skill_definitions() -> dict[str, SkillDefinition]:
     """Load all skill definitions from the skills directory."""
-    definitions = {}
+    definitions: dict[str, Any] = {}
 
     if not SKILLS_DIR.exists():
         logger.warning(f"Skills directory not found: {SKILLS_DIR}")
@@ -217,7 +217,7 @@ def save_skill_definition(skill_name: str, content: str) -> bool:
 
 def list_skill_files() -> list[dict[str, Any]]:
     """List all skill .md files with basic metadata."""
-    results = []
+    results: list[Any] = []
     if not SKILLS_DIR.exists():
         return results
 

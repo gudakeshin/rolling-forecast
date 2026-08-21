@@ -609,8 +609,8 @@ def discover_drivers_for_line(
                     }
                 )
                 continue
-            fit = _ols_fit(y_arr, x_arr)
-            if fit is None:
+            ols_fit = _ols_fit(y_arr, x_arr)
+            if ols_fit is None:
                 skipped.append(
                     {
                         "driver_id": driver.id,
@@ -628,14 +628,14 @@ def discover_drivers_for_line(
                     driver_type=driver.driver_type,
                     lag=lag,
                     n_obs=len(y_arr),
-                    coefficient=fit["coefficient"],
-                    coefficient_se=fit["coefficient_se"],
-                    t_stat=fit["t_stat"],
-                    p_value=fit["p_value"],
-                    r2=fit["r2"],
-                    fit_method=fit["fit_method"],
-                    hac_lags=fit["hac_lags"],
-                    elasticity=_elasticity(y_arr, x_arr, fit["coefficient"]),
+                    coefficient=ols_fit["coefficient"],
+                    coefficient_se=ols_fit["coefficient_se"],
+                    t_stat=ols_fit["t_stat"],
+                    p_value=ols_fit["p_value"],
+                    r2=ols_fit["r2"],
+                    fit_method=ols_fit["fit_method"],
+                    hac_lags=ols_fit["hac_lags"],
+                    elasticity=_elasticity(y_arr, x_arr, ols_fit["coefficient"]),
                     expected_sign=expected,
                     diff_coefficient=diff_fit["coefficient"] if diff_fit else None,
                     diff_p_value=diff_fit["p_value"] if diff_fit else None,

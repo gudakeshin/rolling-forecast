@@ -25,6 +25,17 @@ class LearnedHeuristic(Base):
 
     __tablename__ = "learned_heuristics"
 
+    # Transient, NOT persisted. app.services.reflection stamps these onto rows
+    # it returns so the API can report whether an approved heuristic actually
+    # feeds model selection, and which rows it superseded, without a second
+    # query. Declared here (with __allow_unmapped__) so they are typed and
+    # discoverable rather than materialising out of nowhere on an ORM instance.
+    __allow_unmapped__ = True
+
+    influences_selection: bool = False
+    #: None means "not stamped"; callers should treat it as an empty list.
+    superseded_ids: list[int] | None = None
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     # line_item | category | global
     scope: Mapped[str] = mapped_column(String(32), nullable=False, default="line_item")
