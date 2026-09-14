@@ -194,22 +194,14 @@ def _pick_best(
         if not scored:
             return None, float("inf"), float("inf"), float("inf")
         best_mape = min(c.mape for c in scored)
-        # Prefer simpler on exact MAPE ties; benchmarks lose pure ties
-        def mape_key(c: ModelComparisonResult) -> tuple:
-            return (
-                abs(c.mape - best_mape) > 1e-12,  # False (0) = at best
-                c.mape,
-                c.is_benchmark,  # False before True on ties
-                c.complexity_rank,
-            )
-
-        # First filter to near-best, then tie-break
+        # First filter to near-best (1-SE band), then apply the Occam
+        # tie-break to every candidate inside it — not just exact ties.
         band = _selection_band(
             [m for c in scored for m in (c.fold_mapes or [c.mape])],
             max((c.n_folds for c in scored), default=0),
         )
         within = [c for c in scored if c.mape <= best_mape + band]
-        within.sort(key=lambda c: (c.mape, c.is_benchmark, c.complexity_rank))
+        within.sort(key=lambda c: (c.is_benchmark, c.complexity_rank, c.mape))
         winner = within[0]
         return winner.model_name, winner.mape, winner.mase, winner.pinball
 
@@ -225,12 +217,15 @@ def _pick_best(
     n_folds = max((c.n_folds for c in scored), default=0)
     band = _selection_band(all_folds or [best_mase], n_folds)
     within = [c for c in scored if c.mase <= best_mase + band]
+    # Every candidate here is already "close enough" to the best score, so
+    # the Occam tie-break (simpler, non-benchmark model) leads the sort —
+    # raw MASE/pinball only break ties among equally-simple candidates.
     within.sort(
         key=lambda c: (
-            c.mase,
-            c.pinball if c.pinball != float("inf") else 1e18,
             c.is_benchmark,  # benchmarks win ties only when strictly better on MASE/pinball
             c.complexity_rank,
+            c.mase,
+            c.pinball if c.pinball != float("inf") else 1e18,
         )
     )
     winner = within[0]

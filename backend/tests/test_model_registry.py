@@ -261,13 +261,13 @@ class TestGlobalGBMRegistration:
         winner, *_ = _pick_best([gbm, linear], rule="mase_pinball_complexity")
         assert winner == "linear"
 
-    def test_lower_mase_wins_even_within_the_1se_band(self):
-        """Documents current _pick_best behavior: candidates within the 1-SE
-        band are still ranked by raw MASE first, so a materially-better (but
-        within-band) global_gbm score wins over a simpler model rather than
-        being suppressed by complexity_rank. Only an exact tie reaches the
-        complexity tie-break (see test above). This is pre-existing
-        model_registry.py behavior, unmodified by Phase 2.1."""
+    def test_occam_tie_break_applies_within_the_1se_band(self):
+        """_pick_best's Occam tie-break must fire for any candidate inside
+        the 1-SE band, not just exact-score ties: global_gbm's raw MASE is
+        better, but it's well within linear's ~0.024-wide band, so the
+        simpler model should win. (Previously a bug — `within` was sorted
+        by raw MASE first, so the complexity tie-break only fired on exact
+        ties. Fixed after being knowingly deferred during Phase 2.1.)"""
         linear = ModelComparisonResult(
             model_name="linear", mape=10.0, mase=0.50, pinball=1.0,
             evaluation_time_ms=1, eligible=True, complexity_rank=10,
@@ -281,4 +281,4 @@ class TestGlobalGBMRegistration:
             fold_mases=[0.47, 0.48, 0.49], n_folds=3,
         )
         winner, *_ = _pick_best([linear, gbm], rule="mase_pinball_complexity")
-        assert winner == "global_gbm"
+        assert winner == "linear"
