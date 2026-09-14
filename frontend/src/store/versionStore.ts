@@ -42,17 +42,20 @@ export const useVersionStore = create<VersionState>()(
           activeVersionId: id,
           ...(v?.scenario ? { activeScenario: v.scenario } : {}),
         });
-        const panelBridge = (globalThis as { __RF_PANEL_STORE__?: PanelBridgeStore })
-          .__RF_PANEL_STORE__;
-        const panel = panelBridge?.getState?.();
-        if (panel?.isOpen && panel?.panelParams?.version_id) {
-          panel.setPanelParams({
-            ...panel.panelParams,
-            version_id: id,
-            offset: 0,
-            _refresh: Date.now(),
-          });
-          panel.setLoading(true);
+        // Refresh every open panel slot (primary + pinned secondary) that's
+        // scoped to a version — not just whichever one happens to be primary.
+        const bridges = globalThis as unknown as Record<string, PanelBridgeStore | undefined>;
+        for (const key of ['__RF_PANEL_STORE__', '__RF_PANEL_STORE_2__']) {
+          const panel = bridges[key]?.getState?.();
+          if (panel?.isOpen && panel?.panelParams?.version_id) {
+            panel.setPanelParams({
+              ...panel.panelParams,
+              version_id: id,
+              offset: 0,
+              _refresh: Date.now(),
+            });
+            panel.setLoading(true);
+          }
         }
       },
 

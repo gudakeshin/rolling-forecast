@@ -4,7 +4,7 @@ import {
   Edit3, ShieldCheck, Eye, Filter, BarChart3, TrendingDown, TrendingUp,
   Bot, Sparkles, Info, MessageSquare, Upload, RefreshCw, ArrowRightLeft,
   UserCheck, Search, Zap, CircleDot, Save, X, GitBranch, Activity,
-  Loader2, Target,
+  Loader2, Target, Lightbulb,
 } from 'lucide-react';
 import { apiPost } from '../../api/client';
 import { usePanelStore } from '../../store/panelStore';
@@ -182,23 +182,28 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
   const hasMore = Boolean(data.data.has_more);
   const pageLimit = data.data.limit || 100;
 
+  // Hoisted above the useState calls below so their initializers can read
+  // the panel's own params via the (context-resolved) hook rather than a
+  // static usePanelStore.getState() call, which would always read the
+  // primary slot even when this component is rendered pinned in the
+  // secondary slot (see store/panelStore.ts).
+  const { openPanel, panelParams, setPanelParams } = usePanelStore();
+
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [filterCategory, setFilterCategory] = useState<string>(
-    typeof usePanelStore.getState().panelParams?.category === 'string'
-      ? usePanelStore.getState().panelParams.category
-      : 'all',
+    typeof panelParams?.category === 'string' ? panelParams.category : 'all',
   );
   const [filterConfidence, setFilterConfidence] = useState<string>(
-    typeof usePanelStore.getState().panelParams?.confidence_level === 'string'
-      ? usePanelStore.getState().panelParams.confidence_level
-      : 'all',
+    typeof panelParams?.confidence_level === 'string' ? panelParams.confidence_level : 'all',
   );
-  const [filterExog, setFilterExog] = useState<string>('all');
-  const [sortBy, setSortBy] = useState<string>('default');
+  const [filterExog, setFilterExog] = useState<string>(
+    typeof panelParams?.exog_mode === 'string' ? panelParams.exog_mode : 'all',
+  );
+  const [sortBy, setSortBy] = useState<string>(
+    typeof panelParams?.sort_by === 'string' ? panelParams.sort_by : 'default',
+  );
   const [actioningId, setActioningId] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
-
-  const { openPanel, panelParams, setPanelParams } = usePanelStore();
 
   const pollEnabled = (enablePolling ?? true) && Boolean(onRefresh);
 
@@ -253,6 +258,17 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
       });
     },
     [panelParams, setPanelParams, version?.id],
+  );
+
+  // Client-only view settings (no server round-trip — PanelContainer's fetch
+  // effect only depends on the server-relevant subset of panelParams) that
+  // still ride the URL/saved-view serialization so they survive close/reopen
+  // and a shared link.
+  const updateViewParam = useCallback(
+    (key: 'exog_mode' | 'sort_by', value: string) => {
+      setPanelParams({ ...panelParams, [key]: value });
+    },
+    [panelParams, setPanelParams],
   );
 
   // ── Sorting ──
@@ -498,7 +514,10 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
 
         <select
           value={filterExog}
-          onChange={(e) => setFilterExog(e.target.value)}
+          onChange={(e) => {
+            setFilterExog(e.target.value);
+            updateViewParam('exog_mode', e.target.value);
+          }}
           className="text-xs bg-surface-800 border border-surface-700 text-surface-300 rounded-lg px-2 py-1.5 focus:border-deloitte-green/50 focus:outline-none"
         >
           <option value="all">All Exog Modes</option>
@@ -508,7 +527,10 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
 
         <select
           value={sortBy}
-          onChange={(e) => setSortBy(e.target.value)}
+          onChange={(e) => {
+            setSortBy(e.target.value);
+            updateViewParam('sort_by', e.target.value);
+          }}
           className="text-xs bg-surface-800 border border-surface-700 text-surface-300 rounded-lg px-2 py-1.5 focus:border-deloitte-green/50 focus:outline-none"
         >
           <option value="default">Default Order</option>
@@ -552,6 +574,13 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
             onAction={handleReviewAction}
             isActioning={actioningId === row.id}
             onToggle={() => toggleExpand(row.id)}
+            onExplain={() =>
+              openPanel('why_this_number', {
+                result_id: row.id,
+                line_item_id: row.line_item_id,
+                period: row.period || row.periods,
+              })
+            }
           />
         )}
         exportFilename={`forecast_${version?.name || 'export'}`}
@@ -926,19 +955,39 @@ function ForecastRowActions({
   onAction,
   isActioning,
   onToggle,
+  onExplain,
 }: {
   row: ForecastRow;
   onAction: (id: string, action: string) => void;
   isActioning: boolean;
   onToggle: () => void;
+  onExplain: () => void;
 }) {
   const recommendation = row.ai_recommendation;
   const reasoning = row.ai_reasoning;
   const hasIssue = recommendation && recommendation !== 'approve';
   const isReviewed = row.review_status === 'approved' || row.review_status === 'rejected';
 
+  const explainButton = (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        onExplain();
+      }}
+      className="p-1 rounded-md hover:bg-surface-700 text-surface-600 hover:text-amber-300 transition-colors"
+      title="Why this number?"
+    >
+      <Lightbulb className="w-3.5 h-3.5" />
+    </button>
+  );
+
   if (isReviewed) {
-    return <span className="text-xs text-surface-500">Done</span>;
+    return (
+      <div className="flex items-center gap-1.5 justify-center">
+        <span className="text-xs text-surface-500">Done</span>
+        {explainButton}
+      </div>
+    );
   }
 
   if (hasIssue) {
@@ -976,6 +1025,7 @@ function ForecastRowActions({
         >
           <Sparkles className="w-3.5 h-3.5" />
         </button>
+        {explainButton}
       </div>
     );
   }
@@ -1005,6 +1055,7 @@ function ForecastRowActions({
           <Info className="w-3.5 h-3.5" />
         </button>
       )}
+      {explainButton}
     </div>
   );
 }

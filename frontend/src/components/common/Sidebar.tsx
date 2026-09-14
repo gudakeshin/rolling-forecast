@@ -19,9 +19,11 @@ import {
   MessageSquarePlus,
   Trash2,
   Loader2,
+  Bookmark,
 } from 'lucide-react';
 import { useAuthStore, useCan } from '../../store/authStore';
-import { usePanelStore } from '../../store/panelStore';
+import { usePanelStore, useSecondaryPanelStore } from '../../store/panelStore';
+import { useSavedViewsStore } from '../../store/savedViewsStore';
 import { useVersionStore } from '../../store/versionStore';
 import { useChatStore } from '../../store/chatStore';
 import { getConversation, getConversations, deleteConversation } from '../../api/chat';
@@ -49,6 +51,10 @@ export function Sidebar() {
   const activePanel = usePanelStore((s) => s.panelType);
   const isPanelOpen = usePanelStore((s) => s.isOpen);
   const openPanel = usePanelStore((s) => s.openPanel);
+  const pinnedPanelType = useSecondaryPanelStore((s) => s.panelType);
+  const isPinnedOpen = useSecondaryPanelStore((s) => s.isOpen);
+  const isPanelTypeOpen = (key: string) =>
+    (isPanelOpen && activePanel === key) || (isPinnedOpen && pinnedPanelType === key);
   const versions = useVersionStore((s) => s.versions);
   const activeVersionId = useVersionStore((s) => s.activeVersionId);
   const activeScenario = useVersionStore((s) => s.activeScenario);
@@ -218,7 +224,7 @@ export function Sidebar() {
           type="button"
           onClick={open('executive_dashboard')}
           className={`w-full flex items-center gap-2 px-2.5 py-2.5 rounded-xl text-[13px] font-bold transition-colors mb-3 ${
-            isPanelOpen && activePanel === 'executive_dashboard'
+            isPanelTypeOpen('executive_dashboard')
               ? 'bg-deloitte-green/12 text-deloitte-green'
               : 'text-surface-200 hover:bg-surface-700/50'
           }`}
@@ -236,7 +242,7 @@ export function Sidebar() {
                 {t(group.titleKey)}
               </div>
               {visible.map((item) => {
-                const active = isPanelOpen && activePanel === item.key;
+                const active = isPanelTypeOpen(item.key);
                 return (
                   <button
                     key={item.key}
@@ -258,8 +264,54 @@ export function Sidebar() {
         })}
       </div>
 
+      <SavedViews />
       <RecentChats />
     </nav>
+  );
+}
+
+/** Named panel+filter presets saved from any panel's header ("Save as view").
+ * localStorage-only today — see store/savedViewsStore.ts. */
+function SavedViews() {
+  const { t } = useI18n();
+  const views = useSavedViewsStore((s) => s.views);
+  const deleteView = useSavedViewsStore((s) => s.deleteView);
+  const openPanel = usePanelStore((s) => s.openPanel);
+
+  if (!views.length) return null;
+
+  return (
+    <div className="border-t border-surface-700/60 p-2.5">
+      <div className="flex items-center gap-1.5 px-1 pb-1.5 text-[10px] font-bold text-surface-500 uppercase tracking-wider">
+        <Bookmark className="w-3 h-3" aria-hidden="true" />
+        {t('sidebar.savedViews')}
+      </div>
+      <div className="max-h-32 overflow-y-auto space-y-0.5">
+        {views.map((v) => (
+          <div
+            key={v.id}
+            className="group flex items-stretch rounded-lg hover:bg-surface-700/40"
+          >
+            <button
+              type="button"
+              onClick={() => openPanel(v.panelType, v.panelParams)}
+              className="flex-1 min-w-0 text-left rounded-lg px-2 py-1.5 text-xs truncate text-surface-300"
+              title={v.name}
+            >
+              {v.name}
+            </button>
+            <button
+              type="button"
+              onClick={() => deleteView(v.id)}
+              className="opacity-0 group-hover:opacity-100 focus:opacity-100 self-center mr-1 p-1 rounded-md text-surface-500 hover:text-red-400 transition-opacity"
+              aria-label={`${t('sidebar.deleteView')} ${v.name}`}
+            >
+              <Trash2 className="w-3 h-3" />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

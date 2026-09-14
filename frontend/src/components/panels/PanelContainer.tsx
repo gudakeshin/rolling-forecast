@@ -1,13 +1,23 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   Loader2, Table, GitCompare, Edit, ClipboardList, Settings2,
   LayoutDashboard, Shield, Target, FileInput, AlertTriangle, FolderOpen,
-  CheckSquare, Activity, Sparkles, GitBranch, Brain,
+  CheckSquare, Activity, Sparkles, GitBranch, Brain, Lightbulb,
 } from 'lucide-react';
-import { usePanelStore } from '../../store/panelStore';
+import {
+  usePanelStore,
+  usePrimaryPanelStore,
+  useSecondaryPanelStore,
+  useWorkspaceLayoutStore,
+  pinPrimaryToSecondary,
+  PanelStoreProvider,
+  type PanelSlot,
+} from '../../store/panelStore';
+import { useSavedViewsStore } from '../../store/savedViewsStore';
 import { toast } from '../../store/toastStore';
 import { apiGet } from '../../api/client';
 import { useI18n } from '../../i18n/useI18n';
+import type { MessageKey } from '../../i18n';
 import { SlidePanel } from '../ui/SlidePanel';
 import { ForecastTablePanel } from './ForecastTablePanel';
 import { OverridesPanel } from './OverridesPanel';
@@ -25,6 +35,7 @@ import { ExplainabilityPanel } from './ExplainabilityPanel';
 import { WhatIfPanel } from './WhatIfPanel';
 import { HeuristicsPanel } from './HeuristicsPanel';
 import { AdminConsolePanel } from './AdminConsolePanel';
+import { WhyThisNumberPanel } from './WhyThisNumberPanel';
 
 const panelIcons: Record<string, any> = {
   forecast_table: Table,
@@ -44,9 +55,47 @@ const panelIcons: Record<string, any> = {
   document_library: FolderOpen,
   approvals: CheckSquare,
   admin_console: Shield,
+  why_this_number: Lightbulb,
 };
 
-export function PanelContainer() {
+// Panel types that fetch nothing from the server — they own their data.
+const STATIC_PANELS: Record<string, { title: string; titleKey?: MessageKey; render: () => ReactNode }> = {
+  skill_editor: {
+    title: 'Skill Editor',
+    render: () => (
+      <div className="-m-4 h-[calc(100%+2rem)] overflow-hidden">
+        <SkillEditorPanel />
+      </div>
+    ),
+  },
+  approvals: { title: 'Approvals', render: () => <ApprovalsPanel /> },
+  drivers: { title: 'Drivers', titleKey: 'panel.drivers', render: () => <DriversPanel /> },
+  explainability: {
+    title: 'Explainability',
+    titleKey: 'panel.explainability',
+    render: () => <ExplainabilityPanel />,
+  },
+  what_if: { title: 'What If', titleKey: 'panel.whatIf', render: () => <WhatIfPanel /> },
+  heuristics: { title: 'Heuristics', titleKey: 'panel.heuristics', render: () => <HeuristicsPanel /> },
+  admin_console: { title: 'Admin Console', render: () => <AdminConsolePanel /> },
+};
+
+/**
+ * Renders one panel slot. `variant="secondary"` wraps its subtree in a
+ * PanelStoreProvider so nested panels that read `usePanelStore` directly
+ * (rather than via props) transparently see the secondary slot's state —
+ * see store/panelStore.ts for why that's safe for every existing panel.
+ */
+export function PanelContainer({ variant = 'primary' }: { variant?: PanelSlot }) {
+  const store = variant === 'secondary' ? useSecondaryPanelStore : usePrimaryPanelStore;
+  return (
+    <PanelStoreProvider store={store}>
+      <PanelContainerBody variant={variant} />
+    </PanelStoreProvider>
+  );
+}
+
+function PanelContainerBody({ variant }: { variant: PanelSlot }) {
   const { t } = useI18n();
   const {
     panelType,
@@ -61,31 +110,52 @@ export function PanelContainer() {
     refreshPanel,
   } = usePanelStore();
   const [loadError, setLoadError] = useState<string | null>(null);
+  const maximizedSlot = useWorkspaceLayoutStore((s) => s.maximizedSlot);
+  const toggleMaximize = useWorkspaceLayoutStore((s) => s.toggleMaximize);
+  // The raw instance for this slot — needed for the one imperative getState()
+  // read below; `usePanelStore` above is context-resolved for everything else.
+  const rawStore = variant === 'secondary' ? useSecondaryPanelStore : usePrimaryPanelStore;
+  const saveView = useSavedViewsStore((s) => s.saveView);
+
+  const handleSaveView = () => {
+    if (!panelType) return;
+    const name = window.prompt('Name this view:');
+    if (!name || !name.trim()) return;
+    saveView(name.trim(), panelType, panelParams);
+    toast.success(`Saved view "${name.trim()}"`);
+  };
+
+  // Only these fields actually change what gets fetched. Depending on the
+  // whole panelParams object would refetch on every cosmetic param change
+  // too (e.g. exog_mode/sort_by, added so those filters survive a saved
+  // view/URL — see ForecastTablePanel) even though nothing server-side moved.
+  const fetchKey = useMemo(
+    () =>
+      JSON.stringify({
+        version_id: panelParams?.version_id,
+        version_id_a: panelParams?.version_id_a,
+        version_id_b: panelParams?.version_id_b,
+        view: panelParams?.view,
+        category: panelParams?.category,
+        confidence_level: panelParams?.confidence_level,
+        offset: panelParams?.offset,
+        limit: panelParams?.limit,
+        conversation_id: panelParams?.conversation_id,
+        result_id: panelParams?.result_id,
+        _append: panelParams?._append,
+        _refresh: panelParams?._refresh,
+      }),
+    [panelParams],
+  );
 
   useEffect(() => {
     if (!panelType || !panelParams) return;
 
-    if (
-      panelType === 'skill_editor'
-      || panelType === 'approvals'
-      || panelType === 'drivers'
-      || panelType === 'explainability'
-      || panelType === 'what_if'
-      || panelType === 'heuristics'
-      || panelType === 'admin_console'
-    ) {
-      const titles: Record<string, string> = {
-        skill_editor: 'Skill Editor',
-        approvals: 'Approvals',
-        drivers: t('panel.drivers'),
-        explainability: t('panel.explainability'),
-        what_if: t('panel.whatIf'),
-        heuristics: t('panel.heuristics'),
-        admin_console: 'Admin Console',
-      };
+    const staticPanel = STATIC_PANELS[panelType];
+    if (staticPanel) {
       setPanelData({
         panel_type: panelType,
-        title: titles[panelType] || panelType,
+        title: staticPanel.titleKey ? t(staticPanel.titleKey) : staticPanel.title,
         data: {},
       });
       return;
@@ -138,13 +208,16 @@ export function PanelContainer() {
           case 'document_library':
             url = `/context/document-panel/${panelParams.conversation_id || 'default'}`;
             break;
+          case 'why_this_number':
+            url = `/panel/why-this-number/${panelParams.result_id}`;
+            break;
           default:
             setLoading(false);
             return;
         }
         const data = await apiGet<any>(url, { signal: controller.signal });
         if (append && panelType === 'forecast_table') {
-          const current = usePanelStore.getState().panelData;
+          const current = rawStore.getState().panelData;
           const prevRows = (current?.data?.rows as unknown[]) || [];
           const newRows = data?.data?.rows || [];
           setPanelData({
@@ -177,136 +250,48 @@ export function PanelContainer() {
     // on every render — an infinite update loop. Locale-driven titles inside
     // this effect only need the current translation at fetch time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panelType, panelParams, setLoading, setPanelData]);
+  }, [panelType, fetchKey, setLoading, setPanelData, rawStore]);
 
+  const staticPanel = panelType ? STATIC_PANELS[panelType] : undefined;
   const Icon = panelIcons[panelType || ''] || Table;
+  const title = staticPanel
+    ? (staticPanel.titleKey ? t(staticPanel.titleKey) : staticPanel.title)
+    : panelData?.title || panelType?.replace(/_/g, ' ') || 'Details';
 
-  if (panelType === 'skill_editor') {
-    return (
-      <SlidePanel
-        title="Skill Editor"
-        icon={<Settings2 className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
-        onClose={closePanel}
-        widthExpanded={widthMode === 'wide'}
-        onToggleWidth={toggleWidth}
-      >
-        <div className="-m-4 h-[calc(100%+2rem)] overflow-hidden">
-          <SkillEditorPanel />
-        </div>
-      </SlidePanel>
-    );
-  }
-
-  if (panelType === 'approvals') {
-    return (
-      <SlidePanel
-        title="Approvals"
-        icon={<CheckSquare className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
-        onClose={closePanel}
-        widthExpanded={widthMode === 'wide'}
-        onToggleWidth={toggleWidth}
-      >
-        <ApprovalsPanel />
-      </SlidePanel>
-    );
-  }
-
-  if (panelType === 'drivers') {
-    return (
-      <SlidePanel
-        title={t('panel.drivers')}
-        icon={<Activity className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
-        onClose={closePanel}
-        widthExpanded={widthMode === 'wide'}
-        onToggleWidth={toggleWidth}
-      >
-        <DriversPanel />
-      </SlidePanel>
-    );
-  }
-
-  if (panelType === 'explainability') {
-    return (
-      <SlidePanel
-        title={t('panel.explainability')}
-        icon={<Sparkles className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
-        onClose={closePanel}
-        widthExpanded={widthMode === 'wide'}
-        onToggleWidth={toggleWidth}
-      >
-        <ExplainabilityPanel />
-      </SlidePanel>
-    );
-  }
-
-  if (panelType === 'what_if') {
-    return (
-      <SlidePanel
-        title={t('panel.whatIf')}
-        icon={<GitBranch className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
-        onClose={closePanel}
-        widthExpanded={widthMode === 'wide'}
-        onToggleWidth={toggleWidth}
-      >
-        <WhatIfPanel />
-      </SlidePanel>
-    );
-  }
-
-  if (panelType === 'heuristics') {
-    return (
-      <SlidePanel
-        title={t('panel.heuristics')}
-        icon={<Brain className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
-        onClose={closePanel}
-        widthExpanded={widthMode === 'wide'}
-        onToggleWidth={toggleWidth}
-      >
-        <HeuristicsPanel />
-      </SlidePanel>
-    );
-  }
-
-  if (panelType === 'admin_console') {
-    return (
-      <SlidePanel
-        title="Admin Console"
-        icon={<Shield className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
-        onClose={closePanel}
-        widthExpanded={widthMode === 'wide'}
-        onToggleWidth={toggleWidth}
-      >
-        <AdminConsolePanel />
-      </SlidePanel>
-    );
-  }
+  const content = staticPanel ? (
+    staticPanel.render()
+  ) : isLoading ? (
+    <div className="flex flex-col items-center justify-center h-32 gap-2">
+      <Loader2 className="w-6 h-6 animate-spin text-deloitte-green" />
+      <span className="text-xs text-surface-500">Loading data...</span>
+    </div>
+  ) : loadError ? (
+    <div className="flex flex-col items-center justify-center h-32 gap-2 text-center px-4">
+      <AlertTriangle className="w-6 h-6 text-amber-400" />
+      <p className="text-sm text-amber-300">{loadError}</p>
+      <p className="text-xs text-surface-500">
+        Ensure the forecast version exists and required upstream steps have completed.
+      </p>
+    </div>
+  ) : panelData ? (
+    <PanelContent type={panelType} data={panelData} onRefresh={refreshPanel} />
+  ) : (
+    <p className="text-surface-500 text-sm text-center">No data available</p>
+  );
 
   return (
     <SlidePanel
-      title={panelData?.title || panelType?.replace(/_/g, ' ') || 'Details'}
+      title={title}
       icon={<Icon className="w-4 h-4 text-deloitte-green" aria-hidden="true" />}
       onClose={closePanel}
       widthExpanded={widthMode === 'wide'}
       onToggleWidth={toggleWidth}
+      onPin={variant === 'primary' ? pinPrimaryToSecondary : undefined}
+      onToggleMaximize={() => toggleMaximize(variant)}
+      isMaximized={maximizedSlot === variant}
+      onSaveView={!staticPanel ? handleSaveView : undefined}
     >
-      {isLoading ? (
-        <div className="flex flex-col items-center justify-center h-32 gap-2">
-          <Loader2 className="w-6 h-6 animate-spin text-deloitte-green" />
-          <span className="text-xs text-surface-500">Loading data...</span>
-        </div>
-      ) : loadError ? (
-        <div className="flex flex-col items-center justify-center h-32 gap-2 text-center px-4">
-          <AlertTriangle className="w-6 h-6 text-amber-400" />
-          <p className="text-sm text-amber-300">{loadError}</p>
-          <p className="text-xs text-surface-500">
-            Ensure the forecast version exists and required upstream steps have completed.
-          </p>
-        </div>
-      ) : panelData ? (
-        <PanelContent type={panelType} data={panelData} onRefresh={refreshPanel} />
-      ) : (
-        <p className="text-surface-500 text-sm text-center">No data available</p>
-      )}
+      {content}
     </SlidePanel>
   );
 }
@@ -348,6 +333,8 @@ function PanelContent({
       return <AnomalyPanel data={data} />;
     case 'document_library':
       return <DocumentLibraryPanel data={data} />;
+    case 'why_this_number':
+      return <WhyThisNumberPanel data={data} />;
     default:
       return (
         <pre className="text-xs text-surface-400 whitespace-pre-wrap">
