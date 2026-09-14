@@ -535,6 +535,68 @@ class GenerateBaselineSkill(BaseSkill):
             summary["drivers_forecasted"] = int(driver_stage.get("drivers_forecasted", 0) or 0)
             all_warnings.extend(driver_stage.get("warnings") or [])
 
+        # Phase 2.1: build the global cross-series panel model once, before the
+        # per-line loop, reusing actuals_by_li/line_items already resident.
+        # Never allowed to fail a run — any exception here just leaves panel
+        # None and every line falls back to the per-series roster as before.
+        panel: Any = None
+        if settings.enable_global_gbm_model:
+            try:
+                from app.services.forecast_pipeline import compute_effective_series
+                from app.services.panel_forecast import build_global_panel_context
+
+                effective_series_by_line: dict[int, Any] = {}
+                periods_by_line: dict[int, list[str]] = {}
+                for pli in line_items:
+                    records = actuals_by_li.get(pli.id, [])
+                    if not records:
+                        continue
+                    raw_values = [float(r.value) for r in records]
+                    p_periods = [r.period for r in records]
+                    currencies = [
+                        getattr(r, "currency", None) or reporting_ccy for r in records
+                    ]
+                    try:
+                        converted, _fx_hash = convert_series_values(
+                            db, raw_values, currencies, p_periods, reporting_ccy
+                        )
+                    except MissingFxRateError:
+                        continue
+                    p_values = pd.Series(converted)
+                    p_dates = pd.DatetimeIndex(
+                        [pd.Timestamp(period_to_date(p, cal_cfg)) for p in p_periods]
+                    )
+                    periods_by_line[pli.id] = p_periods
+                    effective_series_by_line[pli.id] = compute_effective_series(
+                        pli, p_values, p_dates
+                    )
+
+                panel = build_global_panel_context(
+                    db,
+                    line_items=line_items,
+                    effective_series_by_line=effective_series_by_line,
+                    periods_by_line=periods_by_line,
+                    cal_cfg=cal_cfg,
+                    version_id=version.id,
+                    horizon=horizon,
+                    random_seed=random_seed,
+                    registry=model_registry,
+                )
+                if panel is not None:
+                    logger.info(
+                        "global_gbm panel built: %d lines, %d training rows",
+                        panel.n_lines,
+                        panel.n_training_rows,
+                    )
+            except Exception as e:
+                logger.warning(
+                    "global_gbm panel build failed — continuing without it: %s", e
+                )
+                all_warnings.append(
+                    f"Global panel model unavailable this run: {str(e)[:150]}"
+                )
+                panel = None
+
         try:
             for li in line_items:
                 summary["total"] += 1
@@ -606,6 +668,7 @@ class GenerateBaselineSkill(BaseSkill):
                         model_registry=model_registry,
                         enable_driver_forecasting=settings.enable_driver_forecasting,
                         realized_coverage=realized_coverage,
+                        panel=panel,
                     ),
                 )
 

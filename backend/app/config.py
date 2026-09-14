@@ -132,6 +132,11 @@ class Settings(BaseSettings):
     conformal_min_residuals_total: int = 8
     # Closed cycles of realized vintages before realized coverage overrides CV.
     conformal_realized_min_cycles: int = 3
+    # Global cross-series panel model (gradient-boosted quantile regressors,
+    # fit once across all line items in a version). Off by default — the
+    # two-stage cost screen would otherwise start admitting it into every
+    # material line's comparison the moment it ships.
+    enable_global_gbm_model: bool = False
 
     # Context Engine
     chroma_persist_dir: str = str(Path(__file__).parent.parent / "data" / "chroma")

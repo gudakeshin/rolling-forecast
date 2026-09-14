@@ -10,16 +10,24 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
 
-from app.domain.engines.base_model import ForecastOutput, IForecastModel, as_exog_model
+from app.domain.engines.base_model import (
+    ForecastOutput,
+    IForecastModel,
+    as_exog_model,
+    as_panel_model,
+)
 from app.domain.engines.linear import LinearTrendModel
 from app.domain.engines.ets import ETSModel
 from app.domain.engines.arima import ARIMAModel
 from app.domain.engines.prophet_model import ProphetModel
+
+if TYPE_CHECKING:
+    from app.domain.engines.global_gbm import GlobalPanelContext
 
 logger = logging.getLogger(__name__)
 
@@ -261,6 +269,13 @@ class ModelRegistry:
 
             self.register(NaiveModel())
             self.register(SeasonalNaiveModel())
+        if settings.enable_global_gbm_model:
+            try:
+                from app.domain.engines.global_gbm import GlobalGBMModel
+
+                self.register(GlobalGBMModel())
+            except Exception as e:  # pragma: no cover — sklearn always present, defensive
+                logger.warning("Failed to register global_gbm model: %s", e)
 
     def register(self, model: IForecastModel) -> None:
         self._models[model.name] = model
@@ -284,6 +299,43 @@ class ModelRegistry:
             if m.capabilities.cost_class in classes
         ]
 
+    @staticmethod
+    def _comparison_from_cv(
+        model_name: str,
+        cv: dict[str, Any],
+        *,
+        elapsed_ms: float,
+        caps: Any,
+    ) -> ModelComparisonResult:
+        """Shared tail: a CV result dict -> ModelComparisonResult.
+
+        Used by both the normal per-series evaluate_cv path and the panel
+        model's evaluate_cv_panel lookup, so the two paths cannot drift apart.
+        """
+        mape = cv["mean_mape"]
+        mase = cv["mean_mase"]
+        return ModelComparisonResult(
+            model_name=model_name,
+            mape=mape,
+            mase=mase,
+            smape=cv.get("mean_smape", float("inf")),
+            pinball=cv.get("mean_pinball", float("inf")),
+            pinball_10=cv.get("mean_pinball_10", float("inf")),
+            pinball_90=cv.get("mean_pinball_90", float("inf")),
+            coverage_80=cv.get("coverage_80"),
+            evaluation_time_ms=elapsed_ms,
+            eligible=True,
+            error=None if (mape != float("inf") or mase != float("inf")) else "Evaluation returned inf",
+            fold_mapes=cv.get("fold_mapes") or [],
+            fold_mases=cv.get("fold_mases") or [],
+            fold_residuals=cv.get("fold_residuals") or {},
+            n_folds=cv.get("n_folds_used") or 0,
+            complexity_rank=caps.complexity_rank,
+            cost_class=caps.cost_class,
+            is_benchmark=caps.is_benchmark,
+            mase_scale_method=cv.get("mase_scale_method"),
+        )
+
     def _evaluate_one(
         self,
         model_name: str,
@@ -292,6 +344,8 @@ class ModelRegistry:
         *,
         test_size: int,
         raise_folds: bool = False,
+        panel: "GlobalPanelContext | None" = None,
+        line_item_id: int | None = None,
     ) -> ModelComparisonResult:
         model = self._models.get(model_name)
         if model is None:
@@ -329,33 +383,49 @@ class ModelRegistry:
         if max_folds_by_data >= 5 and (caps.max_folds_short_series is None or len(series) >= caps.short_series_threshold):
             n_folds = min(5, max_folds_by_data)
 
+        # Panel models can't fit/predict from (series, dates) alone — the CV
+        # result was already computed once, panel-wide, at panel-build time.
+        # This is a dict lookup, not a recomputation; n_folds/fold_horizon are
+        # accepted above for a uniform signature but ignored downstream.
+        if caps.is_panel_model:
+            if panel is None or line_item_id is None:
+                return ModelComparisonResult(
+                    model_name=model_name,
+                    mape=float("inf"),
+                    evaluation_time_ms=0,
+                    eligible=False,
+                    error="panel context unavailable",
+                    complexity_rank=caps.complexity_rank,
+                    cost_class=caps.cost_class,
+                    is_benchmark=caps.is_benchmark,
+                )
+            t0 = time.time()
+            try:
+                cv = as_panel_model(model).evaluate_cv_panel(
+                    line_item_id, series, dates, panel, n_folds=n_folds, fold_horizon=fold_horizon
+                )
+                elapsed_ms = (time.time() - t0) * 1000
+                return self._comparison_from_cv(model_name, cv, elapsed_ms=elapsed_ms, caps=caps)
+            except Exception as e:
+                elapsed_ms = (time.time() - t0) * 1000
+                if raise_folds:
+                    raise
+                return ModelComparisonResult(
+                    model_name=model_name,
+                    mape=float("inf"),
+                    evaluation_time_ms=elapsed_ms,
+                    eligible=True,
+                    error=str(e)[:200],
+                    complexity_rank=caps.complexity_rank,
+                    cost_class=caps.cost_class,
+                    is_benchmark=caps.is_benchmark,
+                )
+
         t0 = time.time()
         try:
             cv = model.evaluate_cv(series, dates, n_folds=n_folds, fold_horizon=fold_horizon)
             elapsed_ms = (time.time() - t0) * 1000
-            mape = cv["mean_mape"]
-            mase = cv["mean_mase"]
-            return ModelComparisonResult(
-                model_name=model_name,
-                mape=mape,
-                mase=mase,
-                smape=cv.get("mean_smape", float("inf")),
-                pinball=cv.get("mean_pinball", float("inf")),
-                pinball_10=cv.get("mean_pinball_10", float("inf")),
-                pinball_90=cv.get("mean_pinball_90", float("inf")),
-                coverage_80=cv.get("coverage_80"),
-                evaluation_time_ms=elapsed_ms,
-                eligible=True,
-                error=None if (mape != float("inf") or mase != float("inf")) else "Evaluation returned inf",
-                fold_mapes=cv.get("fold_mapes") or [],
-                fold_mases=cv.get("fold_mases") or [],
-                fold_residuals=cv.get("fold_residuals") or {},
-                n_folds=cv.get("n_folds_used") or 0,
-                complexity_rank=caps.complexity_rank,
-                cost_class=caps.cost_class,
-                is_benchmark=caps.is_benchmark,
-                mase_scale_method=cv.get("mase_scale_method"),
-            )
+            return self._comparison_from_cv(model_name, cv, elapsed_ms=elapsed_ms, caps=caps)
         except Exception as e:
             elapsed_ms = (time.time() - t0) * 1000
             if raise_folds:
@@ -383,6 +453,8 @@ class ModelRegistry:
         wall_clock_budget_seconds: float | None = None,
         is_material: bool | None = None,
         two_stage: bool = True,
+        panel: "GlobalPanelContext | None" = None,
+        line_item_id: int | None = None,
     ) -> ModelSelectionResult:
         """Walk-forward CV comparison with optional two-stage cost screening."""
         from app.config import settings
@@ -430,7 +502,9 @@ class ModelRegistry:
                 ))
                 n_downgraded += 1
                 continue
-            comparisons.append(self._evaluate_one(model_name, series, dates, test_size=test_size))
+            comparisons.append(self._evaluate_one(
+                model_name, series, dates, test_size=test_size, panel=panel, line_item_id=line_item_id
+            ))
 
         cheap_mases = [c.mase for c in comparisons if c.mase != float("inf")]
         cheap_best_mase = min(cheap_mases) if cheap_mases else float("inf")
@@ -467,7 +541,9 @@ class ModelRegistry:
                 ))
                 n_downgraded += 1
                 continue
-            comparisons.append(self._evaluate_one(model_name, series, dates, test_size=test_size))
+            comparisons.append(self._evaluate_one(
+                model_name, series, dates, test_size=test_size, panel=panel, line_item_id=line_item_id
+            ))
 
         # Also record unknown requested models
         for n in requested:
@@ -528,11 +604,17 @@ class ModelRegistry:
         *,
         exog: pd.DataFrame | np.ndarray | None = None,
         exog_future: pd.DataFrame | np.ndarray | None = None,
+        panel: "GlobalPanelContext | None" = None,
+        line_item_id: int | None = None,
     ) -> ForecastOutput:
         np.random.seed(random_seed)
         model = self.get(model_name)
         if model is None:
             raise ValueError(f"Model '{model_name}' not found in registry")
+        if model.capabilities.is_panel_model and panel is not None and line_item_id is not None:
+            panel_model = as_panel_model(model)
+            params = panel_model.fit(series, dates, panel=panel, line_item_id=line_item_id)
+            return panel_model.predict(params, horizon, dates[-1], panel=panel)
         if model.capabilities.supports_exog and exog is not None:
             exog_model = as_exog_model(model)
             params = exog_model.fit(series, dates, exog=exog)

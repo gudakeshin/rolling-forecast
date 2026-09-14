@@ -240,3 +240,105 @@ async def test_generate_baseline_uses_pipeline(db_session, seed_actuals, skill_c
         .all()
     )
     assert len(metas) >= 1
+
+
+@pytest.mark.asyncio
+async def test_generate_baseline_with_global_gbm_enabled_does_not_regress(
+    db_session, seed_actuals, skill_context, monkeypatch
+):
+    """Phase 2.1 end-to-end smoke: the panel-build preamble in
+    generate_baseline.py must not break a normal run, whether or not GBM ends
+    up winning any individual line."""
+    from app.config import settings
+    from app.domain.engines.model_registry import reset_model_registry
+    from app.domain.skills.generate_baseline import GenerateBaselineSkill
+    from app.models.forecast import ForecastLineResult
+
+    monkeypatch.setattr(settings, "enable_global_gbm_model", True)
+    reset_model_registry()
+    try:
+        skill_context.context_manager.set_memory("last_dataset_id", seed_actuals.id)
+        skill = GenerateBaselineSkill()
+        result = await skill.execute(
+            {"horizon_months": 3, "model_type": "auto", "random_seed": 42, "skip_plan_check": True},
+            skill_context,
+        )
+        assert result.success, result.message
+        vid = result.data["version_id"]
+        rows = (
+            db_session.query(ForecastLineResult)
+            .filter(ForecastLineResult.version_id == vid)
+            .all()
+        )
+        # 5 non-calculated seeded line items, 3 horizon months each.
+        assert len(rows) == 5 * 3
+        assert all(r.model_p50 is not None for r in rows)
+    finally:
+        reset_model_registry()
+
+
+def test_global_gbm_produces_asymmetric_bounds_when_selected(db_session, monkeypatch):
+    """Forcing model_type="global_gbm" exercises the panel-aware fit_and_predict
+    branch end to end and asserts the promised payoff of Phase 2.1: native,
+    non-symmetric P10/P50/P90 (unlike every analytic-interval engine today)."""
+    import numpy as np
+
+    from app.config import settings
+    from app.domain.engines.model_registry import ModelRegistry
+    from app.services.forecast_pipeline import compute_effective_series
+    from app.services.panel_forecast import build_global_panel_context
+    from app.services.period_calendar import get_calendar_config, period_to_date
+
+    monkeypatch.setattr(settings, "enable_global_gbm_model", True)
+    cal_cfg = get_calendar_config()
+    n = 30
+    periods = [f"{2022 + (i // 12)}-{(i % 12) + 1:02d}" for i in range(n)]
+    codes = ["REV-A", "REV-B", "OPEX-A"]
+    lines = []
+    for i, code in enumerate(codes):
+        li = LineItem(
+            account_code=code, name=code, category="Revenue" if i < 2 else "OpEx",
+            display_order=i,
+        )
+        db_session.add(li)
+        lines.append(li)
+    db_session.flush()
+
+    rng = np.random.default_rng(3)
+    effective_series_by_line = {}
+    periods_by_line = {}
+    dataset_rows = {}
+    for i, li in enumerate(lines):
+        base = 400.0 + i * 100.0
+        vals = list(base + np.arange(n) * 4.0 + rng.normal(0, 8, n))
+        dataset_rows[li.id] = vals
+        values = pd.Series(vals)
+        dates = pd.DatetimeIndex([pd.Timestamp(period_to_date(p, cal_cfg)) for p in periods])
+        periods_by_line[li.id] = periods
+        effective_series_by_line[li.id] = compute_effective_series(li, values, dates)
+
+    registry = ModelRegistry()
+    panel = build_global_panel_context(
+        db_session, line_items=lines, effective_series_by_line=effective_series_by_line,
+        periods_by_line=periods_by_line, cal_cfg=cal_cfg, version_id="v-asym",
+        horizon=4, random_seed=42, registry=registry,
+    )
+    assert panel is not None
+
+    target = lines[0]
+    values = pd.Series(dataset_rows[target.id])
+    dates = pd.DatetimeIndex([pd.Timestamp(period_to_date(p, cal_cfg)) for p in periods])
+    out = forecast_line_item(
+        db_session, target, values, dates, periods,
+        LineForecastContext(
+            version_id="v-asym", horizon=4, random_seed=42, model_type="global_gbm",
+            cal_cfg=cal_cfg, model_registry=registry, panel=panel,
+        ),
+    )
+    assert not out.skipped
+    assert out.selected_model == "global_gbm"
+    assert len(out.line_rows) == 4
+    lower_gaps = [r["p50"] - r["p10"] for r in out.line_rows]
+    upper_gaps = [r["p90"] - r["p50"] for r in out.line_rows]
+    assert all(g >= 0 for g in lower_gaps + upper_gaps)  # monotonic: p10<=p50<=p90
+    assert any(abs(lg - ug) > 1e-6 for lg, ug in zip(lower_gaps, upper_gaps))

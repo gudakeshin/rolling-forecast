@@ -5,10 +5,13 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+    from app.domain.engines.global_gbm import GlobalPanelContext
 
 
 CostClass = Literal["trivial", "cheap", "moderate", "expensive"]
@@ -30,6 +33,10 @@ class ModelCapabilities:
     cost_class: CostClass = "cheap"
     display_label: str = ""
     auto_selectable: bool = True  # False for edge-case-only models (zero/average)
+    # True only for the global cross-series panel model — signals that fit/
+    # predict/CV must go through SupportsPanelModel + a GlobalPanelContext
+    # rather than the plain per-series contract. See as_panel_model().
+    is_panel_model: bool = False
 
 
 @dataclass
@@ -169,6 +176,62 @@ def as_exog_model(model: IForecastModel) -> SupportsExog:
             "(capabilities.supports_exog is False)"
         )
     return cast(SupportsExog, model)
+
+
+class SupportsPanelModel(Protocol):
+    """The subset of IForecastModel a global cross-series model implements.
+
+    Mirrors SupportsExog: only a model declaring ``capabilities.is_panel_model``
+    implements these keyword arguments (today: GlobalGBMModel). A panel model
+    cannot fit/predict/evaluate from ``(series, dates)`` alone — it needs the
+    ``GlobalPanelContext`` built once per version-generation run (fitted
+    boosters, precomputed per-line CV results and future feature rows) and the
+    line item's own id to look itself up inside that shared panel.
+    """
+
+    def fit(
+        self,
+        series: pd.Series,
+        dates: pd.DatetimeIndex,
+        *,
+        panel: "GlobalPanelContext | None" = None,
+        line_item_id: int | None = None,
+    ) -> dict[str, Any]: ...
+
+    def predict(
+        self,
+        params: dict[str, Any],
+        horizon: int,
+        last_date: pd.Timestamp,
+        confidence_level: float = 0.80,
+        *,
+        panel: "GlobalPanelContext | None" = None,
+    ) -> ForecastOutput: ...
+
+    def evaluate_cv_panel(
+        self,
+        line_item_id: int,
+        series: pd.Series,
+        dates: pd.DatetimeIndex,
+        panel: "GlobalPanelContext",
+        n_folds: int = 3,
+        fold_horizon: int = 3,
+    ) -> dict[str, Any]: ...
+
+
+def as_panel_model(model: IForecastModel) -> SupportsPanelModel:
+    """Narrow a registry model to its panel-model interface.
+
+    Raises when the model does not declare ``is_panel_model`` — call this
+    outside any broad ``except Exception`` block, same precedent as
+    ``as_exog_model``.
+    """
+    if not model.capabilities.is_panel_model:
+        raise TypeError(
+            f"model {model.name!r} is not a panel model "
+            "(capabilities.is_panel_model is False)"
+        )
+    return cast(SupportsPanelModel, model)
 
 
 class IForecastModel(ABC):

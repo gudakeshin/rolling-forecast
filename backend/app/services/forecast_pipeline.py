@@ -9,11 +9,14 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
 from sqlalchemy.orm import Session
+
+if TYPE_CHECKING:
+    from app.domain.engines.global_gbm import GlobalPanelContext
 
 from app.config import settings
 from app.domain.engines.base_model import as_exog_model, make_period_labels, mase_denominator
@@ -451,6 +454,104 @@ def _inflate_exog_intervals(
 
 
 @dataclass
+class EffectiveSeriesResult:
+    """Output of compute_effective_series — what a model actually fits on.
+
+    Shared by forecast_line_item (per-line production fit) and
+    panel_forecast.build_global_panel_context (panel training rows), so both
+    paths clean/truncate history identically instead of risking drift between
+    what the global model trains on and what every other engine fits on.
+    """
+
+    values: pd.Series
+    dates: pd.DatetimeIndex
+    forced: str | None  # "zero" | "average" | None
+    is_sparse: bool = False
+    was_zero: bool = False
+    was_sparse: bool = False
+    had_structural_break: bool = False
+    structural_break_period: str | None = None
+    n_cleaned: int = 0
+    cleaned_periods: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    flags: list[str] = field(default_factory=list)
+
+
+def compute_effective_series(
+    li: LineItem, values: pd.Series, dates: pd.DatetimeIndex
+) -> EffectiveSeriesResult:
+    """EC1/EC2 forcing + structural-break truncation + outlier winsorizing.
+
+    Extracted from forecast_line_item so panel_forecast can build training
+    rows on the exact same "effective" series every other engine fits on.
+    """
+    analysis = HistoryAnalysis(values, dates, li.name)
+    analysis_result = analysis.analyze()
+    warnings = list(analysis_result.get("warnings") or [])
+    flags = list(analysis_result.get("flags") or [])
+
+    forced: str | None = None
+    was_zero = False
+    was_sparse = False
+    if analysis.is_all_zeros:
+        forced = "zero"
+        was_zero = True
+    elif analysis.is_very_sparse:
+        forced = "average"
+        was_sparse = True
+
+    effective_values = values
+    effective_dates = dates
+    had_structural_break = False
+    min_post = settings.structural_break_min_post_points
+    if analysis.has_structural_break and forced is None:
+        had_structural_break = True
+        break_idx = analysis.structural_break_index
+        if break_idx is None and analysis.structural_break_period:
+            for idx, d in enumerate(dates):
+                if d.strftime("%Y-%m") == analysis.structural_break_period:
+                    break_idx = idx
+                    break
+        if break_idx is not None and (len(values) - break_idx) >= min_post:
+            effective_values = values[break_idx:]
+            effective_dates = dates[break_idx:]
+        else:
+            warnings.append(
+                f"Structural break flagged for '{li.name}' but post-break "
+                f"history < {min_post} periods — retaining full series."
+            )
+
+    cleaning = clean_series_for_fit(
+        effective_values,
+        effective_dates,
+        enabled=settings.outlier_cleaning_enabled and forced is None,
+        mad_z=settings.outlier_mad_z,
+    )
+    effective_values = cleaning.cleaned
+    if cleaning.n_cleaned:
+        warnings.append(
+            f"Winsorized {cleaning.n_cleaned} outlier(s) for '{li.name}' "
+            f"({', '.join(cleaning.cleaned_periods[:5])}"
+            f"{'…' if cleaning.n_cleaned > 5 else ''})."
+        )
+
+    return EffectiveSeriesResult(
+        values=effective_values,
+        dates=effective_dates,
+        forced=forced,
+        is_sparse=analysis.is_sparse,
+        was_zero=was_zero,
+        was_sparse=was_sparse,
+        had_structural_break=had_structural_break,
+        structural_break_period=analysis.structural_break_period,
+        n_cleaned=cleaning.n_cleaned,
+        cleaned_periods=list(cleaning.cleaned_periods),
+        warnings=warnings,
+        flags=flags,
+    )
+
+
+@dataclass
 class LineForecastContext:
     """Shared inputs for one baseline run (version-level)."""
 
@@ -468,6 +569,10 @@ class LineForecastContext:
     # caller via accuracy_snapshot.realized_coverage_by_line. Absent key means
     # "not enough closed cycles to have an opinion".
     realized_coverage: dict[int, float] | None = None
+    # Global cross-series panel model context, built once per version-
+    # generation run (see panel_forecast.build_global_panel_context). None
+    # unless settings.enable_global_gbm_model is on and panel build succeeded.
+    panel: "GlobalPanelContext | None" = None
 
 
 @dataclass
@@ -521,53 +626,15 @@ def forecast_line_item(
     model_type = ctx.model_type
     selection_rule = ctx.selection_rule
 
-    analysis = HistoryAnalysis(values, dates, li.name)
-    analysis_result = analysis.analyze()
-    out.warnings.extend(analysis_result.get("warnings") or [])
-    out.flags = list(analysis_result.get("flags") or [])
-
-    # EC2 / EC1 — force registry models instead of bespoke branches
-    forced: str | None = None
-    if analysis.is_all_zeros:
-        forced = "zero"
-        out.was_zero = True
-    elif analysis.is_very_sparse:
-        forced = "average"
-        out.was_sparse = True
-
-    effective_values = values
-    effective_dates = dates
-    min_post = settings.structural_break_min_post_points
-    if analysis.has_structural_break and forced is None:
-        out.had_structural_break = True
-        break_idx = analysis.structural_break_index
-        if break_idx is None and analysis.structural_break_period:
-            for idx, d in enumerate(dates):
-                if d.strftime("%Y-%m") == analysis.structural_break_period:
-                    break_idx = idx
-                    break
-        if break_idx is not None and (len(values) - break_idx) >= min_post:
-            effective_values = values[break_idx:]
-            effective_dates = dates[break_idx:]
-        else:
-            out.warnings.append(
-                f"Structural break flagged for '{li.name}' but post-break "
-                f"history < {min_post} periods — retaining full series."
-            )
-
-    cleaning = clean_series_for_fit(
-        effective_values,
-        effective_dates,
-        enabled=settings.outlier_cleaning_enabled and forced is None,
-        mad_z=settings.outlier_mad_z,
-    )
-    effective_values = cleaning.cleaned
-    if cleaning.n_cleaned:
-        out.warnings.append(
-            f"Winsorized {cleaning.n_cleaned} outlier(s) for '{li.name}' "
-            f"({', '.join(cleaning.cleaned_periods[:5])}"
-            f"{'…' if cleaning.n_cleaned > 5 else ''})."
-        )
+    effective = compute_effective_series(li, values, dates)
+    out.warnings.extend(effective.warnings)
+    out.flags = list(effective.flags)
+    out.was_zero = effective.was_zero
+    out.was_sparse = effective.was_sparse
+    out.had_structural_break = effective.had_structural_break
+    forced = effective.forced
+    effective_values = effective.values
+    effective_dates = effective.dates
 
     selection_mape: float | None = None
     selection_mase: float | None = None
@@ -579,7 +646,7 @@ def forecast_line_item(
 
     try:
         effective_model_type = forced or model_type
-        if forced is None and analysis.is_sparse and model_type == "auto":
+        if forced is None and effective.is_sparse and model_type == "auto":
             effective_model_type = "linear"
 
         if effective_model_type == "auto":
@@ -590,6 +657,8 @@ def forecast_line_item(
                 models_to_test=ctx.models_to_test,
                 selection_rule=selection_rule,
                 is_material=ctx.is_material,
+                panel=ctx.panel,
+                line_item_id=li.id,
             )
             selection_result = comparison
             out.comparison = comparison.to_dict()
@@ -839,7 +908,17 @@ def forecast_line_item(
             random_seed=random_seed,
             exog=(exog_bundle.exog_train if use_exog and exog_bundle is not None else None),
             exog_future=(exog_bundle.exog_future if use_exog and exog_bundle is not None else None),
+            panel=ctx.panel,
+            line_item_id=li.id,
         )
+        if out.comparison is not None:
+            # Persist the model-selection comparison (chosen model, runner-up,
+            # margin, per-fold scores) so a "why this number" view can show it
+            # after the fact — today it was computed here and then only ever
+            # reached a one-time chat report, unrecoverable once generation
+            # finished. See ModelSelectionResult.to_dict() for the shape.
+            forecast_output.parameters = dict(forecast_output.parameters or {})
+            forecast_output.parameters["model_selection"] = out.comparison
         if exog_spec is not None:
             forecast_output.parameters = dict(forecast_output.parameters or {})
             forecast_output.parameters["exog_spec"] = exog_spec
@@ -999,10 +1078,10 @@ def forecast_line_item(
                         seasonality_period=forecast_output.diagnostics.get(
                             "seasonality_period"
                         ),
-                        structural_break_detected=analysis.has_structural_break,
-                        structural_break_period=analysis.structural_break_period,
-                        cleaned_periods=cleaning.cleaned_periods or None,
-                        outliers_cleaned=cleaning.n_cleaned,
+                        structural_break_detected=effective.had_structural_break,
+                        structural_break_period=effective.structural_break_period,
+                        cleaned_periods=effective.cleaned_periods or None,
+                        outliers_cleaned=effective.n_cleaned,
                         random_seed=random_seed,
                     )
                 )
