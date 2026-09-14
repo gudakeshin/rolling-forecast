@@ -57,6 +57,39 @@ def _leaf_ids(db: Session) -> set[int]:
     }
 
 
+
+def _apply_non_negative_floor(db: Session, version_id: str) -> int:
+    """Re-floor p10 at zero for lines that cannot go negative.
+
+    The pipeline floors p10 when it writes a row, but every reconciliation path
+    then recomputes intervals from ``z * sigma`` and drops that floor, so a
+    non-negative P&L line could publish a negative P10. Harmless arithmetically,
+    corrosive in a review meeting — and the wider the (correctly calibrated)
+    leaf bands get, the more often it shows.
+
+    Only touches rows whose point forecast is non-negative; a p50 that has gone
+    negative is a different problem and inverting its band would hide it.
+    """
+    rows = (
+        db.query(ForecastLineResult)
+        .join(LineItem, LineItem.id == ForecastLineResult.line_item_id)
+        .filter(
+            ForecastLineResult.version_id == version_id,
+            LineItem.allow_negative.is_(False),
+            ForecastLineResult.p10 < 0,
+        )
+        .all()
+    )
+    n = 0
+    for r in rows:
+        if r.p50 is not None and float(r.p50) >= 0:
+            r.p10 = 0.0
+            n += 1
+    if n:
+        db.flush()
+    return n
+
+
 def reconcile_version(
     db: Session,
     version_id: str,
@@ -70,11 +103,15 @@ def reconcile_version(
     ``linear_aggregation`` to force the simpler estimators.
     """
     if method == BOUNDS_METHOD_LINEAR:
-        return _reconcile_linear(db, version_id, cross_dimensions)
-    if method == BOUNDS_METHOD_MINT:
-        return _reconcile_mint_diagonal(db, version_id, cross_dimensions)
-    # mint_full and any unknown → full MinT
-    return _reconcile_mint_full(db, version_id, cross_dimensions)
+        out = _reconcile_linear(db, version_id, cross_dimensions)
+    elif method == BOUNDS_METHOD_MINT:
+        out = _reconcile_mint_diagonal(db, version_id, cross_dimensions)
+    else:
+        # mint_full and any unknown → full MinT
+        out = _reconcile_mint_full(db, version_id, cross_dimensions)
+    # Every path above rewrites intervals from z*sigma, so restore the floor last.
+    out["p10_floored"] = _apply_non_negative_floor(db, version_id)
+    return out
 
 
 def _reconcile_linear(
@@ -338,6 +375,19 @@ def _nearest_correlation(A: np.ndarray) -> np.ndarray:
     return B
 
 
+
+def _relative_scale(M: np.ndarray, n: int) -> float:
+    """Mean absolute diagonal of ``M``, for scaling a ridge to the matrix.
+
+    Falls back to 1.0 only when the diagonal is entirely zero, where there is no
+    scale to be relative to and any positive ridge is as good as another.
+    """
+    if n <= 0:
+        return 1.0
+    scale = float(np.mean(np.abs(np.diag(M))))
+    return scale if scale > 0 and np.isfinite(scale) else 1.0
+
+
 def mint_project(y_hat: np.ndarray, S: np.ndarray, W: np.ndarray) -> np.ndarray:
     """Full MinT projection: ỹ = S (S' W⁻¹ S)⁻¹ S' W⁻¹ ŷ.
 
@@ -358,8 +408,20 @@ def mint_project(y_hat: np.ndarray, S: np.ndarray, W: np.ndarray) -> np.ndarray:
     if W.shape != (n, n):
         raise ValueError(f"W shape {W.shape} != ({n}, {n})")
 
-    # Ridge for numerical stability
-    ridge = 1e-8 * float(np.trace(W) / max(n, 1) + 1.0)
+    # Ridge for numerical stability. Both ridges MUST be relative to the scale
+    # of the matrix they stabilise, because these matrices are not
+    # scale-invariant: W holds variances (currency squared) and G = S'W^-1 S
+    # holds inverse variances. An absolute ridge is therefore a different
+    # regulariser at every revenue scale.
+    #
+    # The G ridge was previously the constant 1e-10. G's diagonal is ~1/sigma^2,
+    # so for a line with sigma = 35k the diagonal is 8.2e-10 and that "tiny"
+    # ridge was 11% of it — shrinking the whole projection toward zero. At
+    # sigma = 100k it would have been 50%. Since MinT is the default
+    # reconciliation method, that silently haircut every published forecast,
+    # worse the larger the line. With S = I (a flat chart of accounts, no
+    # parents) the projection must be the identity map; it was not.
+    ridge = 1e-8 * _relative_scale(W, n)
     W_reg = W + np.eye(n) * ridge
     try:
         W_inv = np.linalg.inv(W_reg)
@@ -368,8 +430,9 @@ def mint_project(y_hat: np.ndarray, S: np.ndarray, W: np.ndarray) -> np.ndarray:
 
     StW = S.T @ W_inv
     G = StW @ S  # n_leaves × n_leaves
+    g_ridge = 1e-10 * _relative_scale(G, G.shape[0])
     try:
-        G_inv = np.linalg.inv(G + np.eye(G.shape[0]) * 1e-10)
+        G_inv = np.linalg.inv(G + np.eye(G.shape[0]) * g_ridge)
     except np.linalg.LinAlgError:
         G_inv = np.linalg.pinv(G)
 

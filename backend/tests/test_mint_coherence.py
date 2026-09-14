@@ -84,3 +84,60 @@ def test_mint_blends_incoherent_parent_then_restores_coherence(seed: int):
     W = np.diag([4.0, 4.0, 9.0])
     y_tilde = mint_project(y_hat, S, W)
     assert y_tilde[2] == pytest.approx(y_tilde[0] + y_tilde[1], rel=1e-6, abs=1e-6)
+
+
+# --------------------------------------------------------- scale invariance ---
+#
+# MinT's inputs are not scale-free: W holds variances (currency squared) and
+# G = S'W^-1 S holds inverse variances. Any ridge added for numerical stability
+# must therefore be relative to the matrix it stabilises. A constant ridge on G
+# behaves completely differently on a line forecasting 900k than on one
+# forecasting 9 — and since MinT is the default reconciliation method, that
+# reaches every published number.
+
+
+@pytest.mark.parametrize("sigma", [1.0, 1e2, 1e3, 3.5e4, 1e5, 1e7])
+def test_flat_hierarchy_projection_is_the_identity_at_any_scale(sigma):
+    """With no parents, S = I and the projection has nothing to reconcile.
+
+    Regression: a constant 1e-10 ridge on G, whose diagonal is ~1/sigma^2, was
+    11% of that diagonal at sigma=35k and 50% at sigma=100k, shrinking every
+    forecast toward zero. A flat chart of accounts is the cleanest witness --
+    any movement at all is pure artefact.
+    """
+    G = nx.DiGraph()
+    leaves = [1, 2, 3]
+    for i in leaves:
+        G.add_node(i)
+
+    S = build_summing_matrix(G, leaves, leaves)
+    assert np.allclose(S, np.eye(3))
+
+    y_hat = np.array([875376.0, 500000.0, 250000.0])
+    W = np.diag([sigma**2] * 3)
+    y_tilde = mint_project(y_hat, S, W)
+
+    rel = np.max(np.abs(y_tilde - y_hat) / np.abs(y_hat))
+    assert rel < 1e-6, f"projection moved a coherent forecast by {rel:.1%} at sigma={sigma}"
+
+
+def test_projection_is_equivariant_under_rescaling():
+    """Scaling every forecast and sigma by k must scale the result by k.
+
+    This is the property a scale-dependent ridge breaks, and it holds for the
+    real hierarchy rather than only the degenerate flat one.
+    """
+    rng = np.random.default_rng(4)
+    G, leaf_ids, node_ids = _random_hierarchy(rng, n_leaves=4)
+    S = build_summing_matrix(G, leaf_ids, node_ids)
+
+    n = len(node_ids)
+    y_hat = rng.uniform(50, 150, n)
+    sigma = rng.uniform(5, 15, n)
+    W = np.diag(sigma**2)
+
+    base = mint_project(y_hat, S, W)
+    k = 10_000.0
+    scaled = mint_project(y_hat * k, S, np.diag((sigma * k) ** 2))
+
+    assert np.allclose(scaled, base * k, rtol=1e-6), "MinT is not scale-equivariant"

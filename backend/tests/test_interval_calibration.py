@@ -274,3 +274,56 @@ def test_short_history_falls_back_to_the_analytic_band(monkeypatch):
     assert not out.skipped, out.skip_reason
     assert all(r["bounds_method"] == BOUNDS_METHOD_MODEL for r in out.line_rows)
     assert out.comparison.get("calibration_skipped") == "insufficient_cv_residuals"
+
+
+# --------------------------------------------- reconciliation interaction ---
+
+def test_reconciliation_restores_the_non_negative_p10_floor(db_session):
+    """MinT recomputes intervals from z*sigma and drops the pipeline's floor.
+
+    A non-negative P&L line publishing a negative P10 is arithmetically harmless
+    and corrosive in a review meeting. Wider (correctly calibrated) leaf bands
+    make it show up more often, so the floor has to be restored after every
+    reconciliation path rather than only at write time.
+    """
+    from app.models.forecast import ForecastLineResult, ForecastVersion
+    from app.models.line_item import LineItem
+    from app.services.reconciliation import _apply_non_negative_floor
+
+    strict = LineItem(
+        account_code="FLOOR-POS", name="Revenue floored", category="Revenue",
+        display_order=1, allow_negative=False,
+    )
+    loose = LineItem(
+        account_code="FLOOR-NEG", name="Net income", category="EBITDA",
+        display_order=2, allow_negative=True,
+    )
+    db_session.add_all([strict, loose])
+    db_session.flush()
+
+    version = ForecastVersion(
+        name="floor-v1", status="draft", version_type="scheduled",
+        scenario="base", horizon_months=1,
+    )
+    db_session.add(version)
+    db_session.flush()
+
+    rows = [
+        # non-negative line, band dips below zero -> floored
+        ForecastLineResult(version_id=version.id, line_item_id=strict.id,
+                           period="2024-01", p10=-40.0, p50=100.0, p90=240.0),
+        # line that may go negative -> untouched
+        ForecastLineResult(version_id=version.id, line_item_id=loose.id,
+                           period="2024-01", p10=-40.0, p50=10.0, p90=60.0),
+        # non-negative line whose POINT went negative: a different defect, and
+        # flooring p10 here would invert the band and hide it
+        ForecastLineResult(version_id=version.id, line_item_id=strict.id,
+                           period="2024-02", p10=-80.0, p50=-30.0, p90=20.0),
+    ]
+    db_session.add_all(rows)
+    db_session.flush()
+
+    assert _apply_non_negative_floor(db_session, version.id) == 1
+    assert rows[0].p10 == 0.0
+    assert rows[1].p10 == -40.0
+    assert rows[2].p10 == -80.0

@@ -18,7 +18,6 @@ router = APIRouter(prefix="/panel", tags=["panel"])
 
 from app.services.accuracy_snapshot import realized_coverage_by_line
 from app.services.interval_calibration import DEFAULT_ALPHA
-from app.services.reconciliation import BOUNDS_METHOD_CONFORMAL
 
 
 def _extract_exog_payload(parameters: dict | None) -> dict | None:
@@ -256,20 +255,31 @@ async def get_forecast_table(
 
         rows.sort(key=lambda x: (x.get("indent_level", 0), x.get("line_item_name", "")))
 
-    # Version-level calibration roll-up. Computed over the full filtered set,
-    # not the page, so the header does not change as the analyst scrolls.
-    calibrated_rows = sum(
-        1 for r in all_filtered
-        if (r.bounds_method or "").startswith(BOUNDS_METHOD_CONFORMAL)
-    )
+    # Version-level calibration roll-up, over the full filtered set rather than
+    # the page so the header does not shift as the analyst scrolls.
+    #
+    # Counted from the stored model metadata, NOT from bounds_method: MinT
+    # recomputes every interval from s'Ws afterwards and legitimately re-stamps
+    # that column, so it cannot answer "was this line's band earned?". MinT does
+    # derive its leaf sigma from the calibrated p10/p90 gap, so the calibration
+    # still flows into what is published — the metadata is just the honest
+    # record of which lines had one.
+    calibrated_line_ids = {
+        r.line_item_id
+        for r in all_filtered
+        if isinstance(
+            (metadata_by_result_id.get(str(r.id)) or {}).get("interval_calibration"), dict
+        )
+    }
+    all_line_ids = {r.line_item_id for r in all_filtered}
     realized = realized_coverage_by_line(
         db,
-        [r.line_item_id for r in all_filtered],
+        list(all_line_ids),
         min_cycles=settings.conformal_realized_min_cycles,
     )
     calibration_summary = {
-        "calibrated_rows": calibrated_rows,
-        "total_rows": len(all_filtered),
+        "calibrated_lines": len(calibrated_line_ids),
+        "total_lines": len(all_line_ids),
         # Mean of per-line realized coverage, over lines with enough closed
         # cycles to have one. None means "not enough history to claim anything".
         "realized_coverage": (
