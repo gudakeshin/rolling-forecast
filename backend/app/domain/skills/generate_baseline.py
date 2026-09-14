@@ -502,6 +502,22 @@ class GenerateBaselineSkill(BaseSkill):
         grand_abs = sum(trailing_abs.values()) or 1.0
         materiality_share = float(settings.materiality_share)
 
+        # Realized P10—P90 coverage per line, from vintages whose actuals have
+        # since arrived. Fetched once for the whole run — calling this per line
+        # would be an N+1 across the entire chart of accounts.
+        realized_coverage: dict[int, float] = {}
+        if settings.conformal_calibration_enabled:
+            try:
+                from app.services.accuracy_snapshot import realized_coverage_by_line
+
+                realized_coverage = realized_coverage_by_line(
+                    db,
+                    [li.id for li in line_items],
+                    min_cycles=settings.conformal_realized_min_cycles,
+                )
+            except Exception as e:  # never fail a forecast over a calibration hint
+                logger.warning("realized coverage lookup failed: %s", e)
+
         job_id = params.get("_job_id")
         n_line_items = len(line_items)
 
@@ -589,6 +605,7 @@ class GenerateBaselineSkill(BaseSkill):
                         cal_cfg=cal_cfg,
                         model_registry=model_registry,
                         enable_driver_forecasting=settings.enable_driver_forecasting,
+                        realized_coverage=realized_coverage,
                     ),
                 )
 

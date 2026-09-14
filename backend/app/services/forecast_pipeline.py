@@ -24,7 +24,15 @@ from app.services.driver_exog import build_exog_for_line
 from app.services.error_handlers import HistoryAnalysis, clamp_forecast_values
 from app.services.outlier_cleaning import clean_series_for_fit
 from app.services.period_calendar import FiscalCalendarConfig, period_to_date
-from app.services.reconciliation import BOUNDS_METHOD_MODEL
+from app.services.interval_calibration import (
+    apply_bands,
+    conformal_bands,
+    rescale_for_realized_coverage,
+)
+from app.services.reconciliation import (
+    BOUNDS_METHOD_CONFORMAL,
+    BOUNDS_METHOD_MODEL,
+)
 from app.services.reflection import active_heuristics_for_line, heuristic_summary
 
 logger = logging.getLogger(__name__)
@@ -456,6 +464,10 @@ class LineForecastContext:
     cal_cfg: FiscalCalendarConfig | None = None
     model_registry: ModelRegistry | None = None
     enable_driver_forecasting: bool | None = None
+    # line_item_id -> realized P10—P90 coverage, computed once per run by the
+    # caller via accuracy_snapshot.realized_coverage_by_line. Absent key means
+    # "not enough closed cycles to have an opinion".
+    realized_coverage: dict[int, float] | None = None
 
 
 @dataclass
@@ -561,6 +573,9 @@ def forecast_line_item(
     selection_mase: float | None = None
     selection_pinball: float | None = None
     selection_result: Any | None = None
+    # Signed out-of-sample errors from the CV that chose this model, keyed by
+    # horizon step. Feeds split-conformal calibration below.
+    cv_residuals: dict[int, list[float]] = {}
 
     try:
         effective_model_type = forced or model_type
@@ -618,6 +633,7 @@ def forecast_line_item(
                         effective_values, effective_dates, n_folds=3, fold_horizon=3
                     )
                     selection_mape = float(cv.get("mean_mape") or 0.0)
+                    cv_residuals = cv.get("fold_residuals") or {}
                     raw_mase = cv.get("mean_mase")
                     selection_mase = (
                         float(raw_mase)
@@ -717,6 +733,12 @@ def forecast_line_item(
                 out.comparison["heuristic_nudge"] = heuristic_nudge
         if out.comparison is not None and heuristic_meta:
             out.comparison["active_heuristics"] = heuristic_meta
+
+        # Resolve the calibration set only now: a heuristic nudge may have moved
+        # `selected_model` off the statistical best, and calibrating published
+        # bands with another model's errors would be worse than not calibrating.
+        if selection_result is not None:
+            cv_residuals = selection_result.residuals_for(selected_model)
 
         exog_bundle = None
         use_exog = False
@@ -830,8 +852,37 @@ def forecast_line_item(
             if heuristic_nudge is not None:
                 forecast_output.parameters["heuristic_nudge"] = heuristic_nudge
 
-        # Delta-method interval inflation for driver uncertainty (Phase 8.3)
+        # Split-conformal calibration. Replaces the engine's assumed band
+        # (SARIMAX state-space variance, ETS pred_int, an OLS t-interval, ...)
+        # with offsets earned on the out-of-sample CV errors that selected this
+        # model. Runs BEFORE the delta-method inflation below so driver-forecast
+        # uncertainty compounds on top of the calibrated band instead of being
+        # overwritten by it — the CV never saw that source of error.
         bounds_method = BOUNDS_METHOD_MODEL
+        if settings.conformal_calibration_enabled and cv_residuals:
+            bands = conformal_bands(
+                cv_residuals,
+                min_per_horizon=settings.conformal_min_residuals_per_horizon,
+                min_total=settings.conformal_min_residuals_total,
+            )
+            if bands is not None:
+                # Once enough cycles have closed, what actually happened beats
+                # what cross-validation predicted would happen.
+                bands = rescale_for_realized_coverage(
+                    bands, (ctx.realized_coverage or {}).get(li.id)
+                )
+                cal_lower, cal_upper, cal_meta = apply_bands(
+                    forecast_output.point_forecast,
+                    bands,
+                    non_negative=not li.allow_negative,
+                )
+                forecast_output.lower_bound = cal_lower
+                forecast_output.upper_bound = cal_upper
+                forecast_output.parameters = dict(forecast_output.parameters or {})
+                forecast_output.parameters["interval_calibration"] = cal_meta
+                bounds_method = BOUNDS_METHOD_CONFORMAL
+            elif out.comparison is not None:
+                out.comparison["calibration_skipped"] = "insufficient_cv_residuals"
         if (
             use_exog
             and exog_bundle is not None
@@ -854,7 +905,11 @@ def forecast_line_item(
                 forecast_output.parameters = dict(forecast_output.parameters or {})
                 forecast_output.parameters["exog_variance_inflated"] = True
                 forecast_output.parameters["exog_interval_inflation"] = inflated.get("meta")
-                bounds_method = "exog_variance_inflated"
+                bounds_method = (
+                    f"{BOUNDS_METHOD_CONFORMAL}+exog_variance_inflated"
+                    if bounds_method == BOUNDS_METHOD_CONFORMAL
+                    else "exog_variance_inflated"
+                )
                 if exog_spec is not None:
                     exog_spec["exog_variance_inflated"] = True
                     forecast_output.parameters["exog_spec"] = exog_spec

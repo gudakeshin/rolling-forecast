@@ -121,6 +121,17 @@ class Settings(BaseSettings):
     outlier_mad_z: float = 3.5
     # Structural break: require this many post-break points before truncating
     structural_break_min_post_points: int = 12
+    # Split-conformal interval calibration from CV fold residuals.
+    # Off by default so an upgrade never silently changes published bands;
+    # flip on per environment after reviewing the coverage report.
+    conformal_calibration_enabled: bool = False
+    # Minimum residuals at a horizon step before its own quantiles are trusted.
+    # Below this the pooled residual set is used with sqrt-horizon scaling.
+    conformal_min_residuals_per_horizon: int = 5
+    # Minimum residuals overall before calibration is attempted at all.
+    conformal_min_residuals_total: int = 8
+    # Closed cycles of realized vintages before realized coverage overrides CV.
+    conformal_realized_min_cycles: int = 3
 
     # Context Engine
     chroma_persist_dir: str = str(Path(__file__).parent.parent / "data" / "chroma")

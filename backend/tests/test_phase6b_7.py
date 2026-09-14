@@ -313,7 +313,93 @@ def test_create_what_if_scenario_service(db_session, seed_users):
     )
     assert rows[0].p50 != pytest.approx(100.0)
     assert rows[0].bounds_method == "scenario"
-    assert rows[0].p10 == pytest.approx(90.0)  # base intervals retained
+
+    # Base was p10=90 / p50=100 / p90=110; a -10% shock at elasticity 0.5 moves
+    # the point to 95. The band travels with it, keeping its own half-widths:
+    # writing the base band back verbatim (the old behaviour) left the interval
+    # anchored to a point that had moved, and could put p50 outside p10..p90.
+    assert rows[0].p50 == pytest.approx(95.0)
+    assert rows[0].p10 == pytest.approx(85.0)
+    assert rows[0].p90 == pytest.approx(105.0)
+    assert rows[0].p10 <= rows[0].p50 <= rows[0].p90
+    # No coefficient_se on this link — nothing to add, so width is unchanged.
+    assert (rows[0].p90 - rows[0].p10) == pytest.approx(20.0)
+
+
+def test_what_if_band_widens_by_elasticity_estimation_error(db_session, seed_users):
+    """A shock is an assumption, but the elasticity it runs through is estimated.
+
+    That estimation error is usually the dominant uncertainty in a what-if
+    answer, so a scenario band must not come back narrower than the baseline
+    band it was derived from.
+    """
+    li = LineItem(
+        account_code="REV-WHATIF-SE",
+        name="Revenue what-if SE",
+        category="Revenue",
+        display_order=4,
+    )
+    db_session.add(li)
+    db_session.flush()
+    base = ForecastVersion(
+        name="Base Scenario SE",
+        status="draft",
+        version_type="scheduled",
+        scenario="base",
+        horizon_months=1,
+        created_by=seed_users["admin"].id,
+        created_at=datetime.now(timezone.utc),
+    )
+    db_session.add(base)
+    db_session.flush()
+    db_session.add(
+        ForecastLineResult(
+            version_id=base.id, line_item_id=li.id, period="2024-01",
+            p10=90, p50=100.0, p90=110.0, model_p50=100.0,
+        )
+    )
+    d = create_driver(
+        db_session, key="drv_elast_se", name="Elastic Driver SE",
+        driver_type="macro", actor=seed_users["admin"],
+    )
+    db_session.flush()
+    upsert_driver_values(
+        db_session, driver_id=d.id, rows=[{"period": "2024-01", "value": 100.0}]
+    )
+    link = assert_link(
+        db_session,
+        driver_id=d.id,
+        line_item_id=li.id,
+        relation="elasticity",
+        coefficient=0.5,
+        status="active",
+        actor=seed_users["admin"],
+    )
+    link.elasticity = 0.5
+    link.coefficient_se = 0.25  # a genuinely imprecise elasticity
+    db_session.commit()
+
+    out = create_what_if_scenario(
+        db_session,
+        base_version_id=base.id,
+        scenario_label="downside-se",
+        shocks=[DriverShock(driver_id=d.id, mode="pct", value=-10.0)],
+        actor=seed_users["admin"],
+    )
+    row = (
+        db_session.query(ForecastLineResult)
+        .filter(
+            ForecastLineResult.version_id == out["scenario_version_id"],
+            ForecastLineResult.line_item_id == li.id,
+        )
+        .one()
+    )
+    assert row.p50 == pytest.approx(95.0)
+    assert row.p10 <= row.p50 <= row.p90
+    # sensitivity = base_line * pct = 100 * -0.1 = -10; se_elasticity = 0.25
+    # => sd = 2.5, half-width grows by 1.2816 * 2.5 ~= 3.2 on each side.
+    assert (row.p90 - row.p10) > 20.0
+    assert (row.p90 - row.p10) == pytest.approx(20.0 + 2 * 1.2816 * 2.5, rel=1e-3)
 
 
 def test_identity_qp_reconciliation_bucket_sums_to_published_delta(db_session, seed_users):

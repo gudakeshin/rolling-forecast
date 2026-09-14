@@ -32,6 +32,8 @@ from app.services.dependency_graph import DependencyGraphManager
 logger = logging.getLogger(__name__)
 
 BOUNDS_METHOD_MODEL = "model"
+# Engine band replaced by split-conformal offsets earned on CV residuals.
+BOUNDS_METHOD_CONFORMAL = "conformal"
 BOUNDS_METHOD_LINEAR = "linear_aggregation"
 BOUNDS_METHOD_MINT = "mint_diagonal"
 BOUNDS_METHOD_MINT_FULL = "mint_full"

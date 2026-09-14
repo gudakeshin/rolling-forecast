@@ -45,6 +45,11 @@ class ModelComparisonResult:
     pinball_90: float = float("inf")
     coverage_80: float | None = None
     fold_mases: list[float] = field(default_factory=list)
+    # Signed out-of-sample errors keyed by horizon step, straight from
+    # evaluate_cv. Deliberately NOT serialized in to_dict() -- this is the
+    # conformal calibration set, consumed in-process by the pipeline, and it
+    # would bloat the stored selection JSON for no UI benefit.
+    fold_residuals: dict[int, list[float]] = field(default_factory=dict)
     complexity_rank: int = 50
     cost_class: str = "cheap"
     is_benchmark: bool = False
@@ -65,6 +70,21 @@ class ModelSelectionResult:
     best_mase: float = float("inf")
     best_pinball: float = float("inf")
     n_downgraded: int = 0
+
+    def residuals_for(self, model_name: str | None) -> dict[int, list[float]]:
+        """Per-horizon CV residuals for one candidate, or {} if unavailable.
+
+        The caller must pass the model actually used to produce the published
+        forecast -- which is not always ``best_model`` (the pipeline forces
+        ``linear``/``average``/``zero`` on edge cases, and a learned heuristic
+        may redirect selection inside the 1-SE band).
+        """
+        if not model_name:
+            return {}
+        for c in self.comparisons:
+            if c.model_name == model_name:
+                return c.fold_residuals
+        return {}
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for storage and display."""
@@ -329,6 +349,7 @@ class ModelRegistry:
                 error=None if (mape != float("inf") or mase != float("inf")) else "Evaluation returned inf",
                 fold_mapes=cv.get("fold_mapes") or [],
                 fold_mases=cv.get("fold_mases") or [],
+                fold_residuals=cv.get("fold_residuals") or {},
                 n_folds=cv.get("n_folds_used") or 0,
                 complexity_rank=caps.complexity_rank,
                 cost_class=caps.cost_class,

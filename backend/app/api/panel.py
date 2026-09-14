@@ -16,6 +16,11 @@ from app.services.permissions import require_permission
 router = APIRouter(prefix="/panel", tags=["panel"])
 
 
+from app.services.accuracy_snapshot import realized_coverage_by_line
+from app.services.interval_calibration import DEFAULT_ALPHA
+from app.services.reconciliation import BOUNDS_METHOD_CONFORMAL
+
+
 def _extract_exog_payload(parameters: dict | None) -> dict | None:
     """Return a compact exog payload for panel UI, if present."""
     if not isinstance(parameters, dict):
@@ -28,6 +33,30 @@ def _extract_exog_payload(parameters: dict | None) -> dict | None:
         "columns": exog_spec.get("columns") or [],
         "drivers": exog_spec.get("drivers") or [],
         "exog_mode_scores": exog_spec.get("exog_mode_scores"),
+    }
+
+
+def _extract_calibration_payload(parameters: dict | None) -> dict | None:
+    """Compact interval-calibration payload for the panel UI, if present.
+
+    Absent means the published band is the engine's own analytic interval, which
+    the UI should say plainly rather than implying a calibration that never ran.
+    """
+    if not isinstance(parameters, dict):
+        return None
+    cal = parameters.get("interval_calibration")
+    if not isinstance(cal, dict):
+        return None
+    return {
+        "method": cal.get("method"),
+        "n_residuals": cal.get("n_residuals"),
+        "scale": cal.get("scale"),
+        "calibrated_steps": cal.get("calibrated_steps"),
+        "extrapolated_steps": cal.get("extrapolated_steps"),
+        # Non-empty means the point sat outside its own earned band — i.e. the
+        # model is biased enough to matter. Worth showing, not worth hiding.
+        "bias_clamped_steps": cal.get("bias_clamped_steps"),
+        "saturated_horizons": cal.get("saturated_horizons") or [],
     }
 
 
@@ -147,7 +176,9 @@ async def get_forecast_table(
     if view == "detail":
         rows = []
         for r in all_filtered:
-            exog_payload = _extract_exog_payload(metadata_by_result_id.get(str(r.id)))
+            row_meta = metadata_by_result_id.get(str(r.id))
+            exog_payload = _extract_exog_payload(row_meta)
+            calibration_payload = _extract_calibration_payload(row_meta)
             rows.append({
                 "id": r.id,
                 "line_item_id": r.line_item_id,
@@ -172,6 +203,8 @@ async def get_forecast_table(
                 "review_status": r.review_status,
                 "exog_used": bool(exog_payload),
                 "exog": exog_payload,
+                "bounds_method": r.bounds_method,
+                "calibration": calibration_payload,
             })
     else:
         from collections import defaultdict
@@ -183,7 +216,9 @@ async def get_forecast_table(
         for li_id, group in groups.items():
             li = group[0].line_item
             worst = min(group, key=lambda x: x.confidence_score)
-            exog_payload = _extract_exog_payload(metadata_by_result_id.get(str(worst.id)))
+            worst_meta = metadata_by_result_id.get(str(worst.id))
+            exog_payload = _extract_exog_payload(worst_meta)
+            calibration_payload = _extract_calibration_payload(worst_meta)
             avg_conf = sum(r.confidence_score for r in group) / len(group) if group else 0
             total_p50 = sum(r.p50 for r in group)
             overridden_count = sum(1 for r in group if r.is_overridden)
@@ -215,9 +250,34 @@ async def get_forecast_table(
                 "review_status": worst.review_status,
                 "exog_used": bool(exog_payload),
                 "exog": exog_payload,
+                "bounds_method": worst.bounds_method,
+                "calibration": calibration_payload,
             })
 
         rows.sort(key=lambda x: (x.get("indent_level", 0), x.get("line_item_name", "")))
+
+    # Version-level calibration roll-up. Computed over the full filtered set,
+    # not the page, so the header does not change as the analyst scrolls.
+    calibrated_rows = sum(
+        1 for r in all_filtered
+        if (r.bounds_method or "").startswith(BOUNDS_METHOD_CONFORMAL)
+    )
+    realized = realized_coverage_by_line(
+        db,
+        [r.line_item_id for r in all_filtered],
+        min_cycles=settings.conformal_realized_min_cycles,
+    )
+    calibration_summary = {
+        "calibrated_rows": calibrated_rows,
+        "total_rows": len(all_filtered),
+        # Mean of per-line realized coverage, over lines with enough closed
+        # cycles to have one. None means "not enough history to claim anything".
+        "realized_coverage": (
+            round(sum(realized.values()) / len(realized), 4) if realized else None
+        ),
+        "lines_with_realized_coverage": len(realized),
+        "target_coverage": 1.0 - DEFAULT_ALPHA,
+    }
 
     total_count = len(rows)
     page_rows = rows[offset : offset + page_size]
@@ -243,6 +303,7 @@ async def get_forecast_table(
                 "ok_count": ok_count,
                 "total_scored": len(all_scores),
             },
+            "calibration_summary": calibration_summary,
             "view": view,
             "rows": page_rows,
             "total_count": total_count,

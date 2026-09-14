@@ -239,6 +239,10 @@ class IForecastModel(ABC):
         fold_mases: list[float] = []
         fold_pinball_10: list[float] = []
         fold_pinball_90: list[float] = []
+        # Out-of-sample residuals keyed by horizon step (1-based). These are the
+        # calibration set for split-conformal intervals — see
+        # app/services/interval_calibration.py. Previously discarded.
+        residuals_by_h: dict[int, list[float]] = {}
         coverage_hits = 0
         coverage_total = 0
         scale_methods: list[str] = []
@@ -266,6 +270,13 @@ class IForecastModel(ABC):
                 lower = np.asarray(forecast.lower_bound[: len(actuals)], dtype=float)
                 upper = np.asarray(forecast.upper_bound[: len(actuals)], dtype=float)
                 n_test_points += len(actuals)
+
+                # Keep the raw signed errors, bucketed by how far ahead of the
+                # fold origin they were predicted. h=1 errors are smaller than
+                # h=12 errors, so pooling them would give flat, wrong bands.
+                for step, resid in enumerate(actuals - predicted, start=1):
+                    if np.isfinite(resid):
+                        residuals_by_h.setdefault(step, []).append(float(resid))
 
                 # MAPE — only on non-zero actuals (legacy; asymmetric)
                 mask = actuals != 0
@@ -323,6 +334,7 @@ class IForecastModel(ABC):
                 )(_weighted_mean(fold_pinball_10), _weighted_mean(fold_pinball_90))
             ),
             "coverage_80": coverage_80,
+            "fold_residuals": {h: list(v) for h, v in sorted(residuals_by_h.items())},
             "n": n_test_points,
             "fold_mapes": fold_mapes,
             "fold_mases": fold_mases,

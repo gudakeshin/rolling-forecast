@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -16,6 +17,10 @@ from app.services.driver_series import materialize_driver_series, upsert_driver_
 from app.services.reconciliation import reconcile_version
 from app.services.versioning import clone_version_for_edit
 
+# Normal quantile for an 80% two-sided band — the same constant the engines
+# and MinT use, kept here so scenario bands stay comparable to baseline ones.
+_Z80 = 1.2816
+
 
 @dataclass
 class DriverShock:
@@ -23,6 +28,26 @@ class DriverShock:
     mode: str  # pct | absolute | replace
     value: float | None = None
     series: dict[str, float] | None = None
+
+
+
+def _elasticity_se(link: DriverLink) -> float | None:
+    """SE of the elasticity, carried over from the coefficient's HAC SE.
+
+    ``driver_discovery`` fits in coefficient space and stores ``coefficient_se``
+    there. Elasticity is ``beta * xbar / ybar``, a fixed positive rescaling of
+    beta at the sample means, so the SE rescales by the same factor. Returns
+    ``None`` when the ratio is not recoverable — no opinion beats a fabricated
+    error bar.
+    """
+    if link.coefficient_se is None or link.elasticity is None:
+        return None
+    if link.coefficient in (None, 0.0):
+        return None
+    ratio = abs(float(link.elasticity) / float(link.coefficient))
+    if not math.isfinite(ratio):
+        return None
+    return abs(float(link.coefficient_se)) * ratio
 
 
 def _apply_shock(base: dict[str, float], shock: DriverShock) -> dict[str, float]:
@@ -135,7 +160,11 @@ def create_what_if_scenario(
     affected = 0
     affected_items: set[int] = set()
     affected_row_ids: set[str] = set()
-    base_intervals: dict[str, tuple[float | None, float | None]] = {}
+    # row_id -> (p10, p50, p90) captured before any perturbation, so the band's
+    # own half-widths survive and can be re-centred on the shocked point.
+    base_intervals: dict[str, tuple[float | None, float | None, float | None]] = {}
+    # row_id -> variance contributed by uncertainty in the link coefficients.
+    shock_variance: dict[str, float] = {}
 
     # Apply link-based effect (fast approximation; no model refit)
     for link in links:
@@ -149,7 +178,7 @@ def create_what_if_scenario(
             if row is None:
                 continue
             if row.id not in base_intervals:
-                base_intervals[row.id] = (row.p10, row.p90)
+                base_intervals[row.id] = (row.p10, row.p50, row.p90)
             old_driver = base_map.get(period)
             if old_driver is None:
                 continue
@@ -164,8 +193,24 @@ def create_what_if_scenario(
                     continue
                 pct = (float(new_driver) - float(old_driver)) / abs(float(old_driver))
                 delta = base_line * coef * pct
+                # d(delta)/d(elasticity). Discovery stores an SE for the raw
+                # coefficient, not the elasticity; since elasticity = beta*x/y
+                # the two scale together, so carry the SE across by that ratio.
+                sensitivity = base_line * pct
+                se = _elasticity_se(link)
             else:
                 delta = coef * (float(new_driver) - float(old_driver))
+                sensitivity = float(new_driver) - float(old_driver)
+                se = link.coefficient_se
+
+            # A shock is an assumption, so it carries no error of its own — but
+            # the elasticity we push it through was *estimated*, and that
+            # uncertainty is usually the largest term in a what-if answer.
+            # Omitting it is what made scenario bands narrower than baseline ones.
+            if se is not None and math.isfinite(float(se)):
+                shock_variance[row.id] = (
+                    shock_variance.get(row.id, 0.0) + (sensitivity * float(se)) ** 2
+                )
 
             row.p50 = float(row.p50 + delta)
             row.model_p50 = float((row.model_p50 if row.model_p50 is not None else base_line) + delta)
@@ -183,9 +228,18 @@ def create_what_if_scenario(
             .all()
         ):
             row.bounds_method = "scenario"
-            p10, p90 = base_intervals.get(row.id, (row.p10, row.p90))
-            row.p10 = p10
-            row.p90 = p90
+            p10, p50, p90 = base_intervals.get(row.id, (row.p10, row.p50, row.p90))
+            if p10 is None or p50 is None or p90 is None or row.p50 is None:
+                continue
+            # Keep the model's own (possibly asymmetric) half-widths, re-centre
+            # them on the shocked point, then add the coefficient uncertainty.
+            # Previously the base band was written back verbatim while p50 had
+            # moved, which could leave the point outside its own interval.
+            extra = _Z80 * math.sqrt(shock_variance.get(row.id, 0.0))
+            half_lo = max(float(p50) - float(p10), 0.0)
+            half_hi = max(float(p90) - float(p50), 0.0)
+            row.p10 = float(row.p50) - half_lo - extra
+            row.p90 = float(row.p50) + half_hi + extra
 
     if actor is not None:
         record_audit(

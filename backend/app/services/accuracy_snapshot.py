@@ -6,6 +6,7 @@ import logging
 import uuid
 from typing import Iterable
 
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from app.models.actuals import ActualsRecord
@@ -39,6 +40,53 @@ def compute_fva(
     if pub is None or ben is None:
         return None
     return ben - pub
+
+
+def realized_coverage_by_line(
+    db: Session,
+    line_item_ids: Iterable[int] | None = None,
+    *,
+    min_cycles: int = 3,
+    min_observations: int = 12,
+) -> dict[int, float]:
+    """Share of realized actuals that landed inside the published P10—P90 band.
+
+    This is the honest calibration measure: ``within_p10_p90`` is recorded when
+    an actual arrives for a period some earlier version had forecast, so it
+    scores the forecast against data that had not happened when it was made.
+    CV residuals can only score against history the model was fitted near.
+
+    Returned per line item, and only where the evidence is thick enough
+    (— ``min_cycles`` distinct versions and ``min_observations`` points).
+    A line below either floor is absent from the dict, which the caller must
+    read as "no opinion", not as "zero coverage".
+
+    One grouped query for the whole run — callers forecast hundreds of lines
+    and must not issue this per line.
+    """
+    q = (
+        db.query(
+            ForecastAccuracyRecord.line_item_id.label("line_item_id"),
+            func.count(ForecastAccuracyRecord.id).label("n_obs"),
+            func.count(func.distinct(ForecastAccuracyRecord.version_id)).label("n_cycles"),
+            func.sum(
+                case((ForecastAccuracyRecord.within_p10_p90.is_(True), 1), else_=0)
+            ).label("n_hits"),
+        )
+        .filter(ForecastAccuracyRecord.within_p10_p90.isnot(None))
+        .group_by(ForecastAccuracyRecord.line_item_id)
+    )
+    ids = list(line_item_ids) if line_item_ids is not None else None
+    if ids:
+        q = q.filter(ForecastAccuracyRecord.line_item_id.in_(ids))
+
+    out: dict[int, float] = {}
+    for row in q.all():
+        n_obs = int(row.n_obs or 0)
+        if n_obs < min_observations or int(row.n_cycles or 0) < min_cycles:
+            continue
+        out[int(row.line_item_id)] = float(int(row.n_hits or 0)) / n_obs
+    return out
 
 
 class AccuracySnapshotService:
