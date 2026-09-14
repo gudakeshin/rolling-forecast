@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     erp_api_url: str = ""
     erp_api_token: str = ""
     integration_secret_key: str = ""  # Fernet material; falls back to jwt_secret_key
+    # Enqueue a new draft baseline after the nightly scheduled pull lands new
+    # actuals (arq_worker.scheduled_integration_sync). Off switch for
+    # deployments that want the pull without an automatic regeneration.
+    auto_regenerate_on_ingest: bool = True
 
     # Upload limits
     max_upload_bytes: int = 25 * 1024 * 1024  # 25 MB

@@ -11,15 +11,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.actuals import ActualsDataset, ActualsRecord
 from app.models.budget import BudgetLineItem, BudgetVersion
 from app.models.integration import IntegrationConnection
 from app.models.line_item import LineItem
 from app.models.user import User
 from app.rate_limit import limiter
-from app.services.accuracy_snapshot import AccuracySnapshotService
+from app.services.actuals_ingest import persist_pulled_actuals
 from app.services.audit import record_audit
-from app.services.coa_dependencies import ensure_standard_dependencies
 from app.services.ingestion.erp_adapter import get_actuals_provider
 from app.services.permissions import require_permission
 from app.services.secret_box import decrypt_secret
@@ -54,82 +52,6 @@ def _load_connection(db: Session, connection_id: str, kind: str) -> IntegrationC
     if conn.kind != kind:
         raise HTTPException(400, f"Connection kind must be '{kind}', got '{conn.kind}'")
     return conn
-
-
-async def _persist_actuals_df(db: Session, result, source_type: str, source_name: str, user: User):
-    if not result.success:
-        raise HTTPException(400, result.error or "Pull failed")
-    df = result.dataframe
-    dataset = ActualsDataset(
-        source_type=source_type,
-        source_name=source_name,
-        file_hash=result.file_hash,
-        row_count=result.row_count,
-        period_start=result.period_start,
-        period_end=result.period_end,
-        periods_count=result.periods_count,
-        completeness_pct=result.completeness_pct,
-    )
-    db.add(dataset)
-    db.flush()
-
-    existing = {li.account_code: li for li in db.query(LineItem).all()}
-    line_map = {}
-    for _, row in df.groupby("account_code").first().reset_index().iterrows():
-        code = str(row["account_code"])
-        if code in existing:
-            line_map[code] = existing[code]
-        else:
-            li = LineItem(
-                account_code=code,
-                name=str(row.get("account_name", code)),
-                category=str(row.get("category", "Other")),
-                business_unit=str(row["business_unit"]) if "business_unit" in row.index else None,
-            )
-            db.add(li)
-            db.flush()
-            line_map[code] = li
-            existing[code] = li
-
-    records = []
-    for _, row in df.iterrows():
-        code = str(row["account_code"])
-        mapped_li = line_map.get(code)
-        if mapped_li:
-            records.append(ActualsRecord(
-                dataset_id=dataset.id,
-                line_item_id=mapped_li.id,
-                period=str(row["period"]),
-                value=float(row["value"]),
-                currency=str(row.get("currency", "USD")),
-            ))
-    db.bulk_save_objects(records)
-    deps = ensure_standard_dependencies(db, list(line_map.values()))
-    record_audit(
-        db,
-        action="integrations.pull_actuals",
-        entity_type="actuals_dataset",
-        entity_id=dataset.id,
-        actor_id=user.id,
-        actor_username=user.username,
-        details={"source_type": source_type, "rows": result.row_count, "deps": deps},
-    )
-    db.commit()
-    accuracy_rows = 0
-    try:
-        accuracy_rows = AccuracySnapshotService(db).on_actuals_ingested(dataset.id)
-        if accuracy_rows:
-            db.commit()
-    except Exception:
-        logger.exception("Accuracy snapshot failed after %s pull", source_type)
-        db.rollback()
-    return {
-        "success": True,
-        "dataset_id": dataset.id,
-        "row_count": result.row_count,
-        "dependencies_created": deps,
-        "accuracy_records": accuracy_rows,
-    }
 
 
 @router.post("/warehouse/pull")
@@ -169,7 +91,10 @@ async def pull_warehouse(
         details={"connection_name": conn.name, "success": result.success},
         commit=False,
     )
-    return await _persist_actuals_df(db, result, "warehouse", body.source_name, current_user)
+    return await persist_pulled_actuals(
+        db, result, "warehouse", body.source_name,
+        actor_id=current_user.id, actor_username=current_user.username,
+    )
 
 
 @router.post("/erp/pull")
@@ -203,7 +128,10 @@ async def pull_erp(
         details={"connection_name": conn.name, "path": body.relative_path, "success": result.success},
         commit=False,
     )
-    return await _persist_actuals_df(db, result, "erp", body.source_name, current_user)
+    return await persist_pulled_actuals(
+        db, result, "erp", body.source_name,
+        actor_id=current_user.id, actor_username=current_user.username,
+    )
 
 
 @router.post("/budget/import")

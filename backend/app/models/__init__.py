@@ -18,6 +18,8 @@ from app.models.auth_tokens import RefreshToken, TokenDenylist
 from app.models.memory import MemoryBlock
 from app.models.heuristic import LearnedHeuristic
 from app.models.sign_prior import SignPrior
+from app.models.anomaly_dismissal import AnomalyDismissal
+from app.models.notification import Notification
 
 __all__ = [
     "User",
@@ -54,4 +56,6 @@ __all__ = [
     "MemoryBlock",
     "LearnedHeuristic",
     "SignPrior",
+    "AnomalyDismissal",
+    "Notification",
 ]

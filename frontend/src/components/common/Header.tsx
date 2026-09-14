@@ -4,6 +4,7 @@ import { useVersionStore } from '../../store/versionStore';
 import { useChatStore } from '../../store/chatStore';
 import { useI18n } from '../../i18n/useI18n';
 import type { Locale } from '../../i18n';
+import { NotificationBell } from './NotificationBell';
 
 export function Header() {
   const user = useAuthStore((s) => s.user);
@@ -85,6 +86,7 @@ export function Header() {
       </div>
 
       <div className="flex items-center gap-1 sm:gap-2.5">
+        <NotificationBell />
         <button
           type="button"
           onClick={cycleLocale}

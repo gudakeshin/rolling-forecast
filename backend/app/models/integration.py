@@ -31,6 +31,12 @@ class IntegrationConnection(Base):
     encrypted_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Opt-in unattended nightly pull. A connection with this off is only ever
+    # pulled by an explicit, user-initiated request.
+    auto_pull_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    default_query: Mapped[str | None] = mapped_column(Text, nullable=True)  # warehouse
+    default_relative_path: Mapped[str | None] = mapped_column(Text, nullable=True)  # erp
+    default_source_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)

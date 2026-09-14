@@ -15,6 +15,7 @@ from app.models.forecast import ForecastVersion
 from app.models.approval import ApprovalWorkflow, ApprovalStep
 from app.services.permissions import require_permission
 from app.services.audit import record_audit
+from app.services.notifications import notify_users, users_eligible_for_approval_step
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
 
@@ -71,6 +72,45 @@ def _actor_username(db: Session, actor_id: str | None) -> str | None:
         return None
     actor = db.query(User).filter(User.id == actor_id).first()
     return actor.username if actor else None
+
+
+def _notify_next_actionable_level(db: Session, version: ForecastVersion) -> None:
+    """Notify everyone who could act on the lowest still-pending level for
+    this version — called right after submit, and again after each decision
+    unblocks the next level. Deduped per (version, level) so re-checking
+    (e.g. a second decision on an already-notified level) is a no-op."""
+    next_step = (
+        db.query(ApprovalStep)
+        .filter(ApprovalStep.version_id == version.id, ApprovalStep.status == "pending")
+        .order_by(ApprovalStep.level.asc())
+        .first()
+    )
+    if not next_step:
+        return
+    prior_pending = (
+        db.query(ApprovalStep)
+        .filter(
+            ApprovalStep.version_id == version.id,
+            ApprovalStep.level < next_step.level,
+            ApprovalStep.status != "approved",
+        )
+        .count()
+    )
+    if prior_pending:
+        return
+    recipients = users_eligible_for_approval_step(db, next_step.required_role)
+    notify_users(
+        db,
+        recipients,
+        kind="approval_pending",
+        title=f"Approval needed: {version.name}",
+        body=f"Level {next_step.level} ({next_step.required_role}) is waiting on your decision.",
+        entity_type="forecast_version",
+        entity_id=version.id,
+        link_panel="approvals",
+        link_params={"version_id": version.id},
+        dedup_key_prefix=f"approval_pending:{version.id}:{next_step.level}",
+    )
 
 
 @router.get("/workflows")
@@ -141,6 +181,8 @@ async def submit_for_approval(
         actor_username=current_user.username,
         details={"workflow_id": wf.id},
     )
+    db.commit()
+    _notify_next_actionable_level(db, version)
     db.commit()
     return {"success": True, "version_id": version.id, "workflow_id": wf.id, "status": "in_review"}
 
@@ -258,6 +300,9 @@ async def decide_step(
             version.status = "approved"
             version.approved_at = datetime.now(timezone.utc)
             version.approved_by = current_user.id
+        elif remaining > 0 and version:
+            # Approving this level may have unblocked the next one.
+            _notify_next_actionable_level(db, version)
 
     record_audit(
         db,

@@ -26,6 +26,12 @@ class ConnectionCreate(BaseModel):
     token: str | None = None
     description: str | None = None
     enabled: bool = True
+    # Opt-in unattended nightly pull (see WorkerSettings.cron_jobs). A warehouse
+    # connection needs default_query; an erp connection needs default_relative_path.
+    auto_pull_enabled: bool = False
+    default_query: str | None = None
+    default_relative_path: str | None = None
+    default_source_name: str | None = None
 
 
 class ConnectionUpdate(BaseModel):
@@ -34,6 +40,19 @@ class ConnectionUpdate(BaseModel):
     token: str | None = None
     description: str | None = None
     enabled: bool | None = None
+    auto_pull_enabled: bool | None = None
+    default_query: str | None = None
+    default_relative_path: str | None = None
+    default_source_name: str | None = None
+
+
+def _require_auto_pull_defaults(
+    kind: str, default_query: str | None, default_relative_path: str | None
+) -> None:
+    if kind == "warehouse" and not default_query:
+        raise HTTPException(400, "auto_pull_enabled on a warehouse connection requires default_query")
+    if kind == "erp" and not default_relative_path:
+        raise HTTPException(400, "auto_pull_enabled on an erp connection requires default_relative_path")
 
 
 def _public(conn: IntegrationConnection) -> dict:
@@ -44,6 +63,10 @@ def _public(conn: IntegrationConnection) -> dict:
         "enabled": conn.enabled,
         "description": conn.description,
         "has_token": bool(conn.encrypted_token),
+        "auto_pull_enabled": conn.auto_pull_enabled,
+        "default_query": conn.default_query,
+        "default_relative_path": conn.default_relative_path,
+        "default_source_name": conn.default_source_name,
         "created_at": conn.created_at.isoformat() if conn.created_at else None,
         "updated_at": conn.updated_at.isoformat() if conn.updated_at else None,
     }
@@ -70,6 +93,8 @@ async def create_connection(
         assert_safe_integration_url(body.url, body.kind)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+    if body.auto_pull_enabled:
+        _require_auto_pull_defaults(body.kind, body.default_query, body.default_relative_path)
     conn = IntegrationConnection(
         name=body.name,
         kind=body.kind,
@@ -77,6 +102,10 @@ async def create_connection(
         encrypted_token=encrypt_secret(body.token) if body.token else None,
         description=body.description,
         enabled=body.enabled,
+        auto_pull_enabled=body.auto_pull_enabled,
+        default_query=body.default_query,
+        default_relative_path=body.default_relative_path,
+        default_source_name=body.default_source_name,
         created_by=current_user.id,
     )
     db.add(conn)
@@ -118,6 +147,16 @@ async def update_connection(
         conn.description = body.description
     if body.enabled is not None:
         conn.enabled = body.enabled
+    if body.default_query is not None:
+        conn.default_query = body.default_query
+    if body.default_relative_path is not None:
+        conn.default_relative_path = body.default_relative_path
+    if body.default_source_name is not None:
+        conn.default_source_name = body.default_source_name
+    if body.auto_pull_enabled is not None:
+        conn.auto_pull_enabled = body.auto_pull_enabled
+    if conn.auto_pull_enabled:
+        _require_auto_pull_defaults(conn.kind, conn.default_query, conn.default_relative_path)
     conn.updated_at = datetime.now(timezone.utc)
     record_audit(
         db,
