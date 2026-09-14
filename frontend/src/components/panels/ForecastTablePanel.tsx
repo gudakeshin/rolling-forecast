@@ -4,7 +4,7 @@ import {
   Edit3, ShieldCheck, Eye, Filter, BarChart3, TrendingDown, TrendingUp,
   Bot, Sparkles, Info, MessageSquare, Upload, RefreshCw, ArrowRightLeft,
   UserCheck, Search, Zap, CircleDot, Save, X, GitBranch, Activity,
-  Loader2,
+  Loader2, Target,
 } from 'lucide-react';
 import { apiPost } from '../../api/client';
 import { usePanelStore } from '../../store/panelStore';
@@ -18,6 +18,15 @@ interface QualitySummary {
   warning_count: number;
   ok_count: number;
   total_scored: number;
+}
+
+interface CalibrationSummary {
+  calibrated_lines: number;
+  total_lines: number;
+  /** Mean realized coverage across lines with enough closed cycles; null = no claim. */
+  realized_coverage: number | null;
+  lines_with_realized_coverage: number;
+  target_coverage: number;
 }
 
 interface AIAction {
@@ -145,6 +154,7 @@ interface Props {
     data: {
       version?: VersionInfo;
       quality_summary?: QualitySummary;
+      calibration_summary?: CalibrationSummary;
       rows?: ForecastRow[];
       items?: ForecastRow[];
       view?: string;
@@ -166,6 +176,7 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
   const rows = data.data.rows || data.data.items || [];
   const version = data.data.version;
   const quality = data.data.quality_summary;
+  const calibration = data.data.calibration_summary;
   const isSummaryView = data.data.view === 'summary' || (!data.data.view && rows.length > 0 && rows[0]?.period_count);
   const categories = data.data.available_categories || [];
   const hasMore = Boolean(data.data.has_more);
@@ -340,6 +351,11 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
       {
         key: 'line_item_name',
         label: 'Line Item',
+        // Pinned: the horizon scrolls sideways and a number is meaningless once
+        // its line name has scrolled off.
+        pinned: true,
+        width: 260,
+        exportValue: (_, row) => String(row.line_item_name ?? ''),
         render: (_, row) => (
           <ForecastLineItemCell
             row={row}
@@ -361,6 +377,8 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
         key: forecastKey,
         label: 'Forecast (P50)',
         align: 'right',
+        total: true,
+        exportValue: (v) => (typeof v === 'number' ? v : null),
         render: (_, row) => (
           <ForecastValueCell
             row={row}
@@ -429,6 +447,11 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
       {/* ── Quality Summary Banner ── */}
       {quality && (
         <QualitySummaryBanner quality={quality} onOpenReview={handleOpenReview} />
+      )}
+
+      {/* ── Interval calibration provenance ── */}
+      {calibration && calibration.calibrated_lines > 0 && (
+        <CalibrationBanner calibration={calibration} />
       )}
 
       {/* ── Version Stats (fallback when no quality_summary) ── */}
@@ -505,6 +528,9 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
         title={version?.name ? `Forecast — ${version.name}` : 'Forecast'}
         columns={columns}
         rows={tableRows}
+        searchable
+        searchPlaceholder="Find a line item"
+        showTotals
         getRowId={(row) => row.id}
         getRowClassName={getRowClassName}
         expandedRowIds={expandedRows}
@@ -554,6 +580,52 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
 }
 
 // ── Quality Summary Banner ──────────────────
+function CalibrationBanner({ calibration }: { calibration: CalibrationSummary }) {
+  const { realized_coverage: realized, target_coverage: target } = calibration;
+  const targetPct = Math.round((target ?? 0.8) * 100);
+
+  // Say what is actually known. With too few closed cycles we can state that the
+  // bands were calibrated on backtest errors, but not that they have been proven
+  // against reality — and an honest 78% earns more trust than a silent 80%.
+  const proven = realized != null && calibration.lines_with_realized_coverage > 0;
+  const realizedPct = proven ? Math.round(realized * 100) : null;
+  const drift = proven ? Math.abs((realizedPct as number) - targetPct) : 0;
+  const tone = !proven
+    ? 'text-surface-400'
+    : drift <= 5
+      ? 'text-deloitte-green'
+      : 'text-amber-400';
+
+  return (
+    <div className="flex items-start gap-2 px-3 py-2 bg-surface-800/60 border border-surface-700/50 rounded-xl">
+      <Target className="w-3.5 h-3.5 mt-0.5 shrink-0 text-surface-500" aria-hidden="true" />
+      <p className="text-xs text-surface-400 leading-relaxed">
+        <span className="font-semibold text-surface-200">
+          {calibration.calibrated_lines} of {calibration.total_lines}
+        </span>{' '}
+        lines have prediction bands calibrated on out-of-sample backtest errors
+        rather than the model{"'"}s own distributional assumption.{' '}
+        {proven ? (
+          <>
+            Across{' '}
+            <span className="font-semibold text-surface-200">
+              {calibration.lines_with_realized_coverage}
+            </span>{' '}
+            lines with closed cycles,{' '}
+            <span className={`font-semibold ${tone}`}>{realizedPct}%</span>{' '}
+            of actuals landed inside the {targetPct}% band.
+          </>
+        ) : (
+          <span className="text-surface-500">
+            Not enough closed cycles yet to report realized coverage.
+          </span>
+        )}
+      </p>
+    </div>
+  );
+}
+
+
 function QualitySummaryBanner({
   quality,
   onOpenReview,
