@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   LineChart, Line, AreaChart, Area,
   XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { apiPost } from '../../api/client';
 import { usePanelStore } from '../../store/panelStore';
+import { toast } from '../../store/toastStore';
 import { DataTable, downloadCsv, type DataTableColumn } from '../ui/DataTable';
 import { chartTheme } from '../../theme/chartTheme';
 
@@ -705,7 +706,10 @@ function ActionButton({
 // ─── Main Panel ────────────────────────────────────
 export function AnomalyPanel({ data }: { data: any }) {
   const panelData: AnomalyData = data?.data || data;
-  const anomalies = panelData?.anomalies || [];
+  // Stable reference: `panelData?.anomalies || []` would otherwise create a
+  // fresh empty array every render whenever there's no data, defeating the
+  // useMemo hooks below that depend on it.
+  const anomalies = useMemo(() => panelData?.anomalies || [], [panelData]);
   const summary = panelData?.summary || {
     total_anomalies: 0, critical_count: 0, warning_count: 0, info_count: 0,
     critical_value: 0, warning_value: 0, total_line_items: 0,
@@ -713,8 +717,20 @@ export function AnomalyPanel({ data }: { data: any }) {
   const typeChart = panelData?.type_chart || [];
   const categories = panelData?.available_categories || [];
 
+  const versionId: string | undefined = panelData?.version?.id;
+
+  // Server-authoritative dismissal state (is_dismissed on each row) —
+  // resynced whenever the panel reloads with fresh data, so a dismissal
+  // persists across close/reopen instead of resetting to an empty Set.
+  const serverDismissed = useMemo(
+    () => new Set<string>(anomalies.filter((a: AnomalyItem) => a.is_dismissed).map((a: AnomalyItem) => a.id)),
+    [anomalies],
+  );
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(serverDismissed);
+  useEffect(() => {
+    setDismissedIds(serverDismissed);
+  }, [serverDismissed]);
   const [filters, setFilters] = useState<FilterState>({
     severity: 'all',
     category: 'all',
@@ -753,7 +769,31 @@ export function AnomalyPanel({ data }: { data: any }) {
       return next;
     });
     setExpandedId(null);
-  }, []);
+    if (!versionId) return;
+    apiPost(`/panel/anomaly-dashboard/${versionId}/dismiss`, { anomaly_id: id }).catch(() => {
+      // Roll back the optimistic update — the reload picks up the real
+      // server state next time regardless, but don't leave the UI lying.
+      setDismissedIds(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      toast.error('Could not save dismissal — please try again.');
+    });
+  }, [versionId]);
+
+  const handleRestore = useCallback((id: string) => {
+    setDismissedIds(prev => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    if (!versionId) return;
+    apiPost(`/panel/anomaly-dashboard/${versionId}/undismiss`, { anomaly_id: id }).catch(() => {
+      setDismissedIds(prev => new Set(prev).add(id));
+      toast.error('Could not restore anomaly — please try again.');
+    });
+  }, [versionId]);
 
   const handleOverride = useCallback((item: AnomalyItem) => {
     setExpandedId(item.id);
@@ -887,19 +927,22 @@ export function AnomalyPanel({ data }: { data: any }) {
             const id = String(row.id);
             setExpandedId(expandedId === id ? null : id);
           }}
-          rowActions={(row) => (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleDismiss(String(row.id));
-              }}
-              className="text-xs text-surface-500 hover:text-surface-300"
-              title="Dismiss"
-            >
-              <EyeOff className="w-3 h-3" />
-            </button>
-          )}
+          rowActions={(row) => {
+            const isDismissed = Boolean(row.is_dismissed);
+            return (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  (isDismissed ? handleRestore : handleDismiss)(String(row.id));
+                }}
+                className="text-xs text-surface-500 hover:text-surface-300"
+                title={isDismissed ? 'Restore' : 'Dismiss'}
+              >
+                {isDismissed ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+              </button>
+            );
+          }}
           renderExpandedRow={(row) => (
             <AnomalyRow
               item={row as unknown as AnomalyItem}

@@ -8,10 +8,11 @@ from app.database import get_db
 from app.api.auth import get_current_user
 from app.models.user import User
 from app.models.forecast import ForecastVersion, ForecastLineResult, ModelMetadata
+from app.models.fx import ForecastAccuracyRecord
 from app.models.line_item import LineItem
 from app.models.override import Override
 from app.schemas.forecast import PanelDataResponse
-from app.services.permissions import require_permission
+from app.services.permissions import require_permission, user_can_view_line_item
 
 router = APIRouter(prefix="/panel", tags=["panel"])
 
@@ -321,6 +322,151 @@ async def get_forecast_table(
             "offset": offset,
             "has_more": has_more,
             "available_categories": available_categories,
+        },
+    )
+
+
+@router.get("/why-this-number/{result_id}", response_model=PanelDataResponse)
+async def why_this_number(
+    result_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Everything the pipeline already knows about one forecast cell: model
+    selection (chosen model, runner-up, margin), exog admission and why,
+    calibration, structural-break/outlier handling, the reconciliation delta,
+    override history for this exact cell across versions, and realized
+    coverage. All computed at generation time and otherwise thrown away —
+    see forecast_pipeline.py's ModelMetadata.parameters writes."""
+    result = db.query(ForecastLineResult).filter(ForecastLineResult.id == result_id).first()
+    if not result:
+        raise HTTPException(404, "Forecast line result not found")
+    line_item = result.line_item
+    if not user_can_view_line_item(current_user, line_item):
+        raise HTTPException(404, "Forecast line result not found")
+
+    meta = result.model_metadata
+    params = meta.parameters if meta and isinstance(meta.parameters, dict) else {}
+    exog_spec = params.get("exog_spec") if isinstance(params.get("exog_spec"), dict) else None
+
+    reconciliation = None
+    if (
+        result.pre_reconcile_p50 is not None
+        and abs(result.pre_reconcile_p50 - result.p50) > 1e-9
+    ):
+        delta = result.p50 - result.pre_reconcile_p50
+        reconciliation = {
+            "pre_reconcile_p50": result.pre_reconcile_p50,
+            "published_p50": result.p50,
+            "delta": round(delta, 2),
+            "delta_pct": (
+                round(delta / abs(result.pre_reconcile_p50) * 100, 1)
+                if result.pre_reconcile_p50 else None
+            ),
+        }
+
+    # Override history for this exact (line_item, period) across every
+    # version — not just the version this cell happens to belong to.
+    overrides = (
+        db.query(Override)
+        .filter(
+            Override.line_item_id == result.line_item_id,
+            Override.period == result.period,
+        )
+        .order_by(Override.created_at.desc())
+        .all()
+    )
+    override_history = [
+        {
+            "id": o.id,
+            "version_id": o.version_id,
+            "original_model_value": o.original_model_value,
+            "override_value": o.override_value,
+            "reason": o.reason,
+            "status": o.status,
+            "user_id": o.user_id,
+            "created_at": o.created_at.isoformat() if o.created_at else None,
+        }
+        for o in overrides
+    ]
+
+    # Realized coverage for this exact cell (line_item, period), across
+    # every vintage that has since closed — not the line's lifetime average.
+    accuracy_rows = (
+        db.query(ForecastAccuracyRecord)
+        .filter(
+            ForecastAccuracyRecord.line_item_id == result.line_item_id,
+            ForecastAccuracyRecord.period == result.period,
+            ForecastAccuracyRecord.within_p10_p90.isnot(None),
+        )
+        .order_by(ForecastAccuracyRecord.created_at.desc())
+        .all()
+    )
+    realized_coverage = (
+        {
+            "n_vintages": len(accuracy_rows),
+            "n_within_band": sum(1 for r in accuracy_rows if r.within_p10_p90),
+            "latest_actual": accuracy_rows[0].actual,
+            "latest_pct_error": accuracy_rows[0].pct_error,
+        }
+        if accuracy_rows
+        else None
+    )
+
+    li_name = line_item.name if line_item else "line item"
+    return PanelDataResponse(
+        panel_type="why_this_number",
+        title=f"Why {li_name}: {result.period}",
+        data={
+            "result_id": result.id,
+            "line_item_id": result.line_item_id,
+            "line_item_name": li_name,
+            "period": result.period,
+            "p10": result.p10,
+            "p50": result.p50,
+            "p90": result.p90,
+            "model_type": result.model_type,
+            "model_mape": result.model_mape,
+            "model_mase": result.model_mase,
+            "model_pinball": result.model_pinball,
+            "model_r_squared": result.model_r_squared,
+            "confidence_score": result.confidence_score,
+            "confidence_level": result.confidence_level,
+            "bounds_method": result.bounds_method,
+            "is_overridden": result.is_overridden,
+            "model_selection": params.get("model_selection"),
+            "exog": (
+                {
+                    "mode": exog_spec.get("mode"),
+                    "admitted": exog_spec.get("exog_admitted"),
+                    "rejected_reason": exog_spec.get("exog_rejected_reason"),
+                    "columns": exog_spec.get("columns") or [],
+                    "drivers": exog_spec.get("drivers") or [],
+                    "plain_vs_exog": exog_spec.get("plain_vs_exog"),
+                    "exog_mode_scores": exog_spec.get("exog_mode_scores"),
+                }
+                if exog_spec
+                else None
+            ),
+            "calibration": _extract_calibration_payload(params),
+            "structural_break": (
+                {"detected": True, "period": meta.structural_break_period}
+                if meta and meta.structural_break_detected
+                else None
+            ),
+            "outlier_cleaning": (
+                {"cleaned_periods": meta.cleaned_periods, "n_cleaned": meta.outliers_cleaned}
+                if meta and meta.cleaned_periods
+                else None
+            ),
+            "seasonality": (
+                {"detected": True, "period": meta.seasonality_period}
+                if meta and meta.seasonality_detected
+                else None
+            ),
+            "reconciliation": reconciliation,
+            "override_history": override_history,
+            "realized_coverage": realized_coverage,
         },
     )
 

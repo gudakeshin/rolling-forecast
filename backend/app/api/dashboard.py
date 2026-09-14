@@ -18,6 +18,7 @@ from app.models.forecast import ForecastVersion, ForecastLineResult, ModelMetada
 from app.models.line_item import LineItem, LineItemDependency
 from app.models.actuals import ActualsRecord
 from app.models.override import Override
+from app.models.anomaly_dismissal import AnomalyDismissal
 from app.schemas.forecast import PanelDataResponse
 from app.services.permissions import line_item_scope_filter, require_permission, scoped_line_items
 
@@ -2449,6 +2450,14 @@ async def get_anomaly_dashboard(
     # ── Detect anomalies per line item ────────────────
     anomaly_items: list[dict] = []
 
+    dismissed_ids = {
+        row.anomaly_id
+        for row in db.query(AnomalyDismissal.anomaly_id).filter(
+            AnomalyDismissal.user_id == current_user.id,
+            AnomalyDismissal.version_id == version_id,
+        )
+    }
+
     for li_id, group in li_groups.items():
         li = group[0].line_item
         if not li or li.is_subtotal:
@@ -2680,7 +2689,7 @@ async def get_anomaly_dashboard(
             "total_p50": round(li_total_p50, 2),
             "avg_p50": round(li_total_p50 / len(group), 2) if group else 0,
             "model_type": group[0].model_type,
-            "is_dismissed": False,
+            "is_dismissed": group[0].id in dismissed_ids,
         })
 
     # ── Sort by composite score (most critical first) ─
@@ -2751,3 +2760,60 @@ async def get_anomaly_dashboard(
             "available_categories": available_categories,
         },
     )
+
+
+class AnomalyDismissRequest(BaseModel):
+    anomaly_id: str
+
+
+@router.post("/anomaly-dashboard/{version_id}/dismiss")
+async def dismiss_anomaly(
+    version_id: str,
+    body: AnomalyDismissRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Mark an anomaly finding reviewed so it stays dismissed across reopens.
+
+    Per-user, non-destructive (only hides the item from this user's own
+    view) — same access level as viewing the dashboard itself, not the
+    elevated "review" permission a workflow decision would need.
+    """
+    existing = (
+        db.query(AnomalyDismissal)
+        .filter(
+            AnomalyDismissal.user_id == current_user.id,
+            AnomalyDismissal.anomaly_id == body.anomaly_id,
+        )
+        .first()
+    )
+    if existing:
+        return {"success": True, "anomaly_id": body.anomaly_id, "already_dismissed": True}
+    db.add(AnomalyDismissal(
+        user_id=current_user.id,
+        version_id=version_id,
+        anomaly_id=body.anomaly_id,
+    ))
+    db.commit()
+    return {"success": True, "anomaly_id": body.anomaly_id, "already_dismissed": False}
+
+
+@router.post("/anomaly-dashboard/{version_id}/undismiss")
+async def undismiss_anomaly(
+    version_id: str,
+    body: AnomalyDismissRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Reverse a dismissal (the "show dismissed" restore action)."""
+    _ = version_id  # kept for route symmetry with dismiss; identity is (user, anomaly_id)
+    deleted = (
+        db.query(AnomalyDismissal)
+        .filter(
+            AnomalyDismissal.user_id == current_user.id,
+            AnomalyDismissal.anomaly_id == body.anomaly_id,
+        )
+        .delete()
+    )
+    db.commit()
+    return {"success": True, "anomaly_id": body.anomaly_id, "was_dismissed": bool(deleted)}

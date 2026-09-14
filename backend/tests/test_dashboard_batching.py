@@ -257,6 +257,106 @@ def test_review_executive_anomaly_with_seeded_results(
     assert anomaly.data["version"]["id"] == version.id
 
 
+def test_anomaly_dismissal_persists_across_reloads(
+    db_session, seed_users, seed_line_items, seed_actuals
+):
+    """Dismissal must survive a panel reopen (server-side, not the old client Set)."""
+    from app.api.dashboard import (
+        AnomalyDismissRequest,
+        dismiss_anomaly,
+        get_anomaly_dashboard,
+        undismiss_anomaly,
+    )
+    from app.models.anomaly_dismissal import AnomalyDismissal
+
+    version = ForecastVersion(
+        id="dash-dismiss-v1",
+        name="Dismissal Coverage",
+        status="draft",
+        version_type="baseline",
+        horizon_months=1,
+        scenario="base",
+        actuals_dataset_id=seed_actuals.id,
+    )
+    db_session.add(version)
+    db_session.flush()
+
+    li = next(li for li in seed_line_items.values() if not li.is_calculated)
+    flr_id = f"flr-dismiss-{li.id}"
+    db_session.add(
+        ForecastLineResult(
+            id=flr_id,
+            version_id=version.id,
+            line_item_id=li.id,
+            period="2025-10",
+            p10=80_000,
+            p50=100_000,
+            p90=120_000,
+            model_type="linear",
+            confidence_score=55.0,
+            confidence_level="medium",
+        )
+    )
+    db_session.commit()
+
+    admin = seed_users["admin"]
+
+    before = asyncio.run(
+        get_anomaly_dashboard(version_id=version.id, current_user=admin, db=db_session)
+    )
+    dismissed_before = {a["id"]: a["is_dismissed"] for a in before.data["anomalies"]}
+    assert dismissed_before.get(flr_id, False) is False
+
+    result = asyncio.run(
+        dismiss_anomaly(
+            version_id=version.id,
+            body=AnomalyDismissRequest(anomaly_id=flr_id),
+            current_user=admin,
+            db=db_session,
+        )
+    )
+    assert result == {"success": True, "anomaly_id": flr_id, "already_dismissed": False}
+
+    # Idempotent: dismissing again reports it was already dismissed, no duplicate row.
+    result2 = asyncio.run(
+        dismiss_anomaly(
+            version_id=version.id,
+            body=AnomalyDismissRequest(anomaly_id=flr_id),
+            current_user=admin,
+            db=db_session,
+        )
+    )
+    assert result2["already_dismissed"] is True
+    assert (
+        db_session.query(AnomalyDismissal)
+        .filter(AnomalyDismissal.anomaly_id == flr_id)
+        .count()
+        == 1
+    )
+
+    after = asyncio.run(
+        get_anomaly_dashboard(version_id=version.id, current_user=admin, db=db_session)
+    )
+    dismissed_after = {a["id"]: a["is_dismissed"] for a in after.data["anomalies"]}
+    assert dismissed_after.get(flr_id) is True
+
+    undo = asyncio.run(
+        undismiss_anomaly(
+            version_id=version.id,
+            body=AnomalyDismissRequest(anomaly_id=flr_id),
+            current_user=admin,
+            db=db_session,
+        )
+    )
+    assert undo == {"success": True, "anomaly_id": flr_id, "was_dismissed": True}
+    assert (
+        db_session.query(AnomalyDismissal)
+        .filter(AnomalyDismissal.anomaly_id == flr_id)
+        .count()
+        == 0
+    )
+
+
 def test_driver_inputs_endpoint_ok(client):
     """HTTP path shares the app DB (not the in-memory unit-test session)."""
     from app.database import SessionLocal

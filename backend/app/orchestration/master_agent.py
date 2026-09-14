@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.orchestration.context_manager import ContextManager
 from app.domain.registry import get_registry
+from app.domain.engines.model_registry import get_model_registry
 from app.domain.base_skill import (
     SkillContext,
     push_skill_context,
@@ -29,11 +30,30 @@ def invalidate_agent_cache() -> None:
     _agent_cache.clear()
 
 
-SYSTEM_PROMPT = """You are the Rolling Forecast Assistant, an AI-powered FP&A agent that helps finance teams generate, manage, and analyze rolling forecasts.
+def _auto_selectable_model_labels() -> list[str]:
+    """Display labels for models the auto-selection pipeline actually chooses between.
+
+    Excludes benchmark-only models (naive/seasonal-naive) and edge-case-only
+    models (zero/mean), which the pipeline uses internally but never presents
+    as a candidate to the analyst.
+    """
+    registry = get_model_registry()
+    labels = []
+    for name in registry.list_models():
+        model = registry.get(name)
+        if model is None:
+            continue
+        caps = model.capabilities
+        if caps.auto_selectable and not caps.is_benchmark:
+            labels.append(caps.display_label or name)
+    return labels
+
+
+SYSTEM_PROMPT_TEMPLATE = """You are the Rolling Forecast Assistant, an AI-powered FP&A agent that helps finance teams generate, manage, and analyze rolling forecasts.
 
 ## Your Capabilities
 You have access to specialized skills (tools) for:
-- **Forecast Planning:** Analyze data quality and run model comparisons (ARIMA, Prophet, ETS, Linear) BEFORE generating. Shows MAPE scores so the user can choose.
+- **Forecast Planning:** Analyze data quality and run model comparisons ({model_list}) BEFORE generating. Shows MAPE scores so the user can choose.
 - **Forecast Generation:** Generate statistical baseline forecasts. Supports auto-selection (best model per line item via MAPE comparison) or user-chosen models. Confidence scoring is automatic.
 - **Confidence Scoring:** Re-score confidence with custom thresholds (only needed if the user wants to change thresholds — generation includes default scoring).
 - **Version Management:** Create, list, compare, and manage immutable forecast versions
@@ -48,7 +68,7 @@ When the user asks to generate, run, or create a forecast, ALWAYS follow this tw
 
 ### Step 1: Plan (use `plan_forecast` tool)
 - Analyze the uploaded data
-- Run ALL 4 algorithms (ARIMA, Prophet, ETS, Linear Trend) on a sample of line items
+- Run all {model_count} candidate algorithms ({model_list}) on a sample of line items
 - Show the MAPE (Mean Absolute Percentage Error) comparison table
 - Present the AI recommendation
 - Ask the user which approach they prefer
@@ -82,6 +102,15 @@ When the user asks to generate, run, or create a forecast, ALWAYS follow this tw
 
 Dynamic per-turn context (user session, active version, document excerpts) is provided in subsequent system messages.
 """
+
+
+def _build_system_prompt() -> str:
+    """Render SYSTEM_PROMPT_TEMPLATE against the live model registry."""
+    labels = _auto_selectable_model_labels()
+    return SYSTEM_PROMPT_TEMPLATE.format(
+        model_list=", ".join(labels),
+        model_count=len(labels),
+    )
 
 
 class MasterAgent:
@@ -138,7 +167,7 @@ class MasterAgent:
         agent = create_react_agent(
             model=llm,
             tools=tools,
-            prompt=SYSTEM_PROMPT,
+            prompt=_build_system_prompt(),
         )
         _agent_cache[cache_key] = agent
         return agent

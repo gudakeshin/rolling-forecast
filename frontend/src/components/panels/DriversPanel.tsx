@@ -65,7 +65,13 @@ export function DriversPanel() {
     } finally {
       setLoading(false);
     }
-  }, [selectedId, t]);
+    // `t` is intentionally omitted: useI18n() returns a new function identity
+    // every render, so including it here means every render (even a plain
+    // setDrivers/setLoading from THIS function) gives `load` a new identity,
+    // re-triggering the mount effect below forever. See the identical note
+    // in ForecastTablePanel.tsx's fetch effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
 
   useEffect(() => {
     void load();
@@ -81,7 +87,9 @@ export function DriversPanel() {
     } finally {
       setLinksLoading(false);
     }
-  }, [t]);
+    // `t` intentionally omitted — see the note on `load` above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (selectedId != null) void loadLinks(selectedId);
@@ -372,8 +380,11 @@ export function DriversPanel() {
                       {' · '}
                       {t('drivers.discovery.lag', { lag: l.lag })}
                       {l.coefficient != null ? ` · β=${l.coefficient.toPrecision(4)}` : ''}
+                      {l.t_stat != null ? ` · t=${l.t_stat.toFixed(2)}` : ''}
                       {l.p_value_adj != null ? ` · adj p=${l.p_value_adj.toExponential(1)}` : ''}
+                      {l.r2 != null ? ` · R²=${l.r2.toFixed(2)}` : ''}
                       {l.n_obs != null ? ` · n=${l.n_obs}` : ''}
+                      {l.hac_lags != null ? ` · HAC(${l.hac_lags})` : ''}
                     </span>
                     <span className="flex items-center gap-2">
                       <span
@@ -398,6 +409,50 @@ export function DriversPanel() {
                   </li>
                 ))}
               </ul>
+            )}
+
+            {discovery.summary?.candidates && discovery.summary.candidates.length > 0 && (
+              <div className="space-y-1.5 pt-2 mt-2 border-t border-surface-700/40">
+                <div className="text-[11px] font-semibold text-surface-400 uppercase tracking-wide">
+                  {t('drivers.discovery.allCandidates', {
+                    count: discovery.summary.candidates.length,
+                  })}
+                </div>
+                <p className="text-[11px] text-surface-500">{t('drivers.discovery.allCandidatesHint')}</p>
+                <ul className="space-y-1">
+                  {discovery.summary.candidates.map((c) => (
+                    <li
+                      key={`${c.driver_id}-${c.lag}`}
+                      className="text-xs bg-surface-900/40 rounded-lg px-2.5 py-1.5 border border-surface-700/30"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-surface-300">
+                          {c.driver_key}
+                          {' · '}
+                          {t('drivers.discovery.lag', { lag: c.lag })}
+                          {c.coefficient != null ? ` · β=${c.coefficient.toPrecision(4)}` : ''}
+                          {c.t_stat != null ? ` · t=${c.t_stat.toFixed(2)}` : ''}
+                          {c.p_value_adj != null ? ` · adj p=${c.p_value_adj.toExponential(1)}` : ''}
+                          {c.r2 != null ? ` · R²=${c.r2.toFixed(2)}` : ''}
+                          {' · '}n={c.n_obs}
+                        </span>
+                        <span
+                          className={`px-1.5 py-0.5 rounded shrink-0 ${
+                            c.passed
+                              ? 'bg-deloitte-green/15 text-deloitte-green'
+                              : 'bg-red-500/15 text-red-400'
+                          }`}
+                        >
+                          {c.passed ? t('drivers.discovery.passed') : t('drivers.discovery.rejected')}
+                        </span>
+                      </div>
+                      {!c.passed && c.reject_reason && (
+                        <div className="text-[11px] text-surface-500 mt-0.5">{c.reject_reason}</div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
           </div>
         )}
@@ -484,6 +539,10 @@ export function DriversPanel() {
                   <span className="text-surface-300">
                     line {l.line_item_id} · {l.relation} · lag {l.lag}
                     {l.coefficient != null ? ` · β=${l.coefficient}` : ''}
+                    {l.t_stat != null ? ` · t=${l.t_stat.toFixed(2)}` : ''}
+                    {l.p_value != null ? ` · p=${l.p_value.toExponential(1)}` : ''}
+                    {l.r2 != null ? ` · R²=${l.r2.toFixed(2)}` : ''}
+                    {l.n_obs != null ? ` · n=${l.n_obs}` : ''}
                   </span>
                   <span className="flex items-center gap-2">
                     <span
