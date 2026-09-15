@@ -92,11 +92,31 @@ def get_collection(name: str = COLLECTION_NAME) -> chromadb.Collection:
     collection = _collections.get(name)
     if collection is None:
         client = get_chroma_client()
-        collection = client.get_or_create_collection(
-            name=name,
-            embedding_function=_get_embedding_fn(),
-            metadata={"hnsw:space": "cosine"},
-        )
+        try:
+            collection = client.get_or_create_collection(
+                name=name,
+                embedding_function=_get_embedding_fn(),
+                metadata={"hnsw:space": "cosine"},
+            )
+        except ValueError as exc:
+            if "Embedding function conflict" not in str(exc):
+                raise
+            # A collection persisted before the ONNX migration (see
+            # ONNX_BUNDLED_MODEL above) still carries the old
+            # sentence-transformers embedding-function name in its config.
+            # Chroma's name-based check rejects that mismatch even though the
+            # two backends produce numerically identical vectors, so reopen
+            # under Chroma's "default" embedding function (also ONNX), which
+            # is exempt from the name check, instead of failing every upload.
+            logger.warning(
+                f"Collection '{name}' has a stale pre-ONNX embedding-function "
+                "name in its persisted config; reopening with Chroma's "
+                "default (ONNX) embedding function instead."
+            )
+            collection = client.get_or_create_collection(
+                name=name,
+                metadata={"hnsw:space": "cosine"},
+            )
         _collections[name] = collection
         logger.info(f"ChromaDB collection '{name}' ready ({collection.count()} docs)")
     return collection
