@@ -401,8 +401,12 @@ class GenerateBaselineSkill(BaseSkill):
                 "Proceeding with baseline generation; run plan_forecast first for model selection guidance."
             )
 
-        # Get dataset
-        dataset_id = params.get("dataset_id") or context.context_manager.get_memory("last_dataset_id")
+        # Get dataset. An explicit param always wins; otherwise use the truly
+        # most-recently-ingested dataset rather than "last_dataset_id" working
+        # memory — that memory is conversation-scoped and goes stale the
+        # moment actuals are re-ingested from a different conversation (or a
+        # fresh session), silently regenerating baselines off old data forever.
+        dataset_id = params.get("dataset_id")
         if not dataset_id:
             dataset = db.query(ActualsDataset).order_by(ActualsDataset.ingested_at.desc()).first()
             if not dataset:
