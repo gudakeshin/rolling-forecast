@@ -27,12 +27,12 @@ from app.services.driver_series import (
     validate_driver_type,
 )
 from app.services.permissions import (
+    can_view_all_bus,
     driver_scope_filter,
     require_permission,
     scoped_drivers,
     user_can_view_driver,
     user_can_view_line_item,
-    user_has_permission,
 )
 
 router = APIRouter(prefix="/drivers", tags=["drivers"])
@@ -245,10 +245,23 @@ async def create_driver_endpoint(
     if existing:
         raise HTTPException(409, f"Driver key '{body.key}' already exists")
     bu = body.business_unit
-    if not user_has_permission(current_user, "admin") and current_user.business_unit:
-        if bu and bu != current_user.business_unit:
-            raise HTTPException(403, "Cannot create driver for another business unit")
-        if bu is None:
+    if not can_view_all_bus(current_user):
+        # Compare by business_unit_id, not the legacy free-text string --
+        # matching on name alone would let a caller name their own company
+        # under an alias, or slip past a stale/blank string field. See
+        # app/services/permissions.py for the same rule everywhere else.
+        if bu:
+            from app.models.business_unit import BusinessUnit
+
+            target = (
+                db.query(BusinessUnit)
+                .filter((BusinessUnit.name == bu) | (BusinessUnit.id == bu))
+                .first()
+            )
+            target_id = target.id if target else None
+            if target_id != current_user.business_unit_id:
+                raise HTTPException(403, "Cannot create driver for another business unit")
+        else:
             bu = current_user.business_unit
     try:
         driver = create_driver(

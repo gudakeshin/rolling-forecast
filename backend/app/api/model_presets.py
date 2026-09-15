@@ -41,6 +41,7 @@ class ModelPresetUpdate(BaseModel):
 
 class RunForecastRequest(BaseModel):
     dataset_id: str | None = None
+    business_unit: str | None = None
     horizon_months: int | None = Field(None, ge=1, le=60)
     scenario: str = "base"
     async_job: bool = True
@@ -170,6 +171,7 @@ async def run_model_preset(
             db,
             preset_id_or_name=preset_id,
             dataset_id=body.dataset_id,
+            business_unit=body.business_unit,
             horizon_months=body.horizon_months,
             scenario=body.scenario,
             async_job=body.async_job,

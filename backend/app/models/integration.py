@@ -34,6 +34,12 @@ class IntegrationConnection(Base):
     # Opt-in unattended nightly pull. A connection with this off is only ever
     # pulled by an explicit, user-initiated request.
     auto_pull_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Which company this connection feeds — every dataset it pulls is tagged
+    # with this so scheduled pulls never mix companies. See
+    # app/services/actuals_resolution.py.
+    business_unit_id: Mapped[str | None] = mapped_column(
+        ForeignKey("business_units.id"), nullable=True
+    )
     default_query: Mapped[str | None] = mapped_column(Text, nullable=True)  # warehouse
     default_relative_path: Mapped[str | None] = mapped_column(Text, nullable=True)  # erp
     default_source_name: Mapped[str | None] = mapped_column(String(100), nullable=True)

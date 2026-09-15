@@ -54,6 +54,14 @@ class PlanForecastSkill(BaseSkill):
                     "type": "string",
                     "description": "ID of the actuals dataset to analyze (uses latest if not specified)",
                 },
+                "business_unit": {
+                    "type": "string",
+                    "description": (
+                        "Name or id of the company/business unit to analyze. Required "
+                        "unless the caller belongs to exactly one business unit (then "
+                        "it's inferred), or dataset_id is given explicitly."
+                    ),
+                },
                 "sample_size": {
                     "type": "integer",
                     "description": "Number of line items to sample for model comparison (default: 5, max: 10)",
@@ -71,6 +79,10 @@ class PlanForecastSkill(BaseSkill):
         db: Session = context.db
         start_time = time.time()
 
+        from app.services.permissions import resolve_skill_user, scoped_line_items
+
+        actor = resolve_skill_user(context)
+
         # Get dataset. An explicit param always wins; otherwise resolve_current_dataset
         # prefers the most recently ingested *manually uploaded* (pinned) dataset
         # over anything ingested since (including unattended scheduled/API pulls),
@@ -79,20 +91,43 @@ class PlanForecastSkill(BaseSkill):
         # that memory is conversation-scoped and goes stale the moment actuals
         # are re-ingested from a different conversation (or a fresh session),
         # silently re-analyzing old data forever.
+        #
+        # Always scoped to one company — see generate_baseline.py for why an
+        # unscoped resolution across ALL companies is unsafe once more than
+        # one exists.
         from app.services.actuals_resolution import resolve_current_dataset
+        from app.services.permissions import can_access_business_unit
+        from app.models.business_unit import BusinessUnit
+
+        bu_ref = params.get("business_unit")
+        business_unit_id = actor.business_unit_id if actor else None
+        if bu_ref:
+            bu = (
+                db.query(BusinessUnit)
+                .filter((BusinessUnit.id == bu_ref) | (BusinessUnit.name == bu_ref))
+                .first()
+            )
+            if not bu:
+                return SkillResult.fail(f"Business unit '{bu_ref}' not found.")
+            business_unit_id = bu.id
 
         dataset_id = params.get("dataset_id")
-        dataset = resolve_current_dataset(db, dataset_id)
+        if not dataset_id and not business_unit_id:
+            return SkillResult.fail(
+                "Which company/business unit is this for? Pass `business_unit` "
+                "(name or id) -- your account isn't assigned to exactly one, so it "
+                "can't be inferred."
+            )
+        dataset = resolve_current_dataset(db, dataset_id, business_unit_id=business_unit_id)
         if not dataset:
             if dataset_id:
                 return SkillResult.fail(f"Dataset '{dataset_id}' not found.")
             return SkillResult.fail("No actuals data found. Please upload actuals first.")
+        if not can_access_business_unit(actor, dataset.business_unit_id):
+            return SkillResult.fail(f"Dataset '{dataset.id}' not found.")
         dataset_id = dataset.id
 
         # Get non-calculated line items in the caller's BU scope
-        from app.services.permissions import resolve_skill_user, scoped_line_items
-
-        actor = resolve_skill_user(context)
         line_items = scoped_line_items(
             db, actor, LineItem.is_calculated == False  # noqa: E712
         ).all()

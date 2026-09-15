@@ -16,6 +16,7 @@ os.environ.setdefault("SEED_DEMO_USERS", "true")
 
 from app.database import Base
 from app.models.user import Role, User
+from app.models.business_unit import BusinessUnit
 from app.models.line_item import LineItem, LineItemDependency
 from app.models.actuals import ActualsDataset, ActualsRecord
 from app.models.forecast import ForecastVersion, ForecastLineResult
@@ -65,6 +66,86 @@ def ensure_app_db_schema_columns() -> None:
             conn.execute(
                 text("ALTER TABLE actuals_datasets ADD COLUMN integration_connection_id VARCHAR(36)")
             )
+        conn.execute(text("CREATE TABLE IF NOT EXISTS business_units ("
+                           "id VARCHAR(36) PRIMARY KEY, name VARCHAR(100) UNIQUE NOT NULL, "
+                           "created_at DATETIME NOT NULL)"))
+        if "business_unit_id" not in ad_cols:
+            conn.execute(text("ALTER TABLE actuals_datasets ADD COLUMN business_unit_id VARCHAR(36)"))
+        if "storage_path" not in ad_cols:
+            conn.execute(text("ALTER TABLE actuals_datasets ADD COLUMN storage_path TEXT"))
+        if "business_unit_id" not in {
+            c["name"] for c in inspect(engine).get_columns("users")
+        }:
+            conn.execute(text("ALTER TABLE users ADD COLUMN business_unit_id VARCHAR(36)"))
+        if "business_unit_id" not in {
+            c["name"] for c in inspect(engine).get_columns("line_items")
+        }:
+            conn.execute(text("ALTER TABLE line_items ADD COLUMN business_unit_id VARCHAR(36)"))
+        if "business_unit_id" not in fv_cols:
+            conn.execute(text("ALTER TABLE forecast_versions ADD COLUMN business_unit_id VARCHAR(36)"))
+        try:
+            drv_cols = {c["name"] for c in inspect(engine).get_columns("drivers")}
+            if "business_unit_id" not in drv_cols:
+                conn.execute(text("ALTER TABLE drivers ADD COLUMN business_unit_id VARCHAR(36)"))
+        except Exception:
+            pass
+        try:
+            di_cols = {c["name"] for c in inspect(engine).get_columns("driver_inputs")}
+            if "business_unit_id" not in di_cols:
+                conn.execute(text("ALTER TABLE driver_inputs ADD COLUMN business_unit_id VARCHAR(36)"))
+        except Exception:
+            pass
+        try:
+            dfc_cols = {c["name"] for c in inspect(engine).get_columns("driver_form_configs")}
+            if "business_unit_id" not in dfc_cols:
+                conn.execute(
+                    text("ALTER TABLE driver_form_configs ADD COLUMN business_unit_id VARCHAR(36)")
+                )
+        except Exception:
+            pass
+        try:
+            ic_cols = {c["name"] for c in inspect(engine).get_columns("integration_connections")}
+            if "business_unit_id" not in ic_cols:
+                conn.execute(
+                    text("ALTER TABLE integration_connections ADD COLUMN business_unit_id VARCHAR(36)")
+                )
+        except Exception:
+            pass
+
+        # Backfill pre-existing rows (from before business_unit_id existed)
+        # into one shared demo company -- otherwise a fresh column add alone
+        # leaves them NULL, and under the "no shared bucket" scoping policy
+        # (app/services/permissions.py) the demo analyst would see none of
+        # them. Matches the name main.py's seed_roles_and_admin assigns the
+        # demo analyst, so both resolve to the same row.
+        row = conn.execute(
+            text("SELECT id FROM business_units WHERE name = 'North America'")
+        ).first()
+        if row:
+            demo_bu_id = row[0]
+        else:
+            import uuid as _uuid
+            from datetime import datetime as _dt, timezone as _tz
+
+            demo_bu_id = str(_uuid.uuid4())
+            conn.execute(
+                text(
+                    "INSERT INTO business_units (id, name, created_at) "
+                    "VALUES (:id, 'North America', :created_at)"
+                ),
+                {"id": demo_bu_id, "created_at": _dt.now(_tz.utc)},
+            )
+        for table in ("users", "line_items", "drivers", "driver_inputs", "driver_form_configs"):
+            try:
+                conn.execute(
+                    text(
+                        f"UPDATE {table} SET business_unit_id = :bu_id "
+                        f"WHERE business_unit_id IS NULL"
+                    ),
+                    {"bu_id": demo_bu_id},
+                )
+            except Exception:
+                pass
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -137,7 +218,19 @@ def seed_roles(db_session):
 
 
 @pytest.fixture
-def seed_users(db_session, seed_roles):
+def seed_business_unit(db_session):
+    """Seed the one company most tests operate as/within (idempotent)."""
+    existing = db_session.query(BusinessUnit).filter(BusinessUnit.name == "North America").first()
+    if existing:
+        return existing
+    bu = BusinessUnit(name="North America")
+    db_session.add(bu)
+    db_session.commit()
+    return bu
+
+
+@pytest.fixture
+def seed_users(db_session, seed_roles, seed_business_unit):
     """Seed test users (idempotent)."""
     pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -150,6 +243,7 @@ def seed_users(db_session, seed_roles):
             username=username,
             hashed_password=pwd_ctx.hash(username),
             full_name=extra.pop("full_name", username),
+            business_unit_id=seed_business_unit.id,
             role_id=seed_roles[role_key].id,
             **extra,
         )
@@ -166,7 +260,7 @@ def seed_users(db_session, seed_roles):
 
 
 @pytest.fixture
-def seed_line_items(db_session):
+def seed_line_items(db_session, seed_business_unit):
     """Seed test line items for P&L."""
     items = [
         LineItem(account_code="REV-001", name="Product Revenue", category="Revenue",
@@ -183,13 +277,15 @@ def seed_line_items(db_session):
                  display_order=10, is_calculated=True, is_subtotal=True, indent_level=0,
                  allow_negative=True),
     ]
+    for li in items:
+        li.business_unit_id = seed_business_unit.id
     db_session.add_all(items)
     db_session.commit()
     return {li.account_code: li for li in items}
 
 
 @pytest.fixture
-def seed_actuals(db_session, seed_line_items):
+def seed_actuals(db_session, seed_line_items, seed_business_unit):
     """Seed 24 months of actuals data."""
     import numpy as np
 
@@ -197,6 +293,7 @@ def seed_actuals(db_session, seed_line_items):
         source_type="csv",
         source_name="test_actuals.csv",
         file_hash="test_hash_abc123",
+        business_unit_id=seed_business_unit.id,
         row_count=0,
         period_start="2024-01",
         period_end="2025-12",

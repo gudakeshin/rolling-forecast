@@ -14,6 +14,13 @@ parameters:
     type: string
     description: ID of the actuals dataset to analyze (uses latest if not specified)
     required: false
+  - name: business_unit
+    type: string
+    description: >
+      Name or id of the company/business unit to analyze. Required unless
+      the caller belongs to exactly one business unit (then it's inferred),
+      or dataset_id is given explicitly.
+    required: false
   - name: sample_size
     type: integer
     description: Number of line items to sample for model comparison (default 5, max 10)

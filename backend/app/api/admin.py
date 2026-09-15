@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.user import User, Role
+from app.models.business_unit import BusinessUnit
 from app.models.line_item import LineItem, LineItemDependency
 from app.models.audit import AuditEvent
 from app.schemas.auth import UserResponse
@@ -36,6 +37,10 @@ class UserUpdate(BaseModel):
     role_name: str | None = None
     is_active: bool | None = None
     password: str | None = None
+
+
+class BusinessUnitCreate(BaseModel):
+    name: str
 
 
 class LineItemCreate(BaseModel):
@@ -77,7 +82,11 @@ async def update_user(
     if body.full_name is not None:
         user.full_name = body.full_name
     if body.business_unit is not None:
+        from app.services.business_units import get_or_create_business_unit
+
+        bu = get_or_create_business_unit(db, body.business_unit)
         user.business_unit = body.business_unit
+        user.business_unit_id = bu.id if bu else None
     if body.is_active is not None:
         user.is_active = body.is_active
     if body.password:
@@ -139,6 +148,42 @@ async def update_role(
     return {"success": True, "name": role.name}
 
 
+@router.get("/business-units")
+async def list_business_units(
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+):
+    units = db.query(BusinessUnit).order_by(BusinessUnit.name).all()
+    return [{"id": u.id, "name": u.name} for u in units]
+
+
+@router.post("/business-units")
+async def create_business_unit(
+    body: BusinessUnitCreate,
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "name is required")
+    if db.query(BusinessUnit).filter(BusinessUnit.name == name).first():
+        raise HTTPException(409, "A business unit with this name already exists")
+    bu = BusinessUnit(name=name)
+    db.add(bu)
+    record_audit(
+        db,
+        action="admin.create_business_unit",
+        entity_type="business_unit",
+        entity_id=bu.id,
+        actor_id=current_user.id,
+        actor_username=current_user.username,
+        commit=False,
+    )
+    db.commit()
+    db.refresh(bu)
+    return {"id": bu.id, "name": bu.name}
+
+
 @router.get("/coa")
 async def list_coa(
     current_user: User = Depends(require_permission("admin")),
@@ -178,9 +223,18 @@ async def create_line_item(
     current_user: User = Depends(require_permission("admin")),
     db: Session = Depends(get_db),
 ):
-    if db.query(LineItem).filter(LineItem.account_code == body.account_code).first():
-        raise HTTPException(409, "Account code already exists")
-    li = LineItem(**body.model_dump())
+    from app.services.business_units import get_or_create_business_unit
+
+    bu = get_or_create_business_unit(db, body.business_unit)
+    existing = db.query(LineItem).filter(
+        LineItem.account_code == body.account_code,
+        LineItem.business_unit_id == (bu.id if bu else None),
+    ).first()
+    if existing:
+        raise HTTPException(409, "Account code already exists for this business unit")
+    fields = body.model_dump()
+    fields["business_unit_id"] = bu.id if bu else None
+    li = LineItem(**fields)
     db.add(li)
     db.commit()
     db.refresh(li)

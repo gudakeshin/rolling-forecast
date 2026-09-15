@@ -257,6 +257,7 @@ async def run_forecast_with_preset(
     *,
     preset_id_or_name: str,
     dataset_id: str | None = None,
+    business_unit: str | None = None,
     horizon_months: int | None = None,
     scenario: str = "base",
     async_job: bool = True,
@@ -288,6 +289,8 @@ async def run_forecast_with_preset(
         params["horizon_months"] = resolved["horizon_months"]
     if dataset_id is not None:
         params["dataset_id"] = dataset_id
+    if business_unit is not None:
+        params["business_unit"] = business_unit
 
     uid = user_id or "system"
     context = SkillContext(

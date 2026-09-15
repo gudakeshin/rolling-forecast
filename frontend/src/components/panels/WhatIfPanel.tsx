@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { GitBranch, Loader2, Plus, Trash2 } from 'lucide-react';
 import { listDrivers, type Driver } from '../../api/drivers';
 import { createWhatIf, type DriverShock } from '../../api/scenarios';
-import { archiveForecastVersion } from '../../api/forecast';
+import { deleteForecastVersion } from '../../api/forecast';
 import { useI18n } from '../../i18n/useI18n';
 import { usePanelStore } from '../../store/panelStore';
 import { useVersionStore } from '../../store/versionStore';
@@ -47,7 +47,7 @@ export function WhatIfPanel() {
       if (!ok) return;
       setDeletingId(versionId);
       try {
-        await archiveForecastVersion(versionId);
+        await deleteForecastVersion(versionId);
         toast.success(t('whatIf.delete.success', { label: versionLabel }));
         await refreshVersions();
       } catch (e: any) {

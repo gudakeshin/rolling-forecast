@@ -43,7 +43,10 @@ def _write_actuals_csv(path, seed_line_items, base: float) -> None:
     pd.DataFrame(rows).to_csv(path, index=False)
 
 
-async def _pull(db_session, seed_line_items, base: float, *, connection_id: str | None = None):
+async def _pull(
+    db_session, seed_line_items, base: float, *, connection_id: str | None = None,
+    business_unit_id: str | None = None,
+):
     """Simulate a scheduled/API pull through the real persistence path."""
     from app.services.actuals_ingest import persist_pulled_actuals
     from app.services.ingestion.base import IngestionResult
@@ -65,10 +68,12 @@ async def _pull(db_session, seed_line_items, base: float, *, connection_id: str 
         period_start="2024-01", period_end="2025-12", periods_count=24,
         completeness_pct=100.0, file_hash=f"pull-hash-{base}",
     )
+    bu_id = business_unit_id or next(iter(seed_line_items.values())).business_unit_id
     return await persist_pulled_actuals(
         db_session, result, "warehouse", "erp-nightly",
         actor_id=None, actor_username="system:scheduler",
         integration_connection_id=connection_id,
+        business_unit_id=bu_id,
     )
 
 

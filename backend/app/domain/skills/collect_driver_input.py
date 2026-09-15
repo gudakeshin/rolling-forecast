@@ -130,8 +130,12 @@ class CollectDriverInputSkill(BaseSkill):
 
             enriched_fields.append(field_def)
 
+        from app.services.business_units import get_or_create_business_unit
+
+        bu_row = get_or_create_business_unit(db, business_unit)
         form = DriverFormConfig(
             business_unit=business_unit,
+            business_unit_id=bu_row.id if bu_row else None,
             name=form_name,
             description=f"Driver assumptions form for {business_unit}",
             fields_schema={"fields": enriched_fields},

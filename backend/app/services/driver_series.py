@@ -156,6 +156,9 @@ def create_driver(
 ) -> Driver:
     validate_driver_type(driver_type)
     validate_aggregation(aggregation)
+    from app.services.business_units import get_or_create_business_unit
+
+    bu = get_or_create_business_unit(db, business_unit)
     driver = Driver(
         key=key.strip(),
         name=name.strip(),
@@ -164,6 +167,7 @@ def create_driver(
         currency=currency,
         aggregation=aggregation,
         business_unit=business_unit,
+        business_unit_id=bu.id if bu else None,
         geography=geography,
         product_line=product_line,
         description=description,

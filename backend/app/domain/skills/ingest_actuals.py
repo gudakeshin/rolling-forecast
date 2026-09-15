@@ -11,6 +11,7 @@ from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.services.ingestion.csv_adapter import CSVActualsProvider
 from app.services.upsert import bulk_upsert
 from app.models.actuals import ActualsDataset, ActualsRecord
+from app.models.business_unit import BusinessUnit
 from app.models.line_item import LineItem
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,15 @@ class IngestActualsSkill(BaseSkill):
                     "default": "csv",
                     "enum": ["csv", "api"],
                 },
+                "business_unit": {
+                    "type": "string",
+                    "description": (
+                        "Name or id of the company/business unit this data belongs to. "
+                        "Required unless the uploader belongs to exactly one business unit "
+                        "(then it's inferred). Never inferred from a column inside the file "
+                        "itself -- a company boundary can't be set by file content."
+                    ),
+                },
             },
             "required": ["file_path"],
         }
@@ -65,6 +75,37 @@ class IngestActualsSkill(BaseSkill):
             return SkillResult.fail("No file path provided. Please upload a file first.")
 
         db: Session = context.db
+
+        # Resolve the company this upload belongs to -- explicit param wins,
+        # else the uploader's own single business unit. Never trust a
+        # business_unit value inside the file itself: that would let file
+        # content claim to belong to any company regardless of who uploaded
+        # it, defeating the whole point of scoping actuals by company.
+        from app.services.permissions import can_access_business_unit, resolve_skill_user
+
+        actor = resolve_skill_user(context)
+        bu_ref = params.get("business_unit")
+        business_unit: BusinessUnit | None = None
+        if bu_ref:
+            business_unit = (
+                db.query(BusinessUnit)
+                .filter((BusinessUnit.id == bu_ref) | (BusinessUnit.name == bu_ref))
+                .first()
+            )
+            if business_unit is None:
+                return SkillResult.fail(f"Business unit '{bu_ref}' not found.")
+            if not can_access_business_unit(actor, business_unit.id):
+                return SkillResult.fail(
+                    f"You don't have access to upload data for '{business_unit.name}'."
+                )
+        elif actor is not None and actor.business_unit_id:
+            business_unit = db.get(BusinessUnit, actor.business_unit_id)
+        if business_unit is None:
+            return SkillResult.fail(
+                "Which company/business unit is this data for? Pass `business_unit` "
+                "(name or id) -- your account isn't assigned to exactly one, so it "
+                "can't be inferred."
+            )
 
         # Use CSV adapter
         provider = CSVActualsProvider()
@@ -85,10 +126,15 @@ class IngestActualsSkill(BaseSkill):
                 "nothing to load."
             )
 
-        # Idempotent on file hash: re-ingest updates the same dataset in place
+        # Idempotent on file hash *within this company* -- two companies
+        # uploading byte-identical content (e.g. the same template) must not
+        # collide onto the same dataset row.
         dataset = (
             db.query(ActualsDataset)
-            .filter(ActualsDataset.file_hash == result.file_hash)
+            .filter(
+                ActualsDataset.file_hash == result.file_hash,
+                ActualsDataset.business_unit_id == business_unit.id,
+            )
             .first()
         )
         if dataset is None:
@@ -106,6 +152,8 @@ class IngestActualsSkill(BaseSkill):
                 # make it authoritative over any unattended scheduled/API pull.
                 # See app/services/actuals_resolution.py.
                 is_pinned=True,
+                business_unit_id=business_unit.id,
+                storage_path=file_path,
             )
             db.add(dataset)
             db.flush()
@@ -121,6 +169,7 @@ class IngestActualsSkill(BaseSkill):
             )
             dataset.completeness_pct = result.completeness_pct
             dataset.is_pinned = True
+            dataset.storage_path = file_path
             # Re-ingesting identical content is still "the data given to us
             # just now" -- bump ingested_at so latest-dataset resolution
             # (generate_baseline/plan_forecast) picks this over anything
@@ -128,8 +177,13 @@ class IngestActualsSkill(BaseSkill):
             dataset.ingested_at = datetime.now(timezone.utc)
             db.flush()
 
-        # Create/update LineItems
-        existing_items = {li.account_code: li for li in db.query(LineItem).all()}
+        # Create/update LineItems, scoped to this company -- otherwise two
+        # companies both using account code "REV-001" would resolve to (and
+        # intermingle data under) the very same LineItem row.
+        existing_items = {
+            li.account_code: li
+            for li in db.query(LineItem).filter(LineItem.business_unit_id == business_unit.id).all()
+        }
         line_item_map: dict[str, LineItem] = {}  # account_code -> LineItem
         new_items_count = 0
 
@@ -143,7 +197,10 @@ class IngestActualsSkill(BaseSkill):
                     account_code=code,
                     name=str(row.get("account_name", code)),
                     category=str(row.get("category", "Other")),
-                    business_unit=str(row.get("business_unit", "")) if "business_unit" in row.index else None,
+                    # The company is whatever was authorized above, never a
+                    # value read out of the file (see business_unit param docs).
+                    business_unit=business_unit.name,
+                    business_unit_id=business_unit.id,
                     geography=str(row.get("geography", "")) if "geography" in row.index and pd.notna(row.get("geography")) else None,
                     product_line=str(row.get("product_line", "")) if "product_line" in row.index and pd.notna(row.get("product_line")) else None,
                 )
@@ -241,6 +298,8 @@ class IngestActualsSkill(BaseSkill):
             message=f"Loaded {result.row_count} actuals records ({result.periods_count} periods, {len(line_item_map)} line items) from {dataset.source_name}",
             data={
                 "dataset_id": dataset.id,
+                "business_unit_id": business_unit.id,
+                "business_unit": business_unit.name,
                 "row_count": result.row_count,
                 "periods_count": result.periods_count,
                 "line_items_count": len(line_item_map),

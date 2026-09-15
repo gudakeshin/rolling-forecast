@@ -1,9 +1,10 @@
 ---
 name: list_actuals_datasets
 description: >
-  List recently ingested actuals datasets (manual uploads and scheduled/API
-  pulls), showing which one is pinned as authoritative and would be used by
-  generate_baseline/plan_forecast. Read-only — any analyst can use this.
+  List recently ingested actuals datasets for the caller's company (manual
+  uploads and scheduled/API pulls), showing which one is pinned as
+  authoritative and would be used by generate_baseline/plan_forecast.
+  Read-only — any analyst can use this.
 required_role: generate
 version: "1.0"
 tags: [actuals, ingestion, data]

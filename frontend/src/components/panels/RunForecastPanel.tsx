@@ -3,9 +3,15 @@ import { Play, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import { apiGet } from '../../api/client';
 import { listModelPresets, runForecastWithPreset, type ModelPreset } from '../../api/modelPresets';
 import { useI18n } from '../../i18n/useI18n';
+import { useAuthStore } from '../../store/authStore';
 import { usePanelStore } from '../../store/panelStore';
 import { useVersionStore } from '../../store/versionStore';
 import { toast } from '../../store/toastStore';
+
+interface BusinessUnit {
+  id: string;
+  name: string;
+}
 
 /** Make a just-generated forecast the app's active version so panels opened
  * afterward (sidebar nav, Header dropdown) show it, not whatever was active
@@ -32,9 +38,12 @@ type RunState = 'idle' | 'running' | 'done' | 'error';
 export function RunForecastPanel() {
   const { t } = useI18n();
   const openPanel = usePanelStore((s) => s.openPanel);
+  const canViewAllBus = useAuthStore((s) => Boolean(s.user?.can_admin));
 
   const [presets, setPresets] = useState<ModelPreset[]>([]);
   const [presetId, setPresetId] = useState('');
+  const [businessUnits, setBusinessUnits] = useState<BusinessUnit[]>([]);
+  const [businessUnitId, setBusinessUnitId] = useState('');
   const [horizonMonths, setHorizonMonths] = useState('');
   const [scenario, setScenario] = useState('base');
   const [submitting, setSubmitting] = useState(false);
@@ -53,6 +62,15 @@ export function RunForecastPanel() {
         if (rows.length) setPresetId((prev) => prev || rows[0].id);
       })
       .catch((e) => toast.error(e?.message || t('runForecast.error.loadPresets')));
+    // Only relevant to cross-company admins — a regular user belongs to at
+    // most one business unit, which the backend infers automatically.
+    if (canViewAllBus) {
+      void apiGet<BusinessUnit[]>('/admin/business-units')
+        .then(setBusinessUnits)
+        .catch(() => {
+          /* non-fatal: falls back to backend inference / explicit dataset_id */
+        });
+    }
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
@@ -109,6 +127,7 @@ export function RunForecastPanel() {
     setProgress(0);
     try {
       const res = await runForecastWithPreset(presetId, {
+        business_unit: businessUnitId || undefined,
         horizon_months: horizonMonths ? Number(horizonMonths) : undefined,
         scenario: scenario.trim() || 'base',
         async_job: true,
@@ -165,6 +184,24 @@ export function RunForecastPanel() {
                 ))}
               </select>
             </label>
+
+            {canViewAllBus && businessUnits.length > 0 && (
+              <label className="block space-y-1">
+                <span className="text-xs text-surface-500">{t('runForecast.businessUnit')}</span>
+                <select
+                  value={businessUnitId}
+                  onChange={(e) => setBusinessUnitId(e.target.value)}
+                  className="w-full text-xs bg-surface-900 border border-surface-700 rounded-lg px-2 py-1.5 text-surface-200"
+                >
+                  <option value="">{t('runForecast.businessUnitInferred')}</option>
+                  {businessUnits.map((bu) => (
+                    <option key={bu.id} value={bu.id}>
+                      {bu.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
 
             <div className="grid grid-cols-2 gap-2">
               <label className="block space-y-1">

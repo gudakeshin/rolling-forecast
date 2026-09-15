@@ -59,6 +59,17 @@ class ActualsDataset(Base):
     integration_connection_id: Mapped[str | None] = mapped_column(
         ForeignKey("integration_connections.id"), nullable=True
     )
+    # The company this dataset belongs to — never mixed with another
+    # company's data. See app/services/actuals_resolution.py and
+    # app/services/permissions.py.
+    business_unit_id: Mapped[str | None] = mapped_column(
+        ForeignKey("business_units.id"), nullable=True
+    )
+    # Absolute path of the uploaded file on disk, so it can be removed when
+    # this dataset is hard-deleted. NULL for api/warehouse-sourced datasets
+    # (nothing was uploaded) and for anything ingested before this column
+    # existed.
+    storage_path: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     records: Mapped[list["ActualsRecord"]] = relationship(
         back_populates="dataset", cascade="all, delete-orphan"

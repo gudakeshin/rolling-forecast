@@ -218,6 +218,7 @@ def test_actuals_ingest_notifies_can_generate_users_with_top_mover(
         persist_pulled_actuals(
             db_session, result, "warehouse", "test-source",
             actor_id=seed_users["admin"].id, actor_username="admin",
+            business_unit_id=li.business_unit_id,
         )
     )
     assert outcome["success"] is True

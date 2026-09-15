@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import Depends, HTTPException, status
 from typing import TypeVar
 
+from sqlalchemy import false
 from sqlalchemy.orm import Query, Session
 
 from app.models.user import User
@@ -45,19 +46,35 @@ _Q = TypeVar("_Q", bound=Query)
 
 
 def line_item_scope_filter(query: _Q, user: User, line_item_model) -> _Q:
-    """Restrict a LineItem query to the caller's BU unless they can view all.
+    """Restrict a LineItem query to the caller's company (business_unit_id)
+    unless they can view all.
 
-    Line items with NULL business_unit are treated as shared (visible to all).
+    There is no "shared" bucket: a company's data never mixes with another's,
+    so a caller with no business_unit_id assigned (and no cross-BU
+    privilege) sees nothing rather than everything.
     """
     if can_view_all_bus(user):
         return query
-    bu = user.business_unit
-    if not bu:
-        # No BU assigned and no cross-BU privilege → only shared (null BU) rows
-        return query.filter(line_item_model.business_unit.is_(None))
-    return query.filter(
-        (line_item_model.business_unit == bu) | (line_item_model.business_unit.is_(None))
-    )
+    bu_id = user.business_unit_id
+    if not bu_id:
+        return query.filter(false())
+    return query.filter(line_item_model.business_unit_id == bu_id)
+
+
+def can_access_business_unit(user: User | None, business_unit_id: str | None) -> bool:
+    """True if the user may read/act on a row scoped to `business_unit_id`.
+
+    Used for ownership checks outside plain LineItem queries -- e.g. pinning,
+    unpinning, or deleting an ActualsDataset (see
+    app/domain/skills/manage_actuals_dataset.py).
+    """
+    if user is None:
+        return True
+    if can_view_all_bus(user):
+        return True
+    if business_unit_id is None:
+        return False
+    return user.business_unit_id == business_unit_id
 
 
 def resolve_skill_user(context) -> User | None:
@@ -101,27 +118,20 @@ def user_can_view_line_item(user: User | None, line_item) -> bool:
     """True if the user may read this line item under BU scope."""
     if user is None or line_item is None:
         return True
-    if can_view_all_bus(user):
-        return True
-    li_bu = getattr(line_item, "business_unit", None)
-    if li_bu is None:
-        return True  # shared
-    return li_bu == user.business_unit
+    return can_access_business_unit(user, getattr(line_item, "business_unit_id", None))
 
 
 def driver_scope_filter(query: Query, user: User, driver_model) -> Query:
-    """Restrict a Driver query to the caller's BU unless they can view all.
+    """Restrict a Driver query to the caller's company unless they can view all.
 
-    Drivers with NULL business_unit are treated as shared (visible to all).
+    There is no "shared" bucket -- see line_item_scope_filter.
     """
     if can_view_all_bus(user):
         return query
-    bu = user.business_unit
-    if not bu:
-        return query.filter(driver_model.business_unit.is_(None))
-    return query.filter(
-        (driver_model.business_unit == bu) | (driver_model.business_unit.is_(None))
-    )
+    bu_id = user.business_unit_id
+    if not bu_id:
+        return query.filter(false())
+    return query.filter(driver_model.business_unit_id == bu_id)
 
 
 def scoped_drivers(db: Session, user: User | None, *filters) -> Query:
@@ -140,12 +150,7 @@ def user_can_view_driver(user: User | None, driver) -> bool:
     """True if the user may read this driver under BU scope."""
     if user is None or driver is None:
         return True
-    if can_view_all_bus(user):
-        return True
-    d_bu = getattr(driver, "business_unit", None)
-    if d_bu is None:
-        return True
-    return d_bu == user.business_unit
+    return can_access_business_unit(user, getattr(driver, "business_unit_id", None))
 
 
 def require_permission(permission: str):

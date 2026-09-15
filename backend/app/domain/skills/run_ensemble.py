@@ -138,7 +138,7 @@ class RunEnsembleSkill(BaseSkill):
         else:
             from app.services.actuals_resolution import resolve_current_dataset
 
-            dataset = resolve_current_dataset(db)
+            dataset = resolve_current_dataset(db, business_unit_id=version.business_unit_id)
 
         if not dataset:
             return SkillResult.fail("No actuals dataset found for ensemble modeling.")

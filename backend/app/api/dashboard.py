@@ -8,7 +8,7 @@ import numpy as np
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import false, func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -21,7 +21,12 @@ from app.models.override import Override
 from app.models.anomaly_dismissal import AnomalyDismissal
 from app.models.review_undo import ReviewUndoSnapshot
 from app.schemas.forecast import PanelDataResponse
-from app.services.permissions import line_item_scope_filter, require_permission, scoped_line_items
+from app.services.permissions import (
+    can_view_all_bus,
+    line_item_scope_filter,
+    require_permission,
+    scoped_line_items,
+)
 
 # Scoring lives in services.confidence; remediation stays on the skill module.
 from app.services.confidence import (
@@ -613,11 +618,15 @@ async def get_executive_dashboard(
         })
 
     # ─── 6. Key Business Drivers & Assumptions ────────
-    # Recent overrides (CFO needs to know what's been manually adjusted)
-    recent_overrides = (
+    # Recent overrides (CFO needs to know what's been manually adjusted) --
+    # same BU scope as the forecast results above (_scoped_results_query).
+    recent_overrides_q = (
         db.query(Override, LineItem)
         .join(LineItem, Override.line_item_id == LineItem.id)
         .filter(Override.version_id == version_id, Override.status == "active")
+    )
+    recent_overrides = (
+        line_item_scope_filter(recent_overrides_q, current_user, LineItem)
         .order_by(Override.created_at.desc())
         .limit(8)
         .all()
@@ -636,8 +645,17 @@ async def get_executive_dashboard(
             "reason": ov.reason,
         })
 
-    # Driver input submissions
-    driver_inputs = db.query(DriverInput).filter(DriverInput.version_id == version_id).all()
+    # Driver input submissions -- same "no shared bucket" BU scope as
+    # get_driver_inputs above.
+    driver_inputs_q = db.query(DriverInput).filter(DriverInput.version_id == version_id)
+    if not can_view_all_bus(current_user):
+        if current_user.business_unit_id:
+            driver_inputs_q = driver_inputs_q.filter(
+                DriverInput.business_unit_id == current_user.business_unit_id
+            )
+        else:
+            driver_inputs_q = driver_inputs_q.filter(false())
+    driver_inputs = driver_inputs_q.all()
     driver_summary: dict[str, Any] = {
         "total_submissions": len(driver_inputs),
         "approved": sum(1 for d in driver_inputs if d.status == "approved"),
@@ -2026,18 +2044,27 @@ async def get_driver_inputs(
 ):
     """Get driver input form data with model-suggested values."""
     from app.models.driver_input import DriverInput, DriverFormConfig
+    from app.services.permissions import can_view_all_bus
 
     version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
     if not version:
         raise HTTPException(status_code=404, detail="Forecast version not found")
 
-    # Get existing driver inputs
-    inputs = (
-        db.query(DriverInput)
-        .filter(DriverInput.version_id == version_id)
-        .order_by(DriverInput.business_unit, DriverInput.submitted_at.desc())
-        .all()
-    )
+    # Get existing driver inputs, scoped to the caller's company -- there is
+    # no "shared" bucket, so a caller with no business_unit_id assigned sees
+    # none rather than every company's submissions.
+    inputs_q = db.query(DriverInput).filter(DriverInput.version_id == version_id)
+    form_configs_q = db.query(DriverFormConfig).filter(DriverFormConfig.is_active == True)
+    if not can_view_all_bus(current_user):
+        if current_user.business_unit_id:
+            inputs_q = inputs_q.filter(DriverInput.business_unit_id == current_user.business_unit_id)
+            form_configs_q = form_configs_q.filter(
+                DriverFormConfig.business_unit_id == current_user.business_unit_id
+            )
+        else:
+            inputs_q = inputs_q.filter(false())
+            form_configs_q = form_configs_q.filter(false())
+    inputs = inputs_q.order_by(DriverInput.business_unit, DriverInput.submitted_at.desc()).all()
 
     items = []
     for di in inputs:
@@ -2053,7 +2080,7 @@ async def get_driver_inputs(
         })
 
     # Get form configs for driver input structure
-    form_configs = db.query(DriverFormConfig).filter(DriverFormConfig.is_active == True).all()
+    form_configs = form_configs_q.all()
     forms = [{
         "id": fc.id,
         "business_unit": fc.business_unit,
@@ -2139,7 +2166,9 @@ async def submit_driver_inputs(
 ):
     """Submit BU driver assumptions for a forecast version."""
     from app.models.driver_input import DriverFormConfig
+    from app.services.business_units import get_or_create_business_unit
     from app.services.driver_submission import apply_driver_submission
+    from app.services.permissions import can_view_all_bus
 
     version = db.query(ForecastVersion).filter(ForecastVersion.id == request.version_id).first()
     if not version:
@@ -2151,13 +2180,26 @@ async def submit_driver_inputs(
         )
 
     bu = request.business_unit or current_user.business_unit or "Default"
+    bu_row = get_or_create_business_unit(db, bu)
+    bu_id = bu_row.id if bu_row else None
+    # A caller may only submit for a business_unit other than their own if
+    # they can see across all of them -- otherwise `request.business_unit`
+    # would let any "input"-permission user attach values to another
+    # company's driver form. See app/api/drivers.py's create_driver_endpoint
+    # for the same guard on driver creation.
+    if request.business_unit and not can_view_all_bus(current_user):
+        if bu_id is None or bu_id != current_user.business_unit_id:
+            raise HTTPException(403, "Cannot submit driver inputs for another business unit")
+
     form = None
     if request.form_config_id:
         form = db.query(DriverFormConfig).filter(DriverFormConfig.id == request.form_config_id).first()
+        if form and not can_view_all_bus(current_user) and form.business_unit_id != current_user.business_unit_id:
+            raise HTTPException(404, "Driver form not found")
     if not form:
         form = (
             db.query(DriverFormConfig)
-            .filter(DriverFormConfig.is_active == True, DriverFormConfig.business_unit == bu)
+            .filter(DriverFormConfig.is_active == True, DriverFormConfig.business_unit_id == bu_id)
             .first()
         )
     if not form:
@@ -2174,6 +2216,7 @@ async def submit_driver_inputs(
             })
         form = DriverFormConfig(
             business_unit=bu,
+            business_unit_id=bu_id,
             name=f"{bu} Driver Form",
             description="Auto-generated driver form",
             fields_schema={"fields": fields or [{"name": "value", "label": "Value", "type": "number"}]},

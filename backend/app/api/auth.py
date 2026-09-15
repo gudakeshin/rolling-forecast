@@ -191,12 +191,16 @@ async def register(
     if not role:
         raise HTTPException(status_code=400, detail=f"Role '{role_name}' not found")
 
+    from app.services.business_units import get_or_create_business_unit
+
+    bu = get_or_create_business_unit(db, body.business_unit)
     user = User(
         email=body.email,
         username=body.username,
         hashed_password=pwd_context.hash(body.password),
         full_name=body.full_name,
         business_unit=body.business_unit,
+        business_unit_id=bu.id if bu else None,
         role_id=role.id,
     )
     db.add(user)
@@ -233,12 +237,16 @@ async def admin_create_user(
     if not role:
         raise HTTPException(status_code=400, detail=f"Role '{request.role_name}' not found")
 
+    from app.services.business_units import get_or_create_business_unit
+
+    bu = get_or_create_business_unit(db, request.business_unit)
     user = User(
         email=request.email,
         username=request.username,
         hashed_password=pwd_context.hash(request.password),
         full_name=request.full_name,
         business_unit=request.business_unit,
+        business_unit_id=bu.id if bu else None,
         role_id=role.id,
     )
     db.add(user)

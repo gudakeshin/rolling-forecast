@@ -115,34 +115,59 @@ async def delete_version(
     current_user: User = Depends(require_permission("generate")),
     db: Session = Depends(get_db),
 ):
-    """Archive a draft forecast version so it drops out of the version picker.
+    """Permanently delete a draft forecast version.
 
     Restricted to status == "draft" regardless of version_type — a what-if
     scenario and a plain "Generate a baseline forecast" re-run are equally
     disposable while still draft, but anything that has entered review,
     been approved, or published carries approvals/accuracy history and stays
-    undeletable through this route.
+    undeletable through this route, full stop — there is no force override,
+    since that history is a compliance/audit-trail concern, not just UX.
+
+    Refused if a company boundary check fails, or if another (non-deleted)
+    version branched from this one — deleting it would either orphan or
+    silently sever that version's lineage.
+
+    line_results/overrides/driver_inputs/approval_steps/anomaly_dismissals/
+    accuracy_records/review_undo_snapshots all cascade via the ORM
+    relationships on ForecastVersion (see app/models/forecast.py) — this
+    route doesn't need to touch them individually.
     """
+    from app.services.permissions import can_access_business_unit
+
     version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
     if not version:
         raise HTTPException(404, "Forecast version not found")
-    if version.status == "archived":
-        return {"id": version.id, "status": "archived"}
+    if not can_access_business_unit(current_user, version.business_unit_id):
+        raise HTTPException(404, "Forecast version not found")
     if version.status != "draft":
         raise HTTPException(400, "Only draft versions can be deleted")
 
-    version.status = "archived"
+    children = (
+        db.query(ForecastVersion.id)
+        .filter(ForecastVersion.parent_version_id == version.id)
+        .count()
+    )
+    if children:
+        raise HTTPException(
+            400,
+            f"Can't delete — {children} version(s) branched from this one. "
+            "Delete those first.",
+        )
+
     record_audit(
         db,
-        action="forecast_version.archive",
+        action="forecast_version.delete",
         entity_type="forecast_version",
         entity_id=version.id,
         actor_id=current_user.id,
         actor_username=current_user.username,
         details={"name": version.name, "version_type": version.version_type},
+        commit=False,
     )
+    db.delete(version)
     db.commit()
-    return {"id": version.id, "status": "archived"}
+    return {"id": version_id, "status": "deleted"}
 
 
 @router.get("/forecast-table/{version_id}", response_model=PanelDataResponse)

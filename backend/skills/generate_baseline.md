@@ -16,6 +16,13 @@ parameters:
     type: string
     description: ID of the actuals dataset to use (uses latest if not specified)
     required: false
+  - name: business_unit
+    type: string
+    description: >
+      Name or id of the company/business unit to forecast. Required unless
+      the caller belongs to exactly one business unit (then it's inferred),
+      or dataset_id is given explicitly.
+    required: false
   - name: horizon_months
     type: integer
     description: Number of months to forecast forward (default 12)

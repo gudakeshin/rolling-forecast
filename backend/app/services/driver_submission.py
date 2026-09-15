@@ -145,11 +145,20 @@ def apply_driver_submission(
     submission_status = "late" if is_late else "submitted"
 
     bu = business_unit or form.business_unit or "Default"
+    # The form's own business_unit_id is the authoritative company FK -- fall
+    # back to resolving `bu` by name only for forms that predate the FK.
+    bu_id = form.business_unit_id
+    if bu_id is None and bu:
+        from app.services.business_units import get_or_create_business_unit
+
+        looked_up = get_or_create_business_unit(db, bu)
+        bu_id = looked_up.id if looked_up else None
     driver_input = DriverInput(
         version_id=version_id,
         form_config_id=form.id,
         user_id=user_id,
         business_unit=bu,
+        business_unit_id=bu_id,
         values=enriched_values,
         status=submission_status,
         submitted_at=datetime.now(timezone.utc),

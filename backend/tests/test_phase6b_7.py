@@ -531,9 +531,9 @@ def test_what_if_endpoint_smoke(client):
 
 
 def test_delete_version_endpoint(client):
-    """Deleting a draft forecast version archives it and drops it from the
-    version picker, regardless of version_type; a non-draft version or an
-    unknown id is rejected."""
+    """Deleting a draft forecast version permanently removes it (not just an
+    archive), regardless of version_type; a non-draft version or an unknown
+    id is rejected."""
     from app.database import SessionLocal
 
     login = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
@@ -585,24 +585,23 @@ def test_delete_version_endpoint(client):
     # A draft what-if scenario is deletable...
     r = client.delete(f"/api/panel/version/{scenario_id}", headers=headers)
     assert r.status_code == 200, r.text
-    assert r.json() == {"id": scenario_id, "status": "archived"}
+    assert r.json() == {"id": scenario_id, "status": "deleted"}
 
     # ...and so is a draft plain baseline re-run — the accumulated
     # "Generate a baseline forecast" clutter this route exists to clean up.
     r = client.delete(f"/api/panel/version/{draft_baseline_id}", headers=headers)
     assert r.status_code == 200, r.text
-    assert r.json() == {"id": draft_baseline_id, "status": "archived"}
+    assert r.json() == {"id": draft_baseline_id, "status": "deleted"}
 
-    # Dropped from the picker after deletion, but still directly fetchable.
+    # Dropped from the picker, and genuinely gone -- not just hidden.
     listed = client.get("/api/panel/versions", headers=headers, params={"limit": 200})
     listed_ids = {v["id"] for v in listed.json()}
     assert scenario_id not in listed_ids
     assert draft_baseline_id not in listed_ids
     detail = client.get(f"/api/panel/version/{scenario_id}", headers=headers)
-    assert detail.status_code == 200
-    assert detail.json()["status"] == "archived"
+    assert detail.status_code == 404
 
-    # Idempotent: deleting an already-archived version is a no-op success.
+    # Deleting it again 404s -- the row is really gone, not an idempotent
+    # "already archived" no-op like the old archive-only behavior.
     r = client.delete(f"/api/panel/version/{scenario_id}", headers=headers)
-    assert r.status_code == 200
-    assert r.json() == {"id": scenario_id, "status": "archived"}
+    assert r.status_code == 404

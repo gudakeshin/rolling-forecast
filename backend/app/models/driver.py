@@ -49,7 +49,11 @@ class Driver(Base):
     unit: Mapped[str | None] = mapped_column(String(64), nullable=True)
     currency: Mapped[str | None] = mapped_column(String(16), nullable=True)
     aggregation: Mapped[str] = mapped_column(String(32), nullable=False, default="sum")
+    # Legacy free-text BU, kept during the expand→contract migration.
     business_unit: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    business_unit_id: Mapped[str | None] = mapped_column(
+        ForeignKey("business_units.id"), nullable=True
+    )
     geography: Mapped[str | None] = mapped_column(String(100), nullable=True)
     product_line: Mapped[str | None] = mapped_column(String(100), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)

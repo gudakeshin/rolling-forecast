@@ -42,7 +42,13 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[str] = mapped_column(String(255), default="")
+    # Legacy free-text BU, kept during the expand→contract migration.
+    # business_unit_id (FK to business_units) is the real scoping boundary
+    # going forward -- see app/services/permissions.py.
     business_unit: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    business_unit_id: Mapped[str | None] = mapped_column(
+        ForeignKey("business_units.id"), nullable=True
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     role_id: Mapped[int] = mapped_column(ForeignKey("roles.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(

@@ -12,10 +12,12 @@ export async function getVersion(versionId: string): Promise<ForecastVersion> {
   return apiGet<ForecastVersion>(`/panel/version/${versionId}`);
 }
 
-/** Archives a draft forecast version (what-if scenario or plain baseline
- * re-run) so it drops out of the version picker. Rejected for anything past
- * draft status — see backend `delete_version`. */
-export async function archiveForecastVersion(
+/** Permanently deletes a draft forecast version (what-if scenario or plain
+ * baseline re-run) — the version row and everything that cascades from it
+ * (line results, overrides, driver inputs, approvals, etc.) are gone, not
+ * just hidden. Rejected for anything past draft status, or a version other
+ * versions branched from — see backend `delete_version`. */
+export async function deleteForecastVersion(
   versionId: string,
 ): Promise<{ id: string; status: string }> {
   const result = await apiDelete<{ id: string; status: string }>(`/panel/version/${versionId}`);

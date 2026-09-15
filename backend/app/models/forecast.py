@@ -68,6 +68,12 @@ class ForecastVersion(Base):
     model_preset_id: Mapped[str | None] = mapped_column(
         ForeignKey("model_presets.id"), nullable=True
     )
+    # The company this version was generated for — denormalized from the
+    # actuals dataset at generation time so version queries don't need a
+    # join. See app/services/permissions.py.
+    business_unit_id: Mapped[str | None] = mapped_column(
+        ForeignKey("business_units.id"), nullable=True
+    )
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(
@@ -105,6 +111,21 @@ class ForecastVersion(Base):
     )
     driver_inputs: Mapped[list["DriverInput"]] = relationship(
         back_populates="version", cascade="all, delete-orphan"
+    )
+    # One-way cascades (no back_populates needed) so a hard delete of a draft
+    # version (see app/api/panel.py delete_version) is correct by
+    # construction instead of relying on ad hoc per-table deletes.
+    approval_steps: Mapped[list["ApprovalStep"]] = relationship(
+        cascade="all, delete-orphan", passive_deletes=False
+    )
+    anomaly_dismissals: Mapped[list["AnomalyDismissal"]] = relationship(
+        cascade="all, delete-orphan", passive_deletes=False
+    )
+    accuracy_records: Mapped[list["ForecastAccuracyRecord"]] = relationship(
+        cascade="all, delete-orphan", passive_deletes=False
+    )
+    review_undo_snapshots: Mapped[list["ReviewUndoSnapshot"]] = relationship(
+        cascade="all, delete-orphan", passive_deletes=False
     )
 
 
@@ -190,8 +211,12 @@ class ForecastLineResult(Base):
     # Relationships
     version: Mapped["ForecastVersion"] = relationship(back_populates="line_results")
     line_item: Mapped["LineItem"] = relationship(back_populates="forecast_results")
+    # cascade="all, delete-orphan" -- ModelMetadata.line_result_id is NOT
+    # NULL, so without this SQLAlchemy's default "null the FK out" orphan
+    # handling fails a hard-delete of the version this line result belongs
+    # to (see app/api/panel.py delete_version) with an IntegrityError.
     model_metadata: Mapped["ModelMetadata | None"] = relationship(
-        back_populates="line_result", uselist=False
+        back_populates="line_result", uselist=False, cascade="all, delete-orphan"
     )
 
 

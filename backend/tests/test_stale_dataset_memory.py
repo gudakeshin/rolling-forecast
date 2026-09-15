@@ -39,6 +39,7 @@ async def test_generate_baseline_ignores_stale_last_dataset_id_memory(
         source_type="csv",
         source_name="fresh_actuals.csv",
         file_hash="test_hash_fresh_456",
+        business_unit_id=seed_actuals.business_unit_id,
         row_count=0,
         period_start="2024-01",
         period_end="2025-12",

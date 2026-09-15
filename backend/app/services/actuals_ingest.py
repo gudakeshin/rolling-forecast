@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.models.actuals import ActualsDataset, ActualsRecord
+from app.models.business_unit import BusinessUnit
 from app.models.fx import ForecastAccuracyRecord
 from app.models.line_item import LineItem
 from app.services.accuracy_snapshot import AccuracySnapshotService
@@ -76,12 +77,18 @@ async def persist_pulled_actuals(
     *,
     actor_id: str | None,
     actor_username: str,
+    business_unit_id: str,
     integration_connection_id: str | None = None,
 ) -> dict:
     """Persist a successful `IngestionResult` and run accuracy-snapshot matching.
 
     Raises HTTPException(400) if `result` reports failure — callers running
     outside a request cycle (the cron job) should catch that themselves.
+
+    `business_unit_id` is required -- resolve it from the pulling
+    `IntegrationConnection.business_unit_id` (see app/models/integration.py)
+    and refuse the pull if that connection has none assigned, rather than
+    creating a company-less dataset nobody can then see.
 
     Never pinned (`is_pinned` stays False) -- this is always an automated
     pull (interactive `/integrations/*/pull` or the nightly cron), never the
@@ -91,6 +98,10 @@ async def persist_pulled_actuals(
     """
     if not result.success:
         raise HTTPException(400, result.error or "Pull failed")
+    if not business_unit_id:
+        raise HTTPException(
+            400, "This integration connection has no business unit assigned."
+        )
     df = result.dataframe
     dataset = ActualsDataset(
         source_type=source_type,
@@ -102,11 +113,18 @@ async def persist_pulled_actuals(
         periods_count=result.periods_count,
         completeness_pct=result.completeness_pct,
         integration_connection_id=integration_connection_id,
+        business_unit_id=business_unit_id,
     )
     db.add(dataset)
     db.flush()
 
-    existing = {li.account_code: li for li in db.query(LineItem).all()}
+    # Scoped to this company -- see ingest_actuals.py for the same fix on
+    # the manual-upload path (account_code collisions across companies).
+    existing = {
+        li.account_code: li
+        for li in db.query(LineItem).filter(LineItem.business_unit_id == business_unit_id).all()
+    }
+    business_unit = db.get(BusinessUnit, business_unit_id)
     line_map = {}
     for _, row in df.groupby("account_code").first().reset_index().iterrows():
         code = str(row["account_code"])
@@ -117,7 +135,10 @@ async def persist_pulled_actuals(
                 account_code=code,
                 name=str(row.get("account_name", code)),
                 category=str(row.get("category", "Other")),
-                business_unit=str(row["business_unit"]) if "business_unit" in row.index else None,
+                # The company is whatever the pulling connection is assigned
+                # to, never a value read out of the pulled data itself.
+                business_unit=business_unit.name if business_unit else None,
+                business_unit_id=business_unit_id,
             )
             db.add(li)
             db.flush()

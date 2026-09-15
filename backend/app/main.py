@@ -127,14 +127,26 @@ def seed_roles_and_admin(db):
     analyst_role = db.query(Role).filter(Role.name == "analyst").first()
     analyst = db.query(User).filter(User.username == "analyst").first()
     if not analyst and analyst_role:
+        from app.services.business_units import get_or_create_business_unit
+
+        demo_bu = get_or_create_business_unit(db, "North America")
         db.add(User(
             email="analyst@forecast.local",
             username="analyst",
             hashed_password=pwd_context.hash("analyst"),
             full_name="Demo Analyst",
             business_unit="North America",
+            business_unit_id=demo_bu.id if demo_bu else None,
             role_id=analyst_role.id,
         ))
+    elif analyst is not None and analyst.business_unit_id is None:
+        # Pre-existing installs from before business_unit_id existed --
+        # without a company, this analyst would see no scoped data at all
+        # under the "no shared bucket" policy (see app/services/permissions.py).
+        from app.services.business_units import get_or_create_business_unit
+
+        demo_bu = get_or_create_business_unit(db, analyst.business_unit or "North America")
+        analyst.business_unit_id = demo_bu.id if demo_bu else None
 
     reviewer_role = db.query(Role).filter(Role.name == "reviewer").first()
     reviewer = db.query(User).filter(User.username == "reviewer").first()

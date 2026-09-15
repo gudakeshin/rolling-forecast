@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """P&L line item and dependency graph models."""
 
-from sqlalchemy import String, Integer, Boolean, ForeignKey, Text
+from sqlalchemy import String, Integer, Boolean, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -11,17 +11,26 @@ class LineItem(Base):
     """A P&L line item (account) that can be forecasted."""
 
     __tablename__ = "line_items"
+    __table_args__ = (
+        # account_code is only unique WITHIN a company -- two business units
+        # can each have their own "REV-001" without colliding onto one row.
+        UniqueConstraint("account_code", "business_unit_id", name="uq_line_items_account_bu"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    account_code: Mapped[str] = mapped_column(
-        String(50), unique=True, nullable=False
-    )
+    account_code: Mapped[str] = mapped_column(String(50), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     category: Mapped[str] = mapped_column(
         String(100), nullable=False
     )  # "Revenue", "COGS", "OpEx", "EBITDA", etc.
     subcategory: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Legacy free-text BU, kept during the expand→contract migration.
+    # business_unit_id (FK to business_units) is the real scoping boundary
+    # going forward -- see app/services/permissions.py.
     business_unit: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    business_unit_id: Mapped[str | None] = mapped_column(
+        ForeignKey("business_units.id"), nullable=True
+    )
     geography: Mapped[str | None] = mapped_column(String(100), nullable=True)
     product_line: Mapped[str | None] = mapped_column(String(100), nullable=True)
 

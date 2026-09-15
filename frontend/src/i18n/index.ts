@@ -242,9 +242,9 @@ const en = {
   'whatIf.badge.scenario': 'What-if',
   'whatIf.badge.baseline': 'Baseline',
   'whatIf.delete': 'Delete version',
-  'whatIf.delete.confirmTitle': 'Delete version?',
+  'whatIf.delete.confirmTitle': 'Permanently delete version?',
   'whatIf.delete.confirm':
-    'Delete "{label}"? This removes it from the version picker. The underlying forecast data is archived, not erased.',
+    'Permanently delete "{label}"? This removes the version and everything built on it (line results, overrides, driver inputs, reviews) for good — it cannot be undone.',
   'whatIf.delete.success': 'Deleted {label}',
   'whatIf.delete.error': 'Failed to delete version',
   // Run Forecast panel
@@ -252,6 +252,8 @@ const en = {
   'runForecast.subtitle':
     'Generate a new forecast version using a saved model preset. Manage presets in Admin → Models.',
   'runForecast.preset': 'Model preset',
+  'runForecast.businessUnit': 'Company',
+  'runForecast.businessUnitInferred': 'Your company (default)',
   'runForecast.horizon': 'Horizon override (months)',
   'runForecast.horizonPlaceholder': 'preset default',
   'runForecast.scenario': 'Scenario label',
@@ -536,9 +538,9 @@ const es: MessageDict = {
   'whatIf.badge.scenario': 'What-if',
   'whatIf.badge.baseline': 'Línea base',
   'whatIf.delete': 'Eliminar versión',
-  'whatIf.delete.confirmTitle': '¿Eliminar versión?',
+  'whatIf.delete.confirmTitle': '¿Eliminar versión permanentemente?',
   'whatIf.delete.confirm':
-    '¿Eliminar "{label}"? Esto lo quita del selector de versiones. Los datos del pronóstico subyacente se archivan, no se borran.',
+    '¿Eliminar "{label}" de forma permanente? Esto elimina la versión y todo lo construido sobre ella (resultados, anulaciones, entradas de drivers, revisiones) para siempre — no se puede deshacer.',
   'whatIf.delete.success': '{label} eliminado',
   'whatIf.delete.error': 'Error al eliminar la versión',
   // Panel de ejecutar pronóstico
@@ -546,6 +548,8 @@ const es: MessageDict = {
   'runForecast.subtitle':
     'Genera una nueva versión de pronóstico usando un modelo guardado. Administra los modelos en Admin → Modelos.',
   'runForecast.preset': 'Modelo guardado',
+  'runForecast.businessUnit': 'Empresa',
+  'runForecast.businessUnitInferred': 'Tu empresa (por defecto)',
   'runForecast.horizon': 'Horizonte (meses, opcional)',
   'runForecast.horizonPlaceholder': 'valor por defecto',
   'runForecast.scenario': 'Etiqueta de escenario',

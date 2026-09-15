@@ -31,6 +31,7 @@ export interface ModelPresetInput {
 
 export interface RunForecastInput {
   dataset_id?: string | null;
+  business_unit?: string | null;
   horizon_months?: number | null;
   scenario?: string;
   async_job?: boolean;

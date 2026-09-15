@@ -62,6 +62,7 @@ async def run_scheduled_pull(db: Session, conn: IntegrationConnection) -> dict:
         db, result, conn.kind, source_name,
         actor_id=None, actor_username=SCHEDULER_ACTOR_USERNAME,
         integration_connection_id=conn.id,
+        business_unit_id=conn.business_unit_id,
     )
 
 
@@ -88,6 +89,7 @@ async def sync_all_enabled_connections(db: Session) -> dict:
                 "connection_id": conn.id,
                 "connection_name": conn.name,
                 "dataset_id": outcome.get("dataset_id"),
+                "business_unit_id": conn.business_unit_id,
             })
         except Exception as e:
             logger.exception("Scheduled pull failed for connection %s (%s)", conn.id, conn.name)

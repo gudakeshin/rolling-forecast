@@ -8,7 +8,7 @@ from collections import defaultdict
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import case, func
+from sqlalchemy import case, false, func
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -22,6 +22,7 @@ from app.models.actuals import ActualsRecord
 from app.models.override import Override
 from app.services.permissions import (
     allowed_line_item_ids,
+    can_view_all_bus,
     require_permission,
     scoped_line_items,
     user_can_view_line_item,
@@ -354,12 +355,16 @@ async def driver_drilldown(
         overrides = overrides.filter(Override.line_item_id.in_(allowed_ids))
     override_rows = overrides.all()
 
-    drivers = db.query(DriverInput).filter(DriverInput.version_id == version_id).all()
-    if not getattr(current_user.role, "can_view_all_bus", False) and not (
-        current_user.role and current_user.role.can_admin
-    ):
-        bu = current_user.business_unit
-        drivers = [d for d in drivers if not d.business_unit or d.business_unit == bu]
+    drivers_q = db.query(DriverInput).filter(DriverInput.version_id == version_id)
+    if not can_view_all_bus(current_user):
+        # No "shared" bucket -- a caller with no business_unit_id assigned
+        # sees nothing rather than every company's submissions. See
+        # app/services/permissions.py::line_item_scope_filter.
+        if current_user.business_unit_id:
+            drivers_q = drivers_q.filter(DriverInput.business_unit_id == current_user.business_unit_id)
+        else:
+            drivers_q = drivers_q.filter(false())
+    drivers = drivers_q.all()
 
     target_ids = sorted({o.line_item_id for o in override_rows})
     if line_item_id and line_item_id not in target_ids:

@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import pytest
 from fastapi.testclient import TestClient
 
+from app.models.business_unit import BusinessUnit
 from app.models.line_item import LineItem
 from app.models.user import Role, User
 from app.services.integration_safety import (
@@ -168,19 +169,26 @@ def test_bu_scope_blocks_cross_bu_line_items(db_session, seed_roles):
     pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
     analyst_role = seed_roles["analyst"]
     analyst_role.can_view_all_bus = False
+    na = BusinessUnit(name="North America")
+    eu = BusinessUnit(name="Europe")
+    db_session.add_all([na, eu])
+    db_session.flush()
     user = User(
         email="bu@test.local",
         username="bu_analyst",
         hashed_password=pwd.hash("bu_analyst"),
         full_name="BU Analyst",
-        business_unit="North America",
+        business_unit_id=na.id,
         role_id=analyst_role.id,
     )
     db_session.add(user)
     db_session.add_all([
-        LineItem(account_code="NA-1", name="NA Rev", category="Revenue", business_unit="North America"),
-        LineItem(account_code="EU-1", name="EU Rev", category="Revenue", business_unit="Europe"),
-        LineItem(account_code="SHARED", name="Shared", category="Revenue", business_unit=None),
+        LineItem(account_code="NA-1", name="NA Rev", category="Revenue", business_unit_id=na.id),
+        LineItem(account_code="EU-1", name="EU Rev", category="Revenue", business_unit_id=eu.id),
+        # No company assigned -- under the "no shared bucket" scoping policy
+        # this is invisible to everyone except a cross-BU/admin user, never a
+        # fallback-visible-to-all row (see app/services/permissions.py).
+        LineItem(account_code="UNASSIGNED", name="Unassigned", category="Revenue", business_unit_id=None),
     ])
     db_session.commit()
     db_session.refresh(user)
@@ -189,8 +197,9 @@ def test_bu_scope_blocks_cross_bu_line_items(db_session, seed_roles):
     assert can_view_all_bus(user) is False
     q = line_item_scope_filter(db_session.query(LineItem), user, LineItem)
     codes = {li.account_code for li in q.all()}
-    assert codes == {"NA-1", "SHARED"}
+    assert codes == {"NA-1"}
     assert "EU-1" not in codes
+    assert "UNASSIGNED" not in codes
 
 
 def test_scoped_line_items_helper_respects_bu(db_session, seed_roles):
@@ -199,18 +208,22 @@ def test_scoped_line_items_helper_respects_bu(db_session, seed_roles):
     pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
     role = seed_roles["analyst"]
     role.can_view_all_bus = False
+    na = BusinessUnit(name="North America")
+    eu = BusinessUnit(name="Europe")
+    db_session.add_all([na, eu])
+    db_session.flush()
     user = User(
         email="scope@test.local",
         username="scope_analyst",
         hashed_password=pwd.hash("scope_analyst"),
         full_name="Scope Analyst",
-        business_unit="Europe",
+        business_unit_id=eu.id,
         role_id=role.id,
     )
     db_session.add(user)
     db_session.add_all([
-        LineItem(account_code="NA-2", name="NA", category="Revenue", business_unit="North America"),
-        LineItem(account_code="EU-2", name="EU", category="Revenue", business_unit="Europe"),
+        LineItem(account_code="NA-2", name="NA", category="Revenue", business_unit_id=na.id),
+        LineItem(account_code="EU-2", name="EU", category="Revenue", business_unit_id=eu.id),
     ])
     db_session.commit()
     user.role = role
@@ -227,13 +240,18 @@ def test_executive_latest_respects_bu_scope(db_session, seed_roles, seed_users):
     from app.models.line_item import LineItem
     from app.services.permissions import line_item_scope_filter
 
+    na_bu = BusinessUnit(name="North America Exec")
+    eu_bu = BusinessUnit(name="Europe Exec")
+    db_session.add_all([na_bu, eu_bu])
+    db_session.flush()
+
     analyst = seed_users["analyst"]
-    analyst.business_unit = "Europe"
+    analyst.business_unit_id = eu_bu.id
     analyst.role.can_view_all_bus = False
     db_session.commit()
 
-    na = LineItem(account_code="NA-X", name="NA Rev", category="Revenue", business_unit="North America")
-    eu = LineItem(account_code="EU-X", name="EU Rev", category="Revenue", business_unit="Europe")
+    na = LineItem(account_code="NA-X", name="NA Rev", category="Revenue", business_unit_id=na_bu.id)
+    eu = LineItem(account_code="EU-X", name="EU Rev", category="Revenue", business_unit_id=eu_bu.id)
     db_session.add_all([na, eu])
     db_session.flush()
 

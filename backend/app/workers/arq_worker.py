@@ -194,15 +194,24 @@ async def run_generate_baseline(
 
 async def scheduled_integration_sync(ctx: dict) -> dict:
     """Nightly: pull every auto-pull-enabled connection, then queue a new
-    draft baseline if new rows landed *and* one of the just-pulled datasets is
-    actually the one that would be used (i.e. no manually uploaded dataset is
-    pinned ahead of it — see app/services/actuals_resolution.py). Makes the
-    'rolling' in Rolling Forecast real instead of manual-click-only, without
-    silently overriding an analyst's fresh manual upload."""
+    draft baseline *per company* if new rows landed for it *and* one of that
+    company's just-pulled datasets is actually the one that would be used
+    (i.e. no manually uploaded dataset is pinned ahead of it — see
+    app/services/actuals_resolution.py). Makes the 'rolling' in Rolling
+    Forecast real instead of manual-click-only, without silently overriding
+    an analyst's fresh manual upload.
+
+    Every check and regeneration here is scoped to one business_unit_id at a
+    time — resolving "current dataset" or notifying users globally would let
+    whichever company happens to sync first decide what happens for every
+    other company too (see app/services/actuals_resolution.py's
+    resolve_current_dataset docstring for the same failure mode elsewhere).
+    """
     from app.config import settings
     from app.database import SessionLocal
     from app.services.actuals_resolution import resolve_current_dataset
     from app.services.notifications import notify_users, users_with_permission
+    from app.services.permissions import can_view_all_bus
     from app.services.scheduled_ingestion import sync_all_enabled_connections
 
     db = SessionLocal()
@@ -218,50 +227,69 @@ async def scheduled_integration_sync(ctx: dict) -> dict:
         for err in summary["errors"]:
             logger.warning("scheduled_integration_sync error: %s", err)
 
+        summary["regenerate_job_ids"] = {}
+        summary["regenerate_skipped"] = {}
         if summary["total_rows"] > 0 and settings.auto_regenerate_on_ingest:
-            current = resolve_current_dataset(db)
-            pulled_ids = {p["dataset_id"] for p in summary["pulled"] if p.get("dataset_id")}
-            if current is not None and current.id in pulled_ids:
-                from app.services.job_queue import enqueue_generate_baseline
+            pulled_by_bu: dict[str | None, list[dict]] = {}
+            for p in summary["pulled"]:
+                if not p.get("dataset_id"):
+                    continue
+                pulled_by_bu.setdefault(p.get("business_unit_id"), []).append(p)
 
-                job = await enqueue_generate_baseline(
-                    version_name="pending",
-                    params={"model_type": "auto"},
-                    user_id=None,
-                    conversation_id="cron-scheduled-integration-sync",
-                )
-                summary["regenerate_job_id"] = job.get("job_id")
-                logger.info(
-                    "scheduled_integration_sync: queued baseline regeneration job %s",
-                    job.get("job_id"),
-                )
-            else:
-                # New data landed but a manually uploaded dataset remains
-                # pinned as current -- don't silently regenerate off (or
-                # displace) it. Let can_generate users know instead.
-                names = ", ".join(p["connection_name"] for p in summary["pulled"])
-                notify_users(
-                    db,
-                    users_with_permission(db, "can_generate"),
-                    kind="actuals_pull_superseded",
-                    title="New actuals pulled but not applied",
-                    body=(
-                        f"New actuals landed from {names}, but a manually uploaded "
-                        f"dataset remains authoritative, so no forecast was "
-                        f"regenerated. Unpin it (manage_actuals_dataset) to let "
-                        f"scheduled data take over."
-                    ),
-                    entity_type="actuals_dataset",
-                    entity_id=current.id if current else None,
-                    dedup_key_prefix=f"actuals_pull_superseded:{','.join(sorted(pulled_ids))}",
-                )
-                db.commit()
-                summary["regenerate_skipped_reason"] = "superseded_by_pinned_dataset"
-                logger.info(
-                    "scheduled_integration_sync: skipped baseline regeneration, "
-                    "pinned dataset %s remains current",
-                    current.id if current else None,
-                )
+            can_generate_users = users_with_permission(db, "can_generate")
+
+            for bu_id, pulled_for_bu in pulled_by_bu.items():
+                pulled_ids = {p["dataset_id"] for p in pulled_for_bu}
+                current = resolve_current_dataset(db, business_unit_id=bu_id)
+                if current is not None and current.id in pulled_ids:
+                    from app.services.job_queue import enqueue_generate_baseline
+
+                    job = await enqueue_generate_baseline(
+                        version_name="pending",
+                        params={"model_type": "auto", "business_unit": bu_id},
+                        user_id=None,
+                        conversation_id=f"cron-scheduled-integration-sync:{bu_id or 'default'}",
+                    )
+                    summary["regenerate_job_ids"][bu_id or "default"] = job.get("job_id")
+                    logger.info(
+                        "scheduled_integration_sync: queued baseline regeneration job %s for business_unit %s",
+                        job.get("job_id"),
+                        bu_id,
+                    )
+                else:
+                    # New data landed for this company but a manually
+                    # uploaded dataset remains pinned as current -- don't
+                    # silently regenerate off (or displace) it. Let this
+                    # company's can_generate users know instead.
+                    names = ", ".join(p["connection_name"] for p in pulled_for_bu)
+                    recipients = [
+                        u
+                        for u in can_generate_users
+                        if u.business_unit_id == bu_id or can_view_all_bus(u)
+                    ]
+                    notify_users(
+                        db,
+                        recipients,
+                        kind="actuals_pull_superseded",
+                        title="New actuals pulled but not applied",
+                        body=(
+                            f"New actuals landed from {names}, but a manually uploaded "
+                            f"dataset remains authoritative, so no forecast was "
+                            f"regenerated. Unpin it (manage_actuals_dataset) to let "
+                            f"scheduled data take over."
+                        ),
+                        entity_type="actuals_dataset",
+                        entity_id=current.id if current else None,
+                        dedup_key_prefix=f"actuals_pull_superseded:{','.join(sorted(pulled_ids))}",
+                    )
+                    db.commit()
+                    summary["regenerate_skipped"][bu_id or "default"] = "superseded_by_pinned_dataset"
+                    logger.info(
+                        "scheduled_integration_sync: skipped baseline regeneration for business_unit %s, "
+                        "pinned dataset %s remains current",
+                        bu_id,
+                        current.id if current else None,
+                    )
         return summary
     finally:
         db.close()

@@ -110,8 +110,8 @@ def test_bu_scope_hides_other_bu_drivers(db_session, seed_users):
     )
     create_driver(
         db_session,
-        key="units_shared",
-        name="Units Shared",
+        key="units_unassigned",
+        name="Units Unassigned",
         driver_type="volume",
         business_unit=None,
         actor=admin,
@@ -120,8 +120,11 @@ def test_bu_scope_hides_other_bu_drivers(db_session, seed_users):
 
     analyst = seed_users["analyst"]  # North America
     visible = {d.key for d in scoped_drivers(db_session, analyst).all()}
-    assert "units_shared" in visible
     assert "units_emea" not in visible
+    # No company assigned -- under the "no shared bucket" scoping policy this
+    # is invisible to everyone except a cross-BU/admin user, not a
+    # fallback-visible-to-all driver (see app/services/permissions.py).
+    assert "units_unassigned" not in visible
 
     emea = db_session.query(Driver).filter(Driver.key == "units_emea").first()
     assert user_can_view_driver(analyst, emea) is False
@@ -242,22 +245,31 @@ def _auth(client: TestClient, username: str = "analyst", password: str | None = 
 def test_api_create_ingest_promote(client: TestClient):
     headers = _auth(client, "analyst")
 
-    # Ensure a line item exists in the app DB
+    # A line item scoped to the demo analyst's own company -- grabbing
+    # whatever LineItem happens to exist first (the old pattern here) is
+    # order-dependent and may land on a different company's row now that
+    # business_unit_id is actually enforced (see app/services/permissions.py).
     from app.database import SessionLocal
+    from app.models.business_unit import BusinessUnit
 
     db = SessionLocal()
     try:
-        line = db.query(LineItem).first()
+        demo_bu = db.query(BusinessUnit).filter(BusinessUnit.name == "North America").first()
+        line = db.query(LineItem).filter(LineItem.account_code == "REV-P4").first()
         if line is None:
             line = LineItem(
                 account_code="REV-P4",
                 name="P4 Revenue",
                 category="Revenue",
                 display_order=1,
+                business_unit_id=demo_bu.id if demo_bu else None,
             )
             db.add(line)
             db.commit()
             db.refresh(line)
+        elif line.business_unit_id is None and demo_bu is not None:
+            line.business_unit_id = demo_bu.id
+            db.commit()
         line_id = line.id
     finally:
         db.close()

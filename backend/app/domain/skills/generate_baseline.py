@@ -281,6 +281,14 @@ class GenerateBaselineSkill(BaseSkill):
                     "type": "string",
                     "description": "ID of the actuals dataset to use (uses latest if not specified)",
                 },
+                "business_unit": {
+                    "type": "string",
+                    "description": (
+                        "Name or id of the company/business unit to forecast. Required "
+                        "unless the caller belongs to exactly one business unit (then "
+                        "it's inferred), or dataset_id is given explicitly."
+                    ),
+                },
                 "horizon_months": {
                     "type": "integer",
                     "description": "Number of months to forecast forward (default: 12)",
@@ -436,6 +444,10 @@ class GenerateBaselineSkill(BaseSkill):
                 "Proceeding with baseline generation; run plan_forecast first for model selection guidance."
             )
 
+        from app.services.permissions import resolve_skill_user, scoped_line_items
+
+        actor = resolve_skill_user(context)
+
         # Get dataset. An explicit param always wins; otherwise resolve_current_dataset
         # prefers the most recently ingested *manually uploaded* (pinned) dataset
         # over anything ingested since (including unattended scheduled/API pulls),
@@ -444,30 +456,69 @@ class GenerateBaselineSkill(BaseSkill):
         # that memory is conversation-scoped and goes stale the moment actuals
         # are re-ingested from a different conversation (or a fresh session),
         # silently regenerating baselines off old data forever.
+        #
+        # Always scoped to one company (business_unit_id) — resolving across
+        # ALL companies would let whichever one happens to have the newest
+        # pin or dataset silently supply every other company's forecast too.
         from app.services.actuals_resolution import resolve_current_dataset
+        from app.models.business_unit import BusinessUnit
+
+        bu_ref = params.get("business_unit")
+        business_unit_id = actor.business_unit_id if actor else None
+        if bu_ref:
+            bu = (
+                db.query(BusinessUnit)
+                .filter((BusinessUnit.id == bu_ref) | (BusinessUnit.name == bu_ref))
+                .first()
+            )
+            if not bu:
+                return SkillResult.fail(f"Business unit '{bu_ref}' not found.")
+            business_unit_id = bu.id
 
         dataset_id = params.get("dataset_id")
-        dataset = resolve_current_dataset(db, dataset_id)
+        if not dataset_id and not business_unit_id:
+            return SkillResult.fail(
+                "Which company/business unit is this forecast for? Pass `business_unit` "
+                "(name or id) -- your account isn't assigned to exactly one, so it "
+                "can't be inferred."
+            )
+        dataset = resolve_current_dataset(db, dataset_id, business_unit_id=business_unit_id)
         if not dataset:
             if dataset_id:
                 return SkillResult.fail(f"Dataset '{dataset_id}' not found.")
             return SkillResult.fail("No actuals data found. Please upload actuals first.")
+        from app.services.permissions import can_access_business_unit
+
+        if not can_access_business_unit(actor, dataset.business_unit_id):
+            return SkillResult.fail(f"Dataset '{dataset.id}' not found.")
         dataset_id = dataset.id
+        business_unit_id = dataset.business_unit_id
 
         # Get non-calculated line items in the caller's BU scope
-        from app.services.permissions import resolve_skill_user, scoped_line_items
-
-        actor = resolve_skill_user(context)
         line_items = scoped_line_items(
             db, actor, LineItem.is_calculated == False  # noqa: E712
         ).all()
         if not line_items:
             return SkillResult.fail("No line items found. Please ingest actuals data first.")
 
-        # Create forecast version
-        existing_count = db.query(ForecastVersion).count()
+        # Create forecast version. Derived from the highest existing suffix
+        # for this year-month prefix, not a row count -- a plain count would
+        # go backwards (and mint a name colliding with a still-existing
+        # version) once hard-deleting draft versions is in the picture (see
+        # app/api/panel.py delete_version).
         now = datetime.now(timezone.utc)
-        version_name = f"FC-{now.strftime('%Y-%m')}-v{existing_count + 1}"
+        prefix = f"FC-{now.strftime('%Y-%m')}-v"
+        existing_names = (
+            db.query(ForecastVersion.name)
+            .filter(ForecastVersion.name.like(f"{prefix}%"))
+            .all()
+        )
+        max_suffix = 0
+        for (n,) in existing_names:
+            suffix = n[len(prefix):]
+            if suffix.isdigit():
+                max_suffix = max(max_suffix, int(suffix))
+        version_name = f"{prefix}{max_suffix + 1}"
 
         scenario = (params.get("scenario") or "base").strip() or "base"
         version = ForecastVersion(
@@ -477,6 +528,7 @@ class GenerateBaselineSkill(BaseSkill):
             scenario=scenario,
             actuals_dataset_id=dataset_id,
             actuals_hash=dataset.file_hash,
+            business_unit_id=business_unit_id,
             horizon_months=horizon,
             base_period=dataset.period_end,
             random_seed=random_seed,

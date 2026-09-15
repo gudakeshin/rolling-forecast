@@ -88,20 +88,25 @@ def _links(db, line_item_id: int) -> list[DriverLink]:
 
 
 @pytest.fixture
-def causal_line(db_session):
+def causal_line(db_session, seed_business_unit):
     """Revenue line generated as y = 5000 + 3·volume + small noise, plus 3 decoys."""
     rng = np.random.default_rng(11)
     periods = _periods()
     line = _add_line(db_session, "REV-P9-CAUSAL", category="Revenue")
+    # Matches seed_users["analyst"]'s business unit so skill_context-driven
+    # (BU-scoped) tests using this fixture can actually see the line item.
+    line.business_unit_id = seed_business_unit.id
 
     volume = 1000.0 + 25.0 * np.arange(N_PERIODS) + rng.normal(0, 30, N_PERIODS)
     y = 5000.0 + 3.0 * volume + rng.normal(0, 40, N_PERIODS)
     _add_actuals(db_session, line, periods, list(y))
     driver = _add_driver(db_session, "units_p9", "volume", periods, list(volume))
+    driver.business_unit_id = seed_business_unit.id
 
     for i in range(3):
         noise = rng.normal(500, 50, N_PERIODS)
-        _add_driver(db_session, f"decoy_p9_{i}", "macro", periods, list(noise))
+        decoy = _add_driver(db_session, f"decoy_p9_{i}", "macro", periods, list(noise))
+        decoy.business_unit_id = seed_business_unit.id
 
     db_session.commit()
     return line, driver
@@ -471,9 +476,19 @@ def test_api_run_and_fetch_discovery(client):
 
     db = SessionLocal()
     try:
+        from app.models.business_unit import BusinessUnit
+
+        # Matches the demo "analyst" user's business unit (see
+        # app.main.seed_roles_and_admin) so this BU-scoped API call can
+        # actually see the line item.
+        demo_bu = db.query(BusinessUnit).filter(BusinessUnit.name == "North America").first()
         line = _add_line(db, f"REV-P9-API-{suffix}", category="Revenue")
+        if demo_bu:
+            line.business_unit_id = demo_bu.id
         _add_actuals(db, line, periods, list(y))
-        _add_driver(db, f"units_p9_api_{suffix}", "volume", periods, list(volume))
+        driver = _add_driver(db, f"units_p9_api_{suffix}", "volume", periods, list(volume))
+        if demo_bu:
+            driver.business_unit_id = demo_bu.id
         db.commit()
         line_id = line.id
     finally:

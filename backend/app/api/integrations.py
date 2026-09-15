@@ -94,6 +94,8 @@ async def pull_warehouse(
     return await persist_pulled_actuals(
         db, result, "warehouse", body.source_name,
         actor_id=current_user.id, actor_username=current_user.username,
+        integration_connection_id=conn.id,
+        business_unit_id=conn.business_unit_id,
     )
 
 
@@ -131,6 +133,8 @@ async def pull_erp(
     return await persist_pulled_actuals(
         db, result, "erp", body.source_name,
         actor_id=current_user.id, actor_username=current_user.username,
+        integration_connection_id=conn.id,
+        business_unit_id=conn.business_unit_id,
     )
 
 
