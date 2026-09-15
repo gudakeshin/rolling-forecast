@@ -12,6 +12,8 @@ from app.domain.engines.model_registry import get_model_registry
 from app.models.forecast import ForecastVersion, ForecastLineResult
 from app.models.actuals import ActualsDataset, ActualsRecord
 from app.models.line_item import LineItem
+from app.services.confidence import classify_confidence, compute_confidence_score
+from app.services.period_calendar import get_calendar_config, period_to_date
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +135,7 @@ class RunEnsembleSkill(BaseSkill):
         if not dataset:
             return SkillResult.fail("No actuals dataset found for ensemble modeling.")
 
+        cal_cfg = get_calendar_config(db)
         results_summary = []
         ensemble_count = 0
 
@@ -160,12 +163,13 @@ class RunEnsembleSkill(BaseSkill):
 
             values = pd.Series([r.value for r in records])
             periods = [r.period for r in records]
-            dates = pd.DatetimeIndex([pd.Timestamp(p + "-01") for p in periods])
+            dates = pd.DatetimeIndex([pd.Timestamp(period_to_date(p, cal_cfg)) for p in periods])
             horizon = version.horizon_months or 12
 
             # Run each model and collect forecasts + MAPE
             model_forecasts = {}
             model_mapes = {}
+            model_r2 = {}
 
             for model_name in model_names:
                 try:
@@ -174,6 +178,7 @@ class RunEnsembleSkill(BaseSkill):
                         random_seed=version.random_seed or 42,
                     )
                     model_forecasts[model_name] = output.point_forecast
+                    model_r2[model_name] = output.fit_metrics.get("r_squared")
 
                     # Weight on out-of-sample CV MAPE (same pattern as generate_baseline).
                     # Fall back to in-sample only when history is too short for CV.
@@ -232,6 +237,8 @@ class RunEnsembleSkill(BaseSkill):
             sorted_models = sorted(model_mapes.items(), key=lambda x: x[1])[:top_k]
             selected = {name: model_forecasts[name] for name, _ in sorted_models if name in model_forecasts}
             selected_mapes = {name: mape for name, mape in sorted_models if name in model_forecasts}
+            selected_r2 = [r2 for name in selected if (r2 := model_r2.get(name)) is not None]
+            avg_r2 = float(np.mean(selected_r2)) if selected_r2 else None
 
             # Compute weights
             weights = self._compute_weights(selected_mapes, weighting)
@@ -273,8 +280,7 @@ class RunEnsembleSkill(BaseSkill):
             )
 
             avg_mape = float(np.mean(list(selected_mapes.values())))
-            new_confidence_base = max(0, min(100, 100 - avg_mape * 3))  # Ensemble bonus
-            new_confidence = min(100, new_confidence_base + 10)  # +10 ensemble bonus
+            new_confidence = old_confidence
 
             for i, result in enumerate(existing_results):
                 if i < horizon:
@@ -283,12 +289,12 @@ class RunEnsembleSkill(BaseSkill):
                     result.p90 = float(ensemble_forecast[i] + 1.28 * ensemble_std[i])
                     result.model_type = f"ensemble({'+'.join(selected.keys())})"
                     result.model_mape = float(avg_mape)
+                    result.model_r_squared = avg_r2
+                    # Single source of truth (app/services/confidence.py) — no
+                    # separate ad-hoc "+10 ensemble bonus" that could drift from it.
+                    new_confidence = compute_confidence_score(result)
                     result.confidence_score = new_confidence
-                    result.confidence_level = (
-                        "high" if new_confidence >= 70
-                        else "medium" if new_confidence >= 50
-                        else "low"
-                    )
+                    result.confidence_level = classify_confidence(new_confidence)
 
             ensemble_count += 1
             model_list = ", ".join(f"{m}({w:.0%})" for m, w in weights.items())

@@ -141,6 +141,11 @@ class Settings(BaseSettings):
     # two-stage cost screen would otherwise start admitting it into every
     # material line's comparison the moment it ships.
     enable_global_gbm_model: bool = False
+    # Blend the top-2 models when they land inside the 1-SE selection band
+    # (inverse-MASE weights) instead of publishing the Occam winner alone.
+    # Off by default — same reasoning as conformal/global-GBM: an upgrade
+    # should never silently change which numbers a published forecast shows.
+    enable_ensemble_blending: bool = False
 
     # Context Engine
     chroma_persist_dir: str = str(Path(__file__).parent.parent / "data" / "chroma")

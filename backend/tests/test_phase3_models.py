@@ -78,10 +78,11 @@ def test_demand_classification_smooth():
 
 def test_croston_sba_positive_on_intermittent():
     y, _ = _intermittent()
-    fc, z, p, sd = _croston_sba(y.values)
+    fc, z, p, sd, alpha = _croston_sba(y.values)
     assert fc > 0
     assert z > 0
     assert p >= 1
+    assert 0 < alpha < 1
 
 
 def test_croston_fit_predict_roundtrip():

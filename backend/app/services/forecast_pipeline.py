@@ -19,7 +19,13 @@ if TYPE_CHECKING:
     from app.domain.engines.global_gbm import GlobalPanelContext
 
 from app.config import settings
-from app.domain.engines.base_model import as_exog_model, make_period_labels, mase_denominator
+from app.domain.engines.base_model import (
+    ForecastOutput,
+    as_exog_model,
+    make_period_labels,
+    mase_denominator,
+    seasonal_period_length,
+)
 from app.domain.engines.model_registry import ModelRegistry, get_model_registry
 from app.models.forecast import ModelMetadata
 from app.models.line_item import LineItem
@@ -46,6 +52,14 @@ def _mean_finite(values: list[float]) -> float | None:
     if not finite:
         return None
     return float(np.mean(finite))
+
+
+def _inverse_mase_weights(mase_a: float, mase_b: float) -> tuple[float, float]:
+    """Normalize two MASE scores into inverse-error blend weights."""
+    inv_a = 1.0 / max(mase_a, 1e-6)
+    inv_b = 1.0 / max(mase_b, 1e-6)
+    total = inv_a + inv_b
+    return inv_a / total, inv_b / total
 
 
 def _active_heuristics(db: Session | None, line_item_id: int) -> list[Any]:
@@ -146,7 +160,7 @@ def _evaluate_plain_vs_exog(
     exog_model = as_exog_model(model)
 
     n = len(values)
-    m = 12
+    m = seasonal_period_length()
     fold_h = 3
     n_folds = 3
     mase_plain: list[float] = []
@@ -269,7 +283,7 @@ def _evaluate_arima_exog_modes(
 
     driver_ids = [s.driver_id for s in bundle_known.specs]
     n = len(values)
-    m = 12
+    m = seasonal_period_length()
     fold_h = 3
     n_folds = 3
     mase_forecast: list[float] = []
@@ -911,6 +925,127 @@ def forecast_line_item(
             panel=ctx.panel,
             line_item_id=li.id,
         )
+
+        # Ensemble-by-default: when a genuine runner-up sits inside the 1-SE
+        # band of the winner, blend the two (inverse-MASE weights) instead of
+        # publishing the Occam winner alone — the two are statistically
+        # indistinguishable on this series, so combining them is a variance
+        # reduction, not an unjustified complexity increase. Skipped for exog
+        # (the head-to-head admission is specific to `selected_model`) and for
+        # an applied heuristic nudge (a human-taught preference should win
+        # outright, not get diluted into an average).
+        if (
+            settings.enable_ensemble_blending
+            and selection_result is not None
+            and not use_exog
+            and not (heuristic_nudge is not None and heuristic_nudge.get("applied"))
+        ):
+            partner_comp = selection_result.blend_partner()
+            by_model = {c.model_name: c for c in selection_result.comparisons}
+            primary_comp = by_model.get(selected_model)
+            if (
+                partner_comp is not None
+                and primary_comp is not None
+                and partner_comp.model_name != selected_model
+                and partner_comp.mase != float("inf")
+                and primary_comp.mase != float("inf")
+            ):
+                try:
+                    partner_output = registry.fit_and_predict(
+                        partner_comp.model_name,
+                        effective_values,
+                        effective_dates,
+                        horizon,
+                        random_seed=random_seed,
+                        panel=ctx.panel,
+                        line_item_id=li.id,
+                    )
+                except Exception as blend_err:
+                    partner_output = None
+                    logger.debug(
+                        "Ensemble blend fit failed for %s/%s: %s",
+                        partner_comp.model_name, li.name, blend_err,
+                    )
+
+                if (
+                    partner_output is not None
+                    and forecast_output.lower_bound is not None
+                    and forecast_output.upper_bound is not None
+                    and partner_output.lower_bound is not None
+                    and partner_output.upper_bound is not None
+                ):
+                    w_primary, w_partner = _inverse_mase_weights(
+                        primary_comp.mase, partner_comp.mase
+                    )
+                    primary_r2 = forecast_output.fit_metrics.get("r_squared")
+                    partner_r2 = partner_output.fit_metrics.get("r_squared")
+                    blended_r2 = (
+                        w_primary * primary_r2 + w_partner * partner_r2
+                        if primary_r2 is not None and partner_r2 is not None
+                        else (primary_r2 if primary_r2 is not None else partner_r2)
+                    )
+                    blended_label = f"ensemble({selected_model}+{partner_comp.model_name})"
+                    ensemble_info = {
+                        "models": [selected_model, partner_comp.model_name],
+                        "weights": {
+                            selected_model: round(w_primary, 4),
+                            partner_comp.model_name: round(w_partner, 4),
+                        },
+                        "mase": {
+                            selected_model: round(primary_comp.mase, 4),
+                            partner_comp.model_name: round(partner_comp.mase, 4),
+                        },
+                    }
+
+                    # Pool both models' CV residuals for calibration below — the
+                    # blend has no fold-by-fold CV of its own, and both models
+                    # are already certified "close enough" by the band test.
+                    partner_residuals = selection_result.residuals_for(partner_comp.model_name)
+                    pooled_residuals: dict[int, list[float]] = {
+                        h: list(vals) for h, vals in cv_residuals.items()
+                    }
+                    for h, vals in partner_residuals.items():
+                        pooled_residuals.setdefault(h, [])
+                        pooled_residuals[h] = pooled_residuals[h] + list(vals)
+                    cv_residuals = pooled_residuals
+
+                    blended_params = dict(forecast_output.parameters or {})
+                    blended_params["ensemble_blend"] = ensemble_info
+                    forecast_output = ForecastOutput(
+                        point_forecast=(
+                            w_primary * forecast_output.point_forecast
+                            + w_partner * partner_output.point_forecast
+                        ),
+                        lower_bound=(
+                            w_primary * forecast_output.lower_bound
+                            + w_partner * partner_output.lower_bound
+                        ),
+                        upper_bound=(
+                            w_primary * forecast_output.upper_bound
+                            + w_partner * partner_output.upper_bound
+                        ),
+                        periods=forecast_output.periods,
+                        model_type=blended_label,
+                        parameters=blended_params,
+                        fit_metrics={**forecast_output.fit_metrics, "r_squared": blended_r2},
+                        diagnostics=dict(forecast_output.diagnostics or {}),
+                    )
+                    selected_model = blended_label
+                    selection_mase = round(
+                        w_primary * primary_comp.mase + w_partner * partner_comp.mase, 4
+                    )
+                    if primary_comp.pinball != float("inf") and partner_comp.pinball != float("inf"):
+                        selection_pinball = round(
+                            w_primary * primary_comp.pinball + w_partner * partner_comp.pinball, 4
+                        )
+                    if primary_comp.mape != float("inf") and partner_comp.mape != float("inf"):
+                        selection_mape = round(
+                            w_primary * primary_comp.mape + w_partner * partner_comp.mape, 4
+                        )
+                    if out.comparison is not None:
+                        out.comparison["ensemble_blend"] = ensemble_info
+                        out.comparison["best_model"] = selected_model
+
         if out.comparison is not None:
             # Persist the model-selection comparison (chosen model, runner-up,
             # margin, per-fold scores) so a "why this number" view can show it

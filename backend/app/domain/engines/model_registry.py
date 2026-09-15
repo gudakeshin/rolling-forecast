@@ -79,6 +79,19 @@ class ModelSelectionResult:
     best_pinball: float = float("inf")
     n_downgraded: int = 0
 
+    def blend_partner(self) -> "ModelComparisonResult | None":
+        """The runner-up still inside the 1-SE band of the winner, Occam-sorted.
+
+        ``None`` in the ordinary case — no second candidate is genuinely tied
+        with ``best_model``. When present, the two are statistically
+        indistinguishable on this series, so the pipeline may blend them
+        (inverse-MASE weights) instead of publishing the Occam winner alone.
+        """
+        within = _within_band_candidates(self.comparisons, rule=self.selection_rule)
+        if len(within) < 2 or within[0].model_name != self.best_model:
+            return None
+        return within[1]
+
     def residuals_for(self, model_name: str | None) -> dict[int, list[float]]:
         """Per-horizon CV residuals for one candidate, or {} if unavailable.
 
@@ -179,12 +192,17 @@ def _selection_band(fold_scores: list[float], n_folds: int) -> float:
     return band
 
 
-def _pick_best(
+def _within_band_candidates(
     comparisons: list[ModelComparisonResult],
     *,
     rule: str,
-) -> tuple[str | None, float, float, float]:
-    """Return (best_model, best_mape, best_mase, best_pinball)."""
+) -> list[ModelComparisonResult]:
+    """Eligible candidates inside the 1-SE band of the best score, Occam-sorted.
+
+    Element 0 is the Occam winner `_pick_best` returns; a second element, when
+    present, is genuinely tied with it under the same tolerance the tie-break
+    itself uses — a legitimate ensemble-blend partner, not just "close".
+    """
     eligible = [
         c for c in comparisons
         if c.eligible and not c.skipped_budget and c.error is None
@@ -192,7 +210,7 @@ def _pick_best(
     if rule == "mape":
         scored = [c for c in eligible if c.mape != float("inf")]
         if not scored:
-            return None, float("inf"), float("inf"), float("inf")
+            return []
         best_mape = min(c.mape for c in scored)
         # First filter to near-best (1-SE band), then apply the Occam
         # tie-break to every candidate inside it — not just exact ties.
@@ -202,14 +220,13 @@ def _pick_best(
         )
         within = [c for c in scored if c.mape <= best_mape + band]
         within.sort(key=lambda c: (c.is_benchmark, c.complexity_rank, c.mape))
-        winner = within[0]
-        return winner.model_name, winner.mape, winner.mase, winner.pinball
+        return within
 
     # multi: MASE → pinball → complexity; benchmarks lose pure ties
     scored = [c for c in eligible if c.mase != float("inf")]
     if not scored:
         # Fall back to MAPE pool if no MASE
-        return _pick_best(comparisons, rule="mape")
+        return _within_band_candidates(comparisons, rule="mape")
 
     best_mase = min(c.mase for c in scored)
     # Use fold MASEs from the best model's peers for SE; approximate with all fold_mases
@@ -228,6 +245,18 @@ def _pick_best(
             c.pinball if c.pinball != float("inf") else 1e18,
         )
     )
+    return within
+
+
+def _pick_best(
+    comparisons: list[ModelComparisonResult],
+    *,
+    rule: str,
+) -> tuple[str | None, float, float, float]:
+    """Return (best_model, best_mape, best_mase, best_pinball)."""
+    within = _within_band_candidates(comparisons, rule=rule)
+    if not within:
+        return None, float("inf"), float("inf"), float("inf")
     winner = within[0]
     return winner.model_name, winner.mape, winner.mase, winner.pinball
 
