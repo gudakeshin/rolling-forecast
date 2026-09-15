@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from './client';
+import { apiDelete, apiGet, apiPost } from './client';
 
 export interface DriverShock {
   driver_id: number;
@@ -25,6 +25,12 @@ export interface WhatIfResult {
 
 export async function createWhatIf(body: WhatIfRequest): Promise<WhatIfResult> {
   return apiPost('/scenarios/what-if', body);
+}
+
+export async function deleteScenario(versionId: string): Promise<{ id: string; status: string }> {
+  const result = await apiDelete<{ id: string; status: string }>(`/scenarios/${versionId}`);
+  if (!result) throw new Error('Failed to delete scenario');
+  return result;
 }
 
 export async function getBudgetBridge(

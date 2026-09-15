@@ -234,6 +234,14 @@ const en = {
   'whatIf.error.label': 'Scenario label is required',
   'whatIf.error.run': 'What-if failed',
   'whatIf.success.created': 'Created scenario {label}',
+  'whatIf.existing': 'Existing scenarios',
+  'whatIf.existing.empty': 'No scenarios yet — run one above.',
+  'whatIf.delete': 'Delete scenario',
+  'whatIf.delete.confirmTitle': 'Delete scenario?',
+  'whatIf.delete.confirm':
+    'Delete "{label}"? This removes it from the version picker. The underlying forecast data is archived, not erased.',
+  'whatIf.delete.success': 'Deleted scenario {label}',
+  'whatIf.delete.error': 'Failed to delete scenario',
   'heuristics.subtitle':
     'Patterns mined from closed cycles. Nothing here changes a forecast until you promote it, and override-derived patterns stay advisory even then.',
   'heuristics.status.candidate': 'Candidates',
@@ -496,6 +504,14 @@ const es: MessageDict = {
   'whatIf.error.label': 'La etiqueta del escenario es obligatoria',
   'whatIf.error.run': 'Error en what-if',
   'whatIf.success.created': 'Escenario {label} creado',
+  'whatIf.existing': 'Escenarios existentes',
+  'whatIf.existing.empty': 'Aún no hay escenarios — ejecute uno arriba.',
+  'whatIf.delete': 'Eliminar escenario',
+  'whatIf.delete.confirmTitle': '¿Eliminar escenario?',
+  'whatIf.delete.confirm':
+    '¿Eliminar "{label}"? Esto lo quita del selector de versiones. Los datos del pronóstico subyacente se archivan, no se borran.',
+  'whatIf.delete.success': 'Escenario {label} eliminado',
+  'whatIf.delete.error': 'Error al eliminar el escenario',
   'heuristics.subtitle':
     'Patrones extraídos de ciclos cerrados. Nada aquí cambia un pronóstico hasta que lo promueva, y los patrones derivados de ajustes siguen siendo solo informativos.',
   'heuristics.status.candidate': 'Candidatos',

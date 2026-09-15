@@ -88,7 +88,7 @@ async def list_versions(
     db: Session = Depends(get_db),
 ):
     """List recent forecast versions (newest first) for the version picker."""
-    q = db.query(ForecastVersion)
+    q = db.query(ForecastVersion).filter(ForecastVersion.status != "archived")
     if scenario:
         q = q.filter(ForecastVersion.scenario == scenario)
     versions = q.order_by(ForecastVersion.created_at.desc()).limit(limit).all()

@@ -528,3 +528,59 @@ def test_what_if_endpoint_smoke(client):
         json={"base_version_id": "missing", "scenario_label": "x", "shocks": []},
     )
     assert r.status_code == 400
+
+
+def test_delete_scenario_endpoint(client):
+    """Deleting a what-if scenario archives it and drops it from the version
+    picker; deleting a non-scenario version or an unknown id is rejected."""
+    from app.database import SessionLocal
+
+    login = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    session = SessionLocal()
+    try:
+        scenario_version = ForecastVersion(
+            name="FC-delete-test-scenario",
+            label="delete-test-scenario",
+            status="draft",
+            version_type="scenario",
+            scenario="downside",
+        )
+        real_version = ForecastVersion(
+            name="FC-delete-test-real",
+            status="draft",
+            version_type="scheduled",
+            scenario="base",
+        )
+        session.add_all([scenario_version, real_version])
+        session.commit()
+        scenario_id, real_id = scenario_version.id, real_version.id
+    finally:
+        session.close()
+
+    # Present in the picker before deletion.
+    listed = client.get("/api/panel/versions", headers=headers, params={"limit": 200})
+    assert scenario_id in {v["id"] for v in listed.json()}
+
+    r = client.delete(f"/api/scenarios/{real_id}", headers=headers)
+    assert r.status_code == 400, r.text
+
+    r = client.delete("/api/scenarios/does-not-exist", headers=headers)
+    assert r.status_code == 404
+
+    r = client.delete(f"/api/scenarios/{scenario_id}", headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json() == {"id": scenario_id, "status": "archived"}
+
+    # Dropped from the picker after deletion, but still directly fetchable.
+    listed = client.get("/api/panel/versions", headers=headers, params={"limit": 200})
+    assert scenario_id not in {v["id"] for v in listed.json()}
+    detail = client.get(f"/api/panel/version/{scenario_id}", headers=headers)
+    assert detail.status_code == 200
+    assert detail.json()["status"] == "archived"
+
+    # Idempotent: deleting an already-archived scenario is a no-op success.
+    r = client.delete(f"/api/scenarios/{scenario_id}", headers=headers)
+    assert r.status_code == 200
+    assert r.json() == {"id": scenario_id, "status": "archived"}

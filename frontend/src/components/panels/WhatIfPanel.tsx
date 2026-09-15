@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { GitBranch, Loader2, Plus, Trash2 } from 'lucide-react';
 import { listDrivers, type Driver } from '../../api/drivers';
-import { createWhatIf, type DriverShock } from '../../api/scenarios';
+import { createWhatIf, deleteScenario, type DriverShock } from '../../api/scenarios';
 import { useI18n } from '../../i18n/useI18n';
 import { usePanelStore } from '../../store/panelStore';
 import { useVersionStore } from '../../store/versionStore';
 import { toast } from '../../store/toastStore';
+import { confirmDialog } from '../../store/confirmStore';
 
 interface ShockRow {
   id: string;
@@ -19,6 +20,7 @@ export function WhatIfPanel() {
   const activeVersionId = useVersionStore((s) => s.activeVersionId);
   const refreshVersions = useVersionStore((s) => s.refresh);
   const setActiveVersionId = useVersionStore((s) => s.setActiveVersionId);
+  const versions = useVersionStore((s) => s.versions);
   const openPanel = usePanelStore((s) => s.openPanel);
 
   const [drivers, setDrivers] = useState<Driver[]>([]);
@@ -28,6 +30,33 @@ export function WhatIfPanel() {
   ]);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<any>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const scenarioVersions = versions
+    .filter((v) => v.version_type === 'scenario')
+    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+
+  const handleDelete = useCallback(
+    async (versionId: string, versionLabel: string) => {
+      const ok = await confirmDialog(t('whatIf.delete.confirm', { label: versionLabel }), {
+        title: t('whatIf.delete.confirmTitle'),
+        confirmLabel: t('whatIf.delete'),
+        danger: true,
+      });
+      if (!ok) return;
+      setDeletingId(versionId);
+      try {
+        await deleteScenario(versionId);
+        toast.success(t('whatIf.delete.success', { label: versionLabel }));
+        await refreshVersions();
+      } catch (e: any) {
+        toast.error(e?.message || t('whatIf.delete.error'));
+      } finally {
+        setDeletingId(null);
+      }
+    },
+    [refreshVersions, t],
+  );
 
   useEffect(() => {
     void listDrivers()
@@ -215,6 +244,44 @@ export function WhatIfPanel() {
       {!drivers.length && (
         <p className="text-xs text-surface-500">{t('whatIf.emptyDrivers')}</p>
       )}
+
+      <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl p-3 space-y-2">
+        <span className="text-sm font-semibold text-white">{t('whatIf.existing')}</span>
+        {scenarioVersions.length === 0 ? (
+          <p className="text-xs text-surface-500">{t('whatIf.existing.empty')}</p>
+        ) : (
+          <ul className="space-y-1">
+            {scenarioVersions.map((v) => (
+              <li
+                key={v.id}
+                className="flex items-center justify-between gap-2 text-xs bg-surface-900 border border-surface-700 rounded-lg px-2 py-1.5"
+              >
+                <button
+                  type="button"
+                  onClick={() => setActiveVersionId(v.id)}
+                  className="truncate text-left text-surface-200 hover:underline"
+                  title={v.name}
+                >
+                  {v.label || v.name}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleDelete(v.id, v.label || v.name)}
+                  disabled={deletingId === v.id}
+                  aria-label={t('whatIf.delete')}
+                  className="shrink-0 p-1 text-surface-500 hover:text-red-400 disabled:opacity-50"
+                >
+                  {deletingId === v.id ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-3.5 h-3.5" />
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }
