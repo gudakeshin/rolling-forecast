@@ -191,6 +191,7 @@ export function ChatContainer() {
               streamingMessage={streamingMessage}
               onRegenerate={handleRegenerate}
               isStreaming={isStreaming}
+              onSend={handleSend}
             />
             <div ref={messagesEndRef} />
           </div>

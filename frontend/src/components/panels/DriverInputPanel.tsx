@@ -1,12 +1,13 @@
 import { useState, useCallback, useMemo } from 'react';
 import {
   Send, CheckCircle, AlertTriangle,
-  RefreshCw, Sparkles, TrendingUp, Filter, Download,
+  RefreshCw, Sparkles, TrendingUp, Filter, Download, ClipboardPaste,
 } from 'lucide-react';
 import { apiPost } from '../../api/client';
 import { Tabs } from '../ui/Tabs';
 import { DataTable, downloadCsv, type DataTableColumn } from '../ui/DataTable';
 import { usePanelStore } from '../../store/panelStore';
+import { toast } from '../../store/toastStore';
 
 interface LineItemInput {
   id: number;
@@ -92,6 +93,48 @@ export function DriverInputPanel({ data }: Props) {
   const handleFieldChange = useCallback((fieldName: string, value: string) => {
     setFormValues(prev => ({ ...prev, [fieldName]: value }));
   }, []);
+
+  // Bulk-fill from a pasted Excel/CSV range: either an "account_code<TAB>value"
+  // block (matched by code, any order) or a single value column (filled
+  // sequentially starting at the cell the paste landed on). A plain
+  // single-cell paste is left to the browser's default behavior.
+  const handleGridPaste = useCallback(
+    (e: React.ClipboardEvent<HTMLInputElement>, startLi: LineItemInput) => {
+      const text = e.clipboardData.getData('text/plain').replace(/\r/g, '');
+      if (!text) return;
+      const rows = text.split('\n').filter((r, i, arr) => !(i === arr.length - 1 && r === ''));
+      const parsed = rows.map((r) => r.split('\t').map((c) => c.trim()));
+      if (parsed.length <= 1 && (parsed[0]?.length ?? 0) <= 1) return;
+
+      e.preventDefault();
+      const updates: Record<string, string> = {};
+      const isTwoColumn = parsed.every((cols) => cols.length >= 2 && cols[0] !== '');
+
+      if (isTwoColumn) {
+        const byCode = new Map(filteredLineItems.map((li) => [li.account_code, li]));
+        for (const [code, value] of parsed) {
+          const li = byCode.get(code);
+          if (li && value !== '') updates[`li_${li.id}`] = value;
+        }
+      } else {
+        const startIdx = filteredLineItems.findIndex((li) => li.id === startLi.id);
+        parsed.forEach((cols, i) => {
+          const li = filteredLineItems[startIdx + i];
+          const value = cols[0];
+          if (li && value !== '') updates[`li_${li.id}`] = value;
+        });
+      }
+
+      const count = Object.keys(updates).length;
+      if (count > 0) {
+        setFormValues((prev) => ({ ...prev, ...updates }));
+        toast.success(`Filled ${count} field${count === 1 ? '' : 's'} from pasted data`);
+      } else {
+        toast.error('No matching line items found in pasted data');
+      }
+    },
+    [filteredLineItems],
+  );
 
   const handlePopulateFromModel = useCallback(() => {
     const defaults: Record<string, string> = {};
@@ -259,9 +302,13 @@ export function DriverInputPanel({ data }: Props) {
             <div className="px-4 py-2.5 border-b border-surface-700/50">
               <h4 className="text-xs font-semibold text-white">Driver Assumptions</h4>
               <p className="text-xs text-surface-500 mt-0.5">Enter your BU assumptions for each driver. Model suggestions shown for reference.</p>
+              <p className="text-xs text-surface-500 mt-1 flex items-center gap-1.5">
+                <ClipboardPaste className="w-3 h-3 shrink-0" aria-hidden="true" />
+                Tip: paste an account code + value range copied from Excel into any field to bulk-fill matching rows.
+              </p>
             </div>
             <div className="max-h-[350px] overflow-y-auto p-3 space-y-2">
-              {filteredLineItems.slice(0, 30).map((li: LineItemInput) => (
+              {filteredLineItems.map((li: LineItemInput) => (
                 <div key={li.id} className="bg-surface-800/40 border border-surface-700/30 rounded-lg p-3">
                   <div className="flex items-center justify-between mb-1.5">
                     <div>
@@ -277,6 +324,7 @@ export function DriverInputPanel({ data }: Props) {
                         placeholder="Enter value..."
                         value={formValues[`li_${li.id}`] || ''}
                         onChange={(e) => handleFieldChange(`li_${li.id}`, e.target.value)}
+                        onPaste={(e) => handleGridPaste(e, li)}
                         className="w-full px-2.5 py-1.5 bg-surface-900/60 border border-surface-700/50 rounded-md text-xs text-white placeholder:text-surface-600 focus:outline-none focus:border-deloitte-green/50 focus:ring-1 focus:ring-deloitte-green/20 transition-all"
                       />
                     </div>
@@ -314,11 +362,6 @@ export function DriverInputPanel({ data }: Props) {
               ))}
               {filteredLineItems.length === 0 && (
                 <p className="text-surface-500 text-xs text-center py-6">No line items available for input</p>
-              )}
-              {filteredLineItems.length > 30 && (
-                <p className="text-surface-500 text-xs text-center py-2">
-                  Showing first 30 of {filteredLineItems.length} items. Use category filter to narrow down.
-                </p>
               )}
             </div>
           </div>
