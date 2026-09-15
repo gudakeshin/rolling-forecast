@@ -71,7 +71,7 @@ export function ApprovalsPanel() {
   useEffect(() => {
     if (!versionId) return;
     const id = window.setInterval(() => {
-      void load();
+      if (!document.hidden) void load();
     }, 60_000);
     return () => window.clearInterval(id);
   }, [versionId, load]);

@@ -210,7 +210,7 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
   useEffect(() => {
     if (!pollEnabled || !onRefresh) return;
     const id = window.setInterval(() => {
-      void onRefresh();
+      if (!document.hidden) void onRefresh();
     }, 60_000);
     return () => window.clearInterval(id);
   }, [pollEnabled, onRefresh]);

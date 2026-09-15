@@ -82,7 +82,9 @@ export function StatusCard({ data: initialData }: Props) {
     };
 
     void poll();
-    intervalId = setInterval(() => void poll(), 2000);
+    intervalId = setInterval(() => {
+      if (!document.hidden) void poll();
+    }, 2000);
 
     return () => {
       cancelled = true;

@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { lazy, memo, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   Loader2, Table, GitCompare, Edit, ClipboardList, Settings2,
   LayoutDashboard, Shield, Target, FileInput, AlertTriangle, FolderOpen,
   CheckSquare, Activity, Sparkles, GitBranch, Brain, Lightbulb,
+  Inbox, RefreshCw, MessageSquare,
 } from 'lucide-react';
 import {
   usePanelStore,
@@ -14,28 +15,64 @@ import {
   type PanelSlot,
 } from '../../store/panelStore';
 import { useSavedViewsStore } from '../../store/savedViewsStore';
+import { useComposerStore } from '../../store/composerStore';
 import { toast } from '../../store/toastStore';
 import { apiGet } from '../../api/client';
 import { useI18n } from '../../i18n/useI18n';
 import type { MessageKey } from '../../i18n';
 import { SlidePanel } from '../ui/SlidePanel';
-import { ForecastTablePanel } from './ForecastTablePanel';
-import { OverridesPanel } from './OverridesPanel';
-import { ComparisonPanel } from './ComparisonPanel';
-import { SkillEditorPanel } from './SkillEditorPanel';
-import { ExecutiveDashboardPanel } from './ExecutiveDashboardPanel';
-import { ReviewDashboardPanel } from './ReviewDashboardPanel';
-import { AccuracyTrackingPanel } from './AccuracyTrackingPanel';
-import { DriverInputPanel } from './DriverInputPanel';
-import { AnomalyPanel } from './AnomalyPanel';
-import { DocumentLibraryPanel } from './DocumentLibraryPanel';
-import { ApprovalsPanel } from './ApprovalsPanel';
-import { DriversPanel } from './DriversPanel';
-import { ExplainabilityPanel } from './ExplainabilityPanel';
-import { WhatIfPanel } from './WhatIfPanel';
-import { HeuristicsPanel } from './HeuristicsPanel';
-import { AdminConsolePanel } from './AdminConsolePanel';
-import { WhyThisNumberPanel } from './WhyThisNumberPanel';
+
+// Each panel is its own chunk — most are opened rarely (admin console, skill
+// editor, drivers, ...) and none should be pulled into the initial bundle
+// just because PanelContainer references its type. Each is also memoized so
+// switching the *other* slot in a side-by-side layout, or an unrelated
+// PanelContainerBody re-render, doesn't re-render every mounted panel.
+const ForecastTablePanel = lazy(() =>
+  import('./ForecastTablePanel').then((m) => ({ default: memo(m.ForecastTablePanel) })),
+);
+const OverridesPanel = lazy(() => import('./OverridesPanel').then((m) => ({ default: memo(m.OverridesPanel) })));
+const ComparisonPanel = lazy(() => import('./ComparisonPanel').then((m) => ({ default: memo(m.ComparisonPanel) })));
+const SkillEditorPanel = lazy(() =>
+  import('./SkillEditorPanel').then((m) => ({ default: memo(m.SkillEditorPanel) })),
+);
+const ExecutiveDashboardPanel = lazy(() =>
+  import('./ExecutiveDashboardPanel').then((m) => ({ default: memo(m.ExecutiveDashboardPanel) })),
+);
+const ReviewDashboardPanel = lazy(() =>
+  import('./ReviewDashboardPanel').then((m) => ({ default: memo(m.ReviewDashboardPanel) })),
+);
+const AccuracyTrackingPanel = lazy(() =>
+  import('./AccuracyTrackingPanel').then((m) => ({ default: memo(m.AccuracyTrackingPanel) })),
+);
+const DriverInputPanel = lazy(() =>
+  import('./DriverInputPanel').then((m) => ({ default: memo(m.DriverInputPanel) })),
+);
+const AnomalyPanel = lazy(() => import('./AnomalyPanel').then((m) => ({ default: memo(m.AnomalyPanel) })));
+const DocumentLibraryPanel = lazy(() =>
+  import('./DocumentLibraryPanel').then((m) => ({ default: memo(m.DocumentLibraryPanel) })),
+);
+const ApprovalsPanel = lazy(() => import('./ApprovalsPanel').then((m) => ({ default: memo(m.ApprovalsPanel) })));
+const DriversPanel = lazy(() => import('./DriversPanel').then((m) => ({ default: memo(m.DriversPanel) })));
+const ExplainabilityPanel = lazy(() =>
+  import('./ExplainabilityPanel').then((m) => ({ default: memo(m.ExplainabilityPanel) })),
+);
+const WhatIfPanel = lazy(() => import('./WhatIfPanel').then((m) => ({ default: memo(m.WhatIfPanel) })));
+const HeuristicsPanel = lazy(() => import('./HeuristicsPanel').then((m) => ({ default: memo(m.HeuristicsPanel) })));
+const AdminConsolePanel = lazy(() =>
+  import('./AdminConsolePanel').then((m) => ({ default: memo(m.AdminConsolePanel) })),
+);
+const WhyThisNumberPanel = lazy(() =>
+  import('./WhyThisNumberPanel').then((m) => ({ default: memo(m.WhyThisNumberPanel) })),
+);
+
+function PanelChunkFallback() {
+  return (
+    <div className="flex flex-col items-center justify-center h-32 gap-2">
+      <Loader2 className="w-6 h-6 animate-spin text-deloitte-green" />
+      <span className="text-xs text-surface-500">Loading data...</span>
+    </div>
+  );
+}
 
 const panelIcons: Record<string, any> = {
   forecast_table: Table,
@@ -116,6 +153,7 @@ function PanelContainerBody({ variant }: { variant: PanelSlot }) {
   // read below; `usePanelStore` above is context-resolved for everything else.
   const rawStore = variant === 'secondary' ? useSecondaryPanelStore : usePrimaryPanelStore;
   const saveView = useSavedViewsStore((s) => s.saveView);
+  const requestComposerFocus = useComposerStore((s) => s.requestFocus);
 
   const handleSaveView = () => {
     if (!panelType) return;
@@ -272,11 +310,43 @@ function PanelContainerBody({ variant }: { variant: PanelSlot }) {
       <p className="text-xs text-surface-500">
         Ensure the forecast version exists and required upstream steps have completed.
       </p>
+      <button
+        type="button"
+        onClick={refreshPanel}
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-surface-300 hover:text-white bg-surface-800 hover:bg-surface-700 border border-surface-700 rounded-lg transition-colors"
+      >
+        <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
+        Retry
+      </button>
     </div>
   ) : panelData ? (
     <PanelContent type={panelType} data={panelData} onRefresh={refreshPanel} />
   ) : (
-    <p className="text-surface-500 text-sm text-center">No data available</p>
+    <div className="flex flex-col items-center justify-center h-40 gap-3 text-center px-4">
+      <Inbox className="w-6 h-6 text-surface-500" aria-hidden="true" />
+      <p className="text-sm text-surface-400">No data available yet</p>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={refreshPanel}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-surface-300 hover:text-white bg-surface-800 hover:bg-surface-700 border border-surface-700 rounded-lg transition-colors"
+        >
+          <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
+          Refresh
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            closePanel();
+            requestComposerFocus();
+          }}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-deloitte-green hover:text-white bg-deloitte-green/10 hover:bg-deloitte-green/20 border border-deloitte-green/20 rounded-lg transition-colors"
+        >
+          <MessageSquare className="w-3.5 h-3.5" aria-hidden="true" />
+          Ask in chat
+        </button>
+      </div>
+    </div>
   );
 
   return (
@@ -291,7 +361,7 @@ function PanelContainerBody({ variant }: { variant: PanelSlot }) {
       isMaximized={maximizedSlot === variant}
       onSaveView={!staticPanel ? handleSaveView : undefined}
     >
-      {content}
+      <Suspense fallback={<PanelChunkFallback />}>{content}</Suspense>
     </SlidePanel>
   );
 }
