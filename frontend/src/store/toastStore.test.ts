@@ -30,4 +30,20 @@ describe('toastStore', () => {
     useToastStore.getState().dismiss(id);
     expect(useToastStore.getState().toasts).toHaveLength(0);
   });
+
+  it('undo toast carries an action and survives past the plain-toast timeout', () => {
+    const onUndo = vi.fn();
+    toast.undo('Approved 3 item(s)', onUndo);
+    const t = useToastStore.getState().toasts[0];
+    expect(t.action?.label).toBe('Undo');
+
+    vi.advanceTimersByTime(4000);
+    expect(useToastStore.getState().toasts).toHaveLength(1);
+
+    t.action?.onClick();
+    expect(onUndo).toHaveBeenCalledOnce();
+
+    vi.advanceTimersByTime(8000);
+    expect(useToastStore.getState().toasts).toHaveLength(0);
+  });
 });

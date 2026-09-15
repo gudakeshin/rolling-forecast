@@ -77,6 +77,11 @@ export async function acceptAiRecommendations(versionId: string): Promise<any> {
   return apiPost('/panel/accept-ai-recommendations', { version_id: versionId });
 }
 
+/** Reverse a review_item / batchReview / acceptAiRecommendations call within its undo window. */
+export async function undoReview(undoToken: string): Promise<any> {
+  return apiPost('/panel/undo-review', { undo_token: undoToken });
+}
+
 export async function rescoreForecasts(versionId: string): Promise<any> {
   return apiPost(`/panel/rescore-forecasts/${versionId}`, {});
 }
@@ -99,4 +104,19 @@ export async function getDriverInputsSummary(versionId: string): Promise<any> {
 
 export async function submitDriverInputs(submission: DriverSubmission): Promise<any> {
   return apiPost('/panel/driver-inputs/submit', submission);
+}
+
+// ─── Line item search (⌘K command palette) ───────────────
+
+export interface LineItemSearchResult {
+  id: number;
+  name: string;
+  account_code: string;
+  category: string;
+  business_unit: string | null;
+}
+
+export async function searchLineItems(q: string, limit = 10): Promise<{ items: LineItemSearchResult[] }> {
+  const qs = new URLSearchParams({ q, limit: String(limit) });
+  return apiGet(`/panel/line-items/search?${qs.toString()}`);
 }

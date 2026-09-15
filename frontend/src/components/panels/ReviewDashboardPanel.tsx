@@ -13,7 +13,7 @@ import {
   DollarSign, BarChart3, PieChart, FileText, Download, Filter,
 } from 'lucide-react';
 import { apiPost } from '../../api/client';
-import { batchReview } from '../../api/dashboard';
+import { batchReview, undoReview } from '../../api/dashboard';
 import { usePanelStore } from '../../store/panelStore';
 import { useCan } from '../../store/authStore';
 import { toast } from '../../store/toastStore';
@@ -985,7 +985,9 @@ export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props
   // Soft poll while review queue is open
   useEffect(() => {
     if (!onRefresh) return;
-    const id = window.setInterval(() => onRefresh(), 60_000);
+    const id = window.setInterval(() => {
+      if (!document.hidden) onRefresh();
+    }, 60_000);
     return () => window.clearInterval(id);
   }, [onRefresh]);
 
@@ -1051,23 +1053,41 @@ export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props
     });
   }, []);
 
+  const handleUndo = useCallback(async (undoToken: string, label: string) => {
+    try {
+      await undoReview(undoToken);
+      toast.success(`Undone: ${label}`);
+      onRefresh?.();
+    } catch (error: any) {
+      toast.error(error?.message || 'Undo failed — the action may be too old to reverse');
+    }
+  }, [onRefresh]);
+
   const handleItemAction = useCallback(async (itemId: string, action: string, comment?: string) => {
     setActioningItem(itemId);
     try {
-      await apiPost('/panel/review-item', { item_id: itemId, action, comment });
+      const res = await apiPost<{ undo_token?: string }>('/panel/review-item', { item_id: itemId, action, comment });
       moveItemsToReviewed([itemId], action, comment);
-      toast.success(action === 'approve' ? 'Item approved' : 'Item rejected');
+      const label = action === 'approve' ? 'Item approved' : 'Item rejected';
+      if (res?.undo_token) {
+        toast.undo(label, () => handleUndo(res.undo_token!, label));
+      } else {
+        toast.success(label);
+      }
     } catch (error: any) {
       toast.error(error?.message || 'Review action failed');
     } finally {
       setActioningItem(null);
     }
-  }, [moveItemsToReviewed]);
+  }, [moveItemsToReviewed, handleUndo]);
 
   const handleAcceptAll = useCallback(async () => {
     setIsAcceptingAll(true);
     try {
-      await apiPost('/panel/accept-ai-recommendations', { version_id: version.id });
+      const res = await apiPost<{ undo_token?: string; approved_count?: number }>(
+        '/panel/accept-ai-recommendations',
+        { version_id: version.id },
+      );
 
       setLocalBuckets((prev) => {
         const approved = prev.ai_approved.items.map((i: ReviewItem) => ({
@@ -1085,13 +1105,18 @@ export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props
           },
         };
       });
-      toast.success('Accepted all AI recommendations');
+      const label = 'Accepted all AI recommendations';
+      if (res?.undo_token) {
+        toast.undo(label, () => handleUndo(res.undo_token!, label));
+      } else {
+        toast.success(label);
+      }
     } catch (error: any) {
       toast.error(error?.message || 'Accept all failed');
     } finally {
       setIsAcceptingAll(false);
     }
-  }, [version.id]);
+  }, [version.id, handleUndo]);
 
   const selectableBucket = activeBucket === 'flagged' || activeBucket === 'needs_review';
   const activeItems = localBuckets[activeBucket].items;
@@ -1142,12 +1167,17 @@ export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props
     if (!ids.length) return;
     setBatchBusy(true);
     try {
-      await batchReview(version.id, ids, action, batchComment.trim() || undefined);
+      const res = await batchReview(version.id, ids, action, batchComment.trim() || undefined);
       moveItemsToReviewed(ids, action, batchComment.trim() || undefined);
       setSelectedIds(new Set());
       setBatchRejecting(false);
       setBatchComment('');
-      toast.success(`${action === 'approve' ? 'Approved' : 'Rejected'} ${ids.length} item(s)`);
+      const label = `${action === 'approve' ? 'Approved' : 'Rejected'} ${ids.length} item(s)`;
+      if (res?.undo_token) {
+        toast.undo(label, () => handleUndo(res.undo_token!, label));
+      } else {
+        toast.success(label);
+      }
     } catch (e: any) {
       toast.error(e?.message || 'Batch review failed');
     } finally {

@@ -40,6 +40,18 @@ export function ToastHost() {
           >
             <Icon className={`w-4 h-4 mt-0.5 flex-shrink-0 ${style.iconClass}`} />
             <p className="flex-1 text-sm text-white leading-snug">{t.message}</p>
+            {t.action && (
+              <button
+                type="button"
+                onClick={() => {
+                  t.action?.onClick();
+                  dismiss(t.id);
+                }}
+                className="text-sm font-medium text-deloitte-green hover:text-deloitte-green-dark transition-colors flex-shrink-0"
+              >
+                {t.action.label}
+              </button>
+            )}
             <button
               type="button"
               onClick={() => dismiss(t.id)}

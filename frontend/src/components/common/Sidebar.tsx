@@ -1,53 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
-import {
-  LayoutDashboard,
-  Table,
-  Edit,
-  GitCompare,
-  Shield,
-  CheckSquare,
-  AlertTriangle,
-  Target,
-  Sparkles,
-  Brain,
-  GitBranch,
-  FileInput,
-  Activity,
-  FolderOpen,
-  Settings2,
-  MessagesSquare,
-  MessageSquarePlus,
-  Trash2,
-  Loader2,
-  Bookmark,
-} from 'lucide-react';
-import { useAuthStore, useCan } from '../../store/authStore';
+import { LayoutDashboard, MessagesSquare, MessageSquarePlus, Trash2, Loader2, Bookmark } from 'lucide-react';
 import { usePanelStore, useSecondaryPanelStore } from '../../store/panelStore';
 import { useSavedViewsStore } from '../../store/savedViewsStore';
-import { useVersionStore } from '../../store/versionStore';
 import { useChatStore } from '../../store/chatStore';
 import { getConversation, getConversations, deleteConversation } from '../../api/chat';
 import { toast } from '../../store/toastStore';
+import { confirmDialog } from '../../store/confirmStore';
 import { useI18n } from '../../i18n/useI18n';
-import type { MessageKey } from '../../i18n';
+import { useNavItems } from '../../hooks/useNavItems';
 import type { Conversation } from '../../types/chat';
-
-interface NavItem {
-  key: string;
-  labelKey: MessageKey;
-  icon: typeof Table;
-  show: boolean;
-  onClick: () => void;
-}
-
-interface NavGroup {
-  titleKey: MessageKey;
-  items: NavItem[];
-}
 
 export function Sidebar() {
   const { t } = useI18n();
-  const user = useAuthStore((s) => s.user);
   const activePanel = usePanelStore((s) => s.panelType);
   const isPanelOpen = usePanelStore((s) => s.isOpen);
   const openPanel = usePanelStore((s) => s.openPanel);
@@ -55,164 +19,7 @@ export function Sidebar() {
   const isPinnedOpen = useSecondaryPanelStore((s) => s.isOpen);
   const isPanelTypeOpen = (key: string) =>
     (isPanelOpen && activePanel === key) || (isPinnedOpen && pinnedPanelType === key);
-  const versions = useVersionStore((s) => s.versions);
-  const activeVersionId = useVersionStore((s) => s.activeVersionId);
-  const activeScenario = useVersionStore((s) => s.activeScenario);
-
-  const canGenerate = useCan('can_generate');
-  const canOverride = useCan('can_override');
-  const canReview = useCan('can_review');
-  const canInput = useCan('can_input');
-  const canPublish = useCan('can_publish');
-  const canAdmin = useCan('can_admin');
-  const canManageDrivers = useCan('can_manage_drivers');
-  const isAdminRole = canAdmin || user?.role_name === 'admin';
-
-  const scenarioVersions = versions.filter((v) => (v.scenario || 'base') === activeScenario);
-  const compareTargetId = scenarioVersions.find((v) => v.id !== activeVersionId)?.id ?? null;
-
-  const open = (panel: string, params: Record<string, any> = {}) => () => openPanel(panel, params);
-
-  const groups: NavGroup[] = [
-    {
-      titleKey: 'nav.group.forecast',
-      items: [
-        {
-          key: 'forecast_table',
-          labelKey: 'nav.forecast',
-          icon: Table,
-          show: canGenerate || canReview,
-          onClick: open('forecast_table'),
-        },
-        {
-          key: 'overrides',
-          labelKey: 'nav.overrides',
-          icon: Edit,
-          show: canOverride,
-          onClick: open('overrides'),
-        },
-        {
-          key: 'comparison',
-          labelKey: 'nav.comparison',
-          icon: GitCompare,
-          show: (canGenerate || canReview) && Boolean(activeVersionId && compareTargetId),
-          onClick: open('comparison', {
-            version_id_a: activeVersionId,
-            version_id_b: compareTargetId,
-          }),
-        },
-      ],
-    },
-    {
-      titleKey: 'nav.group.review',
-      items: [
-        {
-          key: 'review_dashboard',
-          labelKey: 'nav.review',
-          icon: Shield,
-          show: canReview,
-          onClick: open('review_dashboard'),
-        },
-        {
-          key: 'approvals',
-          labelKey: 'nav.approvals',
-          icon: CheckSquare,
-          show: canReview || canPublish,
-          onClick: open('approvals'),
-        },
-        {
-          key: 'anomaly_dashboard',
-          labelKey: 'nav.anomalies',
-          icon: AlertTriangle,
-          show: canReview,
-          onClick: open('anomaly_dashboard'),
-        },
-      ],
-    },
-    {
-      titleKey: 'nav.group.intelligence',
-      items: [
-        {
-          key: 'accuracy_tracking',
-          labelKey: 'nav.accuracy',
-          icon: Target,
-          show: canReview || canGenerate,
-          onClick: open('accuracy_tracking'),
-        },
-        {
-          key: 'explainability',
-          labelKey: 'nav.explain',
-          icon: Sparkles,
-          show: canReview || canGenerate,
-          onClick: open('explainability'),
-        },
-        {
-          key: 'heuristics',
-          labelKey: 'nav.heuristics',
-          icon: Brain,
-          show: canReview || canAdmin,
-          onClick: open('heuristics'),
-        },
-        {
-          key: 'what_if',
-          labelKey: 'nav.whatIf',
-          icon: GitBranch,
-          show: canGenerate,
-          onClick: open('what_if'),
-        },
-      ],
-    },
-    {
-      titleKey: 'nav.group.inputs',
-      items: [
-        {
-          key: 'driver_inputs',
-          labelKey: 'nav.drivers',
-          icon: FileInput,
-          show: canInput,
-          onClick: open('driver_inputs'),
-        },
-        {
-          key: 'drivers',
-          labelKey: 'nav.causalDrivers',
-          icon: Activity,
-          show: canManageDrivers || isAdminRole,
-          onClick: open('drivers'),
-        },
-      ],
-    },
-    {
-      titleKey: 'nav.group.library',
-      items: [
-        {
-          key: 'document_library',
-          labelKey: 'nav.documents',
-          icon: FolderOpen,
-          show: true,
-          onClick: open('document_library'),
-        },
-      ],
-    },
-    {
-      titleKey: 'nav.group.admin',
-      items: [
-        {
-          key: 'skill_editor',
-          labelKey: 'nav.skills',
-          icon: Settings2,
-          show: isAdminRole,
-          onClick: open('skill_editor'),
-        },
-        {
-          key: 'admin_console',
-          labelKey: 'nav.admin',
-          icon: Shield,
-          show: isAdminRole,
-          onClick: open('admin_console'),
-        },
-      ],
-    },
-  ];
+  const groups = useNavItems();
 
   return (
     <nav
@@ -222,7 +29,7 @@ export function Sidebar() {
       <div className="p-2.5 pt-3.5">
         <button
           type="button"
-          onClick={open('executive_dashboard')}
+          onClick={() => openPanel('executive_dashboard', {})}
           className={`w-full flex items-center gap-2 px-2.5 py-2.5 rounded-xl text-[13px] font-bold transition-colors mb-3 ${
             isPanelTypeOpen('executive_dashboard')
               ? 'bg-deloitte-green/12 text-deloitte-green'
@@ -370,7 +177,10 @@ function RecentChats() {
   const handleDelete = async (c: Conversation, e: React.MouseEvent) => {
     e.stopPropagation();
     if (isStreaming || deletingId) return;
-    const ok = window.confirm(t('sidebar.deleteConfirm', { title: c.title || t('sidebar.untitled') }));
+    const ok = await confirmDialog(
+      t('sidebar.deleteConfirm', { title: c.title || t('sidebar.untitled') }),
+      { title: t('sidebar.deleteConfirmTitle'), confirmLabel: t('sidebar.delete'), danger: true },
+    );
     if (!ok) return;
     setDeletingId(c.id);
     try {

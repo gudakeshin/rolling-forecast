@@ -6,6 +6,8 @@ import { AppLayout } from './components/common/AppLayout';
 import { LoginForm } from './components/common/LoginForm';
 import { PanelUrlSync } from './components/common/PanelUrlSync';
 import { ToastHost } from './components/ui/ToastHost';
+import { ConfirmDialogHost } from './components/ui/ConfirmDialogHost';
+import { CommandPalette } from './components/common/CommandPalette';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import type { TokenResponse } from './types/auth';
 
@@ -117,6 +119,8 @@ export default function App() {
         <AuthBootstrap />
         <PanelUrlSync />
         <ToastHost />
+        <ConfirmDialogHost />
+        <CommandPalette />
         <Routes>
           <Route path="/login" element={<LoginForm />} />
           {/* Executive Dashboard and Admin Console are now slide-over panels,

@@ -1,10 +1,13 @@
-import { LogOut, Languages, Menu, X } from 'lucide-react';
+import { LogOut, Languages, Menu, Search, X } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { useVersionStore } from '../../store/versionStore';
 import { useChatStore } from '../../store/chatStore';
+import { useCommandPaletteStore } from '../../store/commandPaletteStore';
 import { useI18n } from '../../i18n/useI18n';
 import type { Locale } from '../../i18n';
 import { NotificationBell } from './NotificationBell';
+
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 export function Header() {
   const user = useAuthStore((s) => s.user);
@@ -16,6 +19,7 @@ export function Header() {
   const setActiveScenario = useVersionStore((s) => s.setActiveScenario);
   const sidebarExpanded = useChatStore((s) => s.sidebarExpanded);
   const toggleSidebar = useChatStore((s) => s.toggleSidebar);
+  const openCommandPalette = useCommandPaletteStore((s) => s.open);
   const { t, locale, setLocale } = useI18n();
 
   const scenarios = Array.from(new Set(versions.map((v) => v.scenario || 'base'))).sort();
@@ -86,6 +90,18 @@ export function Header() {
       </div>
 
       <div className="flex items-center gap-1 sm:gap-2.5">
+        <button
+          type="button"
+          onClick={openCommandPalette}
+          className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-surface-400 hover:text-deloitte-green hover:bg-surface-700/40 transition-colors"
+          title={t('palette.trigger')}
+          aria-label={t('palette.trigger')}
+        >
+          <Search className="w-3.5 h-3.5" aria-hidden="true" />
+          <kbd className="text-[10px] font-mono border border-surface-700 rounded px-1 py-0.5">
+            {isMac ? '⌘K' : 'Ctrl K'}
+          </kbd>
+        </button>
         <NotificationBell />
         <button
           type="button"

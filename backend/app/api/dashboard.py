@@ -1,7 +1,7 @@
 """Dashboard and analytics endpoints for side panel views."""
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import numpy as np
@@ -19,6 +19,7 @@ from app.models.line_item import LineItem, LineItemDependency
 from app.models.actuals import ActualsRecord
 from app.models.override import Override
 from app.models.anomaly_dismissal import AnomalyDismissal
+from app.models.review_undo import ReviewUndoSnapshot
 from app.schemas.forecast import PanelDataResponse
 from app.services.permissions import line_item_scope_filter, require_permission, scoped_line_items
 
@@ -1356,6 +1357,51 @@ async def get_review_dashboard(
 # Review Actions (per-item and batch)
 # ──────────────────────────────────────────────────
 
+# How long a batch/single review action stays reversible. Comfortably longer
+# than the frontend's undo toast so a slow click never races the expiry.
+REVIEW_UNDO_TTL_SECONDS = 30
+
+
+def _snapshot_review_state(rows: list[ForecastLineResult]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": r.id,
+            "review_status": r.review_status,
+            "review_comment": r.review_comment,
+            "reviewed_by": r.reviewed_by,
+            "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
+        }
+        for r in rows
+    ]
+
+
+def _create_undo_snapshot(
+    db: Session,
+    *,
+    version_id: str,
+    actor_id: str,
+    action: str,
+    description: str,
+    prior_state: list[dict[str, Any]],
+) -> str:
+    """Persist an already-captured pre-mutation ``prior_state`` and return an undo token.
+
+    ``prior_state`` must come from ``_snapshot_review_state`` called BEFORE the
+    caller mutates its rows — the ORM objects are mutated in place, so
+    snapshotting them after the fact would just record the new values.
+    """
+    snapshot = ReviewUndoSnapshot(
+        version_id=version_id,
+        actor_id=actor_id,
+        action=action,
+        description=description,
+        prior_state=prior_state,
+        expires_at=datetime.now(timezone.utc) + timedelta(seconds=REVIEW_UNDO_TTL_SECONDS),
+    )
+    db.add(snapshot)
+    db.flush()
+    return snapshot.id
+
 
 class ReviewItemRequest(BaseModel):
     """Request to review a single forecast line item."""
@@ -1375,6 +1421,11 @@ class BatchReviewRequest(BaseModel):
 class AcceptAIRequest(BaseModel):
     """Accept all AI-approved items at once."""
     version_id: str
+
+
+class UndoReviewRequest(BaseModel):
+    """Reverse a previous review_item / batch_review / accept_ai_recommendations call."""
+    undo_token: str
 
 
 @router.post("/review-item")
@@ -1407,6 +1458,15 @@ async def review_item(
         .all()
     )
 
+    undo_token = _create_undo_snapshot(
+        db,
+        version_id=result.version_id,
+        actor_id=current_user.id,
+        action="review_item",
+        description=f"{request.action.title()}d line item",
+        prior_state=_snapshot_review_state(all_periods),
+    )
+
     now = datetime.now(timezone.utc)
     for r in all_periods:
         r.review_status = request.action
@@ -1429,6 +1489,7 @@ async def review_item(
         "success": True,
         "message": f"{request.action.title()}d {len(all_periods)} period(s) for line item",
         "affected_count": len(all_periods),
+        "undo_token": undo_token,
     }
 
 
@@ -1443,6 +1504,7 @@ async def batch_review(
 
     now = datetime.now(timezone.utc)
     total_affected = 0
+    prior_state: list[dict[str, Any]] = []
 
     for item_id in request.item_ids:
         result = db.query(ForecastLineResult).filter(
@@ -1459,6 +1521,8 @@ async def batch_review(
             )
             .all()
         )
+        # Snapshot before mutating — these ORM objects are overwritten in place.
+        prior_state.extend(_snapshot_review_state(all_periods))
 
         for r in all_periods:
             r.review_status = request.action
@@ -1467,6 +1531,19 @@ async def batch_review(
             r.reviewed_at = now
 
         total_affected += len(all_periods)
+
+    undo_token = (
+        _create_undo_snapshot(
+            db,
+            version_id=request.version_id,
+            actor_id=current_user.id,
+            action="batch_review",
+            description=f"{request.action.title()}d {len(request.item_ids)} line item(s)",
+            prior_state=prior_state,
+        )
+        if prior_state
+        else None
+    )
 
     record_audit(
         db,
@@ -1488,6 +1565,7 @@ async def batch_review(
         "message": f"{request.action.title()}d {len(request.item_ids)} line items ({total_affected} periods)",
         "items_reviewed": len(request.item_ids),
         "periods_affected": total_affected,
+        "undo_token": undo_token,
     }
 
 
@@ -1512,6 +1590,19 @@ async def accept_ai_recommendations(
         .all()
     )
 
+    undo_token = (
+        _create_undo_snapshot(
+            db,
+            version_id=request.version_id,
+            actor_id=current_user.id,
+            action="accept_ai_recommendations",
+            description=f"Auto-approved {len(ai_approved)} line-period(s)",
+            prior_state=_snapshot_review_state(ai_approved),
+        )
+        if ai_approved
+        else None
+    )
+
     for r in ai_approved:
         r.review_status = "approved"
         r.review_comment = "Auto-approved based on AI recommendation"
@@ -1533,6 +1624,84 @@ async def accept_ai_recommendations(
         "success": True,
         "message": f"Auto-approved {len(ai_approved)} line-periods based on AI analysis",
         "approved_count": len(ai_approved),
+        "undo_token": undo_token,
+    }
+
+
+@router.post("/undo-review")
+async def undo_review(
+    request: UndoReviewRequest,
+    current_user: User = Depends(require_permission("review")),
+    db: Session = Depends(get_db),
+):
+    """Reverse a review_item / batch_review / accept_ai_recommendations call.
+
+    Restores every touched ForecastLineResult to its exact pre-action state
+    (including back to "never reviewed" when that was the prior state) within
+    the token's short window. One-shot: a consumed or expired token 404s/409s
+    rather than silently no-op-ing, so the frontend can tell the analyst why
+    the undo button stopped working.
+    """
+    from app.services.audit import record_audit
+
+    snapshot = db.query(ReviewUndoSnapshot).filter(
+        ReviewUndoSnapshot.id == request.undo_token
+    ).first()
+    if not snapshot:
+        raise HTTPException(
+            status_code=404, detail="Nothing to undo — this action can no longer be reversed"
+        )
+    if snapshot.actor_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You can only undo your own actions")
+    if snapshot.consumed_at is not None:
+        raise HTTPException(status_code=409, detail="This action has already been undone")
+
+    expires_at = snapshot.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=410, detail="The undo window for this action has expired")
+
+    prior_by_id = {row["id"]: row for row in snapshot.prior_state}
+    touched = (
+        db.query(ForecastLineResult)
+        .filter(ForecastLineResult.id.in_(list(prior_by_id.keys())))
+        .all()
+    )
+    restored = 0
+    for r in touched:
+        prior = prior_by_id.get(r.id)
+        if prior is None:
+            continue
+        r.review_status = prior["review_status"]
+        r.review_comment = prior["review_comment"]
+        r.reviewed_by = prior["reviewed_by"]
+        r.reviewed_at = (
+            datetime.fromisoformat(prior["reviewed_at"]) if prior["reviewed_at"] else None
+        )
+        restored += 1
+
+    snapshot.consumed_at = datetime.now(timezone.utc)
+
+    record_audit(
+        db,
+        action="review.undo",
+        entity_type="forecast_version",
+        entity_id=snapshot.version_id,
+        actor_id=current_user.id,
+        actor_username=current_user.username,
+        details={
+            "undo_token": request.undo_token,
+            "original_action": snapshot.action,
+            "restored_count": restored,
+        },
+    )
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Undone: {snapshot.description}",
+        "restored_count": restored,
     }
 
 
@@ -2817,3 +2986,40 @@ async def undismiss_anomaly(
     )
     db.commit()
     return {"success": True, "anomaly_id": body.anomaly_id, "was_dismissed": bool(deleted)}
+
+
+# ──────────────────────────────────────────────────
+# Line item search (⌘K command palette "jump to line item")
+# ──────────────────────────────────────────────────
+
+@router.get("/line-items/search")
+async def search_line_items(
+    q: str = "",
+    limit: int = 10,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Small, BU-scoped line item lookup for the command palette — not a full listing."""
+    q = q.strip()
+    if not q:
+        return {"items": []}
+
+    capped_limit = max(1, min(limit, 25))
+    query = db.query(LineItem).filter(
+        (LineItem.name.ilike(f"%{q}%")) | (LineItem.account_code.ilike(f"%{q}%"))
+    )
+    query = line_item_scope_filter(query, current_user, LineItem)
+    rows = query.order_by(LineItem.name).limit(capped_limit).all()
+
+    return {
+        "items": [
+            {
+                "id": li.id,
+                "name": li.name,
+                "account_code": li.account_code,
+                "category": li.category,
+                "business_unit": li.business_unit,
+            }
+            for li in rows
+        ],
+    }
