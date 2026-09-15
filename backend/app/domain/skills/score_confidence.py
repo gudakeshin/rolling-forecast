@@ -3,13 +3,12 @@
 import logging
 from typing import Any
 
-import numpy as np
 from sqlalchemy.orm import Session
 
 from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.models.forecast import ForecastVersion, ForecastLineResult
-from app.models.line_item import LineItem
 from app.config import settings
+from app.services.confidence import compute_confidence_score, classify_confidence
 
 logger = logging.getLogger(__name__)
 
@@ -84,17 +83,17 @@ class ScoreConfidenceSkill(BaseSkill):
         low_confidence_items = []
 
         for result in line_results:
-            score = self._compute_confidence_score(result)
+            score = compute_confidence_score(result)
             result.confidence_score = score
+            result.confidence_level = classify_confidence(
+                score, threshold_low=threshold_low, threshold_medium=threshold_medium
+            )
 
-            if score >= threshold_medium:
-                result.confidence_level = "high"
+            if result.confidence_level == "high":
                 high_count += 1
-            elif score >= threshold_low:
-                result.confidence_level = "medium"
+            elif result.confidence_level == "medium":
                 medium_count += 1
             else:
-                result.confidence_level = "low"
                 low_count += 1
                 # Track for summary
                 if result.line_item:
@@ -205,47 +204,5 @@ class ScoreConfidenceSkill(BaseSkill):
         )
 
     def _compute_confidence_score(self, result: ForecastLineResult) -> float:
-        """
-        Compute composite confidence score (0-100) for a forecast line.
-        
-        Blends:
-        - Model fit (MAPE) -- weight 40%
-        - Prediction interval width -- weight 25%
-        - Data quality / completeness -- weight 20%
-        - Historical volatility -- weight 15%
-        """
-        scores = []
-        weights = []
-
-        # 1. Model MAPE score (lower MAPE = higher score)
-        if result.model_mape is not None and result.model_mape > 0:
-            mape_score = max(0, 100 - result.model_mape * 5)  # 20% MAPE -> score 0
-            scores.append(mape_score)
-            weights.append(0.40)
-
-        # 2. Prediction interval width (narrower = higher confidence)
-        if result.p10 is not None and result.p90 is not None and result.p50 != 0:
-            interval_width = abs(result.p90 - result.p10)
-            relative_width = interval_width / (abs(result.p50) + 1e-10)
-            width_score = max(0, 100 - relative_width * 100)
-            scores.append(width_score)
-            weights.append(0.25)
-
-        # 3. R-squared score
-        if result.model_r_squared is not None:
-            r2_score = max(0, result.model_r_squared * 100)
-            scores.append(r2_score)
-            weights.append(0.20)
-
-        # 4. Base score from model type (simpler models get lower base confidence)
-        model_base = {"prophet": 65, "arima": 60, "ets": 55, "linear": 40}
-        base = model_base.get(result.model_type, 50)
-        scores.append(base)
-        weights.append(0.15)
-
-        if not scores:
-            return 50.0  # Default medium confidence
-
-        total_weight = sum(weights)
-        weighted_score = sum(s * w for s, w in zip(scores, weights)) / total_weight
-        return round(max(0, min(100, weighted_score)), 1)
+        """Delegate to shared scorer (kept for any subclass/test that calls it)."""
+        return compute_confidence_score(result)

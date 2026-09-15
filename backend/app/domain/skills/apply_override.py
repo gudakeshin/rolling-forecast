@@ -15,7 +15,6 @@ from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.models.forecast import ForecastVersion, ForecastLineResult
 from app.models.line_item import LineItem
 from app.models.override import Override
-from app.services.dependency_graph import DependencyGraphManager
 from app.services.error_handlers import OverrideValidator, check_concurrent_override
 
 logger = logging.getLogger(__name__)
@@ -111,17 +110,32 @@ class ApplyOverrideSkill(BaseSkill):
             return SkillResult.fail(f"Forecast version '{version_id}' not found.")
 
         if version.status not in ("draft", "in_review"):
-            return SkillResult.fail(
-                f"Cannot override a '{version.status}' forecast. Only draft or in_review versions can be modified."
-            )
+            # SOX immutability: clone a new editable draft instead of mutating published snapshots
+            from app.services.versioning import ensure_editable_version
 
-        # Find the line item
+            try:
+                version, cloned = ensure_editable_version(
+                    db, version, user_id=context.user_id, clone_if_locked=True
+                )
+                version_id = version.id
+                if cloned:
+                    context.context_manager.set_memory("active_version_id", version_id)
+            except ValueError as e:
+                return SkillResult.fail(str(e))
+
+        # Acquire edit locks for concurrent safety
+        from app.services.locks import acquire_lock, release_lock, LockConflictError
+
+        # Find the line item (BU-scoped)
+        from app.services.permissions import resolve_skill_user, scoped_line_items, user_can_view_line_item
+
         line_item_name = params.get("line_item_name", "")
         if not line_item_name:
             return SkillResult.fail("Please specify which line item to override.")
 
+        actor = resolve_skill_user(context)
         line_item = (
-            db.query(LineItem)
+            scoped_line_items(db, actor)
             .filter(
                 (LineItem.name.ilike(f"%{line_item_name}%"))
                 | (LineItem.account_code.ilike(f"%{line_item_name}%"))
@@ -131,6 +145,10 @@ class ApplyOverrideSkill(BaseSkill):
         if not line_item:
             return SkillResult.fail(
                 f"Line item '{line_item_name}' not found. Use the query skill to list available line items."
+            )
+        if not user_can_view_line_item(actor, line_item):
+            return SkillResult.fail(
+                f"You do not have access to line item '{line_item_name}'."
             )
 
         period = params.get("period")
@@ -173,7 +191,7 @@ class ApplyOverrideSkill(BaseSkill):
             )
 
         # EC6: Validate override value (soft warnings)
-        override_warnings = []
+        override_warnings: list[dict[str, str]] = []
         for r in results:
             warnings = OverrideValidator.validate(
                 line_item_name=line_item.name,
@@ -195,54 +213,96 @@ class ApplyOverrideSkill(BaseSkill):
             if concurrent:
                 concurrent_notices.append(concurrent)
 
-        # Apply overrides
-        dag = DependencyGraphManager(db)
+        # Apply locks
+        locked_periods = []
+        try:
+            for line_result in results:
+                acquire_lock(
+                    version_id,
+                    line_item.id,
+                    line_result.period,
+                    context.user_id,
+                    username=getattr(getattr(context, "user", None), "username", None),
+                )
+                locked_periods.append(line_result.period)
+        except LockConflictError as e:
+            for p in locked_periods:
+                release_lock(version_id, line_item.id, p, context.user_id)
+            return SkillResult.fail(str(e))
+
+        # Apply overrides on the (possibly cloned) draft version
+        from app.services.overrides import recalculate_and_reconcile
+
         overrides_created = []
         total_recalc = 0
+        touched_periods: list[str] = []
 
-        for line_result in results:
-            original_value = line_result.p50
+        try:
+            for line_result in results:
+                original_value = (
+                    line_result.override_value
+                    if line_result.is_overridden
+                    else line_result.p50
+                )
 
-            # Create override record
-            override = Override(
-                version_id=version_id,
-                line_item_id=line_item.id,
-                period=line_result.period,
-                original_model_value=original_value,
-                override_value=new_value,
-                reason=reason,
-                carry_forward=carry_forward,
-                user_id=context.user_id,
-                status="active",
+                override = Override(
+                    version_id=version_id,
+                    line_item_id=line_item.id,
+                    period=line_result.period,
+                    original_model_value=original_value,
+                    override_value=new_value,
+                    reason=reason,
+                    carry_forward=carry_forward,
+                    user_id=context.user_id,
+                    status="active",
+                )
+                db.add(override)
+
+                line_result.is_overridden = True
+                line_result.override_value = new_value
+                touched_periods.append(line_result.period)
+
+                overrides_created.append({
+                    "period": line_result.period,
+                    "original": original_value,
+                    "new": new_value,
+                    "override": override,
+                })
+
+            # One batched recalc + MinT pass for all touched periods
+            total_recalc = recalculate_and_reconcile(
+                db, version_id, [line_item.id], touched_periods or None
             )
-            db.add(override)
+            for row in overrides_created:
+                row["override"].downstream_recalc_count = total_recalc
+                row["recalculated"] = total_recalc
+                del row["override"]
 
-            # Update the forecast result
-            line_result.is_overridden = True
-            line_result.override_value = new_value
-
-            # Recalculate downstream dependents
-            recalc_count = dag.recalculate_dependents(
-                version_id, line_item.id, [line_result.period]
+            version.override_count = (
+                db.query(Override)
+                .filter(Override.version_id == version_id, Override.status == "active")
+                .count()
             )
-            override.downstream_recalc_count = recalc_count
-            total_recalc += recalc_count
 
-            overrides_created.append({
-                "period": line_result.period,
-                "original": original_value,
-                "new": new_value,
-                "recalculated": recalc_count,
-            })
+            from app.services.audit import record_audit
 
-        # Update version override count
-        version.override_count = (
-            db.query(Override)
-            .filter(Override.version_id == version_id, Override.status == "active")
-            .count()
-        )
-
-        db.commit()
+            record_audit(
+                db,
+                action="forecast.override",
+                entity_type="forecast_version",
+                entity_id=version_id,
+                actor_id=context.user_id,
+                details={
+                    "line_item": line_item.name,
+                    "periods": [o["period"] for o in overrides_created],
+                    "new_value": new_value,
+                    "reason": reason,
+                },
+            )
+            db.commit()
+        finally:
+            for p in locked_periods:
+                release_lock(version_id, line_item.id, p, context.user_id)
 
         # Build response
         rows = []
@@ -284,13 +344,11 @@ class ApplyOverrideSkill(BaseSkill):
             self._text_block(f"Reason: _{reason}_")
         )
 
-        # EC6: Show override validation warnings
         for w in override_warnings:
             content_blocks.append(
                 self._text_block(f"**{w['level'].title()}:** {w['message']}")
             )
 
-        # EC10: Show concurrent override notices
         for notice in concurrent_notices:
             content_blocks.append(
                 self._text_block(f"**Concurrent Edit:** {notice['message']}")
@@ -312,6 +370,9 @@ class ApplyOverrideSkill(BaseSkill):
         self, db: Session, params: dict[str, Any], context: SkillContext
     ) -> SkillResult:
         """Revert an existing override."""
+        from app.services.overrides import revert_override
+        from app.services.permissions import resolve_skill_user, scoped_line_items
+
         override_id = params.get("override_id")
         version_id = params.get("version_id") or context.context_manager.get_active_version_id()
 
@@ -326,10 +387,10 @@ class ApplyOverrideSkill(BaseSkill):
                 return SkillResult.fail(f"Override '{override_id}' not found.")
             overrides_to_revert.append(override)
         else:
-            # Find by line item
             line_item_name = params.get("line_item_name", "")
+            actor = resolve_skill_user(context)
             line_item = (
-                db.query(LineItem)
+                scoped_line_items(db, actor)
                 .filter(
                     (LineItem.name.ilike(f"%{line_item_name}%"))
                     | (LineItem.account_code.ilike(f"%{line_item_name}%"))
@@ -352,41 +413,24 @@ class ApplyOverrideSkill(BaseSkill):
         if not overrides_to_revert:
             return SkillResult.fail("No active overrides found to revert.")
 
-        from datetime import datetime, timezone
+        actor = resolve_skill_user(context)
+        # Minimal user-like object for service (id + username)
+        class _Actor:
+            def __init__(self, u):
+                self.id = u.id if u else context.user_id
+                self.username = getattr(u, "username", None) or context.user_id or "system"
 
-        dag = DependencyGraphManager(db)
+        user = _Actor(actor)
         reverted_periods = []
         total_recalc = 0
 
         for override in overrides_to_revert:
-            # Revert the forecast result
-            line_result = (
-                db.query(ForecastLineResult)
-                .filter(
-                    ForecastLineResult.version_id == override.version_id,
-                    ForecastLineResult.line_item_id == override.line_item_id,
-                    ForecastLineResult.period == override.period,
-                )
-                .first()
-            )
-
-            if line_result:
-                line_result.is_overridden = False
-                line_result.override_value = None
-                line_result.p50 = override.original_model_value
-
-                # Recalculate downstream
-                recalc_count = dag.recalculate_dependents(
-                    override.version_id, override.line_item_id, [override.period]
-                )
-                total_recalc += recalc_count
-
-            override.status = "reverted"
-            override.reverted_at = datetime.now(timezone.utc)
-            override.reverted_by = context.user_id
-            reverted_periods.append(override.period)
-
-        db.commit()
+            try:
+                result = revert_override(db, override.id, user)
+                total_recalc += result.get("downstream_recalc", 0)
+                reverted_periods.append(override.period)
+            except Exception as e:
+                return SkillResult.fail(str(getattr(e, "detail", None) or e))
 
         line_item = db.query(LineItem).filter(LineItem.id == overrides_to_revert[0].line_item_id).first()
 

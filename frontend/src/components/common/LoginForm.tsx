@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
+import { useVersionStore } from '../../store/versionStore';
 import { apiPost } from '../../api/client';
 import type { TokenResponse } from '../../types/auth';
 import { TrendingUp } from 'lucide-react';
@@ -11,6 +12,8 @@ export function LoginForm() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const login = useAuthStore((s) => s.login);
+  const fetchMe = useAuthStore((s) => s.fetchMe);
+  const hydrateVersions = useVersionStore((s) => s.hydrate);
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -24,6 +27,8 @@ export function LoginForm() {
         password,
       });
       login(response);
+      await fetchMe();
+      void hydrateVersions();
       navigate('/');
     } catch (err: any) {
       setError(err.message || 'Login failed');
@@ -62,29 +67,33 @@ export function LoginForm() {
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
-            <label className="block text-sm font-medium text-surface-300 mb-1.5">
+            <label htmlFor="login-username" className="block text-sm font-medium text-surface-300 mb-1.5">
               Username
             </label>
             <input
+              id="login-username"
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               className="w-full px-4 py-3 bg-surface-800/80 border border-surface-700 rounded-xl text-white placeholder-surface-500 focus:outline-none focus:border-deloitte-green/60 focus:ring-1 focus:ring-deloitte-green/30 transition-all"
               placeholder="Enter username"
+              autoComplete="username"
               required
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-surface-300 mb-1.5">
+            <label htmlFor="login-password" className="block text-sm font-medium text-surface-300 mb-1.5">
               Password
             </label>
             <input
+              id="login-password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="w-full px-4 py-3 bg-surface-800/80 border border-surface-700 rounded-xl text-white placeholder-surface-500 focus:outline-none focus:border-deloitte-green/60 focus:ring-1 focus:ring-deloitte-green/30 transition-all"
               placeholder="Enter password"
+              autoComplete="current-password"
               required
             />
           </div>
@@ -98,10 +107,17 @@ export function LoginForm() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-3 px-4 bg-deloitte-green hover:bg-deloitte-green/90 disabled:bg-surface-700 disabled:text-surface-500 text-black font-semibold rounded-xl transition-all glow-green"
+            className="w-full py-3 px-4 bg-deloitte-green hover:bg-deloitte-green/90 disabled:bg-surface-700 disabled:text-surface-500 text-white font-semibold rounded-xl transition-all glow-green"
           >
             {loading ? 'Signing in...' : 'Sign In'}
           </button>
+
+          <a
+            href="/api/auth/oidc/login"
+            className="block w-full text-center py-2.5 px-4 mt-3 border border-surface-600 text-surface-300 hover:text-white hover:border-deloitte-green/40 rounded-xl text-sm transition-all"
+          >
+            Sign in with SSO
+          </a>
 
           <p className="text-center text-sm text-surface-500 mt-6">
             Demo credentials:{' '}

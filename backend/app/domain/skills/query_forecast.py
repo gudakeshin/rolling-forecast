@@ -10,12 +10,20 @@ from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.models.forecast import ForecastVersion, ForecastLineResult
 from app.models.line_item import LineItem
 from app.models.override import Override
+from app.services.permissions import line_item_scope_filter, resolve_skill_user
 
 logger = logging.getLogger(__name__)
 
 
 class QueryForecastSkill(BaseSkill):
     """Skill to answer natural language questions about forecast data."""
+
+    def _scope(self, query, context: SkillContext):
+        """Apply BU scope to a query already joined to LineItem."""
+        user = resolve_skill_user(context)
+        if user is None:
+            return query
+        return line_item_scope_filter(query, user, LineItem)
 
     @property
     def name(self) -> str:
@@ -87,21 +95,23 @@ class QueryForecastSkill(BaseSkill):
         query_type = params.get("query_type", "version_summary")
 
         if query_type == "version_summary":
-            return await self._version_summary(db, version)
+            return await self._version_summary(db, version, context)
         elif query_type == "category_summary":
-            return await self._category_summary(db, version, params.get("category"))
+            return await self._category_summary(db, version, params.get("category"), context)
         elif query_type == "line_item":
-            return await self._line_item_detail(db, version, params.get("line_item_name", ""))
+            return await self._line_item_detail(db, version, params.get("line_item_name", ""), context)
         elif query_type == "confidence_summary":
-            return await self._confidence_summary(db, version, params.get("confidence_level"))
+            return await self._confidence_summary(db, version, params.get("confidence_level"), context)
         elif query_type == "overrides":
-            return await self._overrides_summary(db, version)
+            return await self._overrides_summary(db, version, context)
         elif query_type == "search":
-            return await self._search(db, version, params.get("search_term", ""))
+            return await self._search(db, version, params.get("search_term", ""), context)
         else:
             return SkillResult.fail(f"Unknown query type: {query_type}")
 
-    async def _version_summary(self, db: Session, version: ForecastVersion) -> SkillResult:
+    async def _version_summary(
+        self, db: Session, version: ForecastVersion, context: SkillContext
+    ) -> SkillResult:
         """High-level summary of the active forecast version."""
         # Get category totals (sum of first forecast month P50)
         first_period = (
@@ -111,16 +121,19 @@ class QueryForecastSkill(BaseSkill):
         )
 
         categories = (
-            db.query(
-                LineItem.category,
-                func.sum(ForecastLineResult.p50).label("total"),
-                func.count(ForecastLineResult.id).label("count"),
-                func.avg(ForecastLineResult.confidence_score).label("avg_confidence"),
-            )
-            .join(LineItem)
-            .filter(
-                ForecastLineResult.version_id == version.id,
-                ForecastLineResult.period == first_period,
+            self._scope(
+                db.query(
+                    LineItem.category,
+                    func.sum(ForecastLineResult.p50).label("total"),
+                    func.count(ForecastLineResult.id).label("count"),
+                    func.avg(ForecastLineResult.confidence_score).label("avg_confidence"),
+                )
+                .join(LineItem)
+                .filter(
+                    ForecastLineResult.version_id == version.id,
+                    ForecastLineResult.period == first_period,
+                ),
+                context,
             )
             .group_by(LineItem.category)
             .all()
@@ -159,13 +172,18 @@ class QueryForecastSkill(BaseSkill):
         )
 
     async def _category_summary(
-        self, db: Session, version: ForecastVersion, category: str | None
+        self,
+        db: Session,
+        version: ForecastVersion,
+        category: str | None,
+        context: SkillContext,
     ) -> SkillResult:
         """Summary for a specific P&L category."""
-        query = (
+        query = self._scope(
             db.query(ForecastLineResult)
             .join(LineItem)
-            .filter(ForecastLineResult.version_id == version.id)
+            .filter(ForecastLineResult.version_id == version.id),
+            context,
         )
         if category:
             query = query.filter(LineItem.category.ilike(f"%{category}%"))
@@ -214,11 +232,13 @@ class QueryForecastSkill(BaseSkill):
         )
 
     async def _line_item_detail(
-        self, db: Session, version: ForecastVersion, name: str
+        self, db: Session, version: ForecastVersion, name: str, context: SkillContext
     ) -> SkillResult:
         """Detailed view of a specific line item across all forecast periods."""
+        from app.services.permissions import scoped_line_items
+
         li = (
-            db.query(LineItem)
+            scoped_line_items(db, resolve_skill_user(context))
             .filter(
                 (LineItem.name.ilike(f"%{name}%"))
                 | (LineItem.account_code.ilike(f"%{name}%"))
@@ -276,13 +296,18 @@ class QueryForecastSkill(BaseSkill):
         )
 
     async def _confidence_summary(
-        self, db: Session, version: ForecastVersion, level: str | None
+        self,
+        db: Session,
+        version: ForecastVersion,
+        level: str | None,
+        context: SkillContext,
     ) -> SkillResult:
         """Show items filtered by confidence level."""
-        query = (
+        query = self._scope(
             db.query(ForecastLineResult)
             .join(LineItem)
-            .filter(ForecastLineResult.version_id == version.id)
+            .filter(ForecastLineResult.version_id == version.id),
+            context,
         )
         if level:
             query = query.filter(ForecastLineResult.confidence_level == level)
@@ -322,13 +347,21 @@ class QueryForecastSkill(BaseSkill):
             content_blocks=content_blocks,
         )
 
-    async def _overrides_summary(self, db: Session, version: ForecastVersion) -> SkillResult:
+    async def _overrides_summary(
+        self, db: Session, version: ForecastVersion, context: SkillContext
+    ) -> SkillResult:
         """Show all overrides for the version."""
+        from app.services.permissions import scoped_line_items
+
+        allowed_ids = {
+            li.id for li in scoped_line_items(db, resolve_skill_user(context)).all()
+        }
         overrides = (
             db.query(Override)
             .filter(Override.version_id == version.id, Override.status == "active")
             .all()
         )
+        overrides = [o for o in overrides if o.line_item_id in allowed_ids]
 
         if not overrides:
             return SkillResult.ok(
@@ -368,11 +401,13 @@ class QueryForecastSkill(BaseSkill):
         )
 
     async def _search(
-        self, db: Session, version: ForecastVersion, term: str
+        self, db: Session, version: ForecastVersion, term: str, context: SkillContext
     ) -> SkillResult:
         """Search for line items matching a term."""
+        from app.services.permissions import scoped_line_items
+
         items = (
-            db.query(LineItem)
+            scoped_line_items(db, resolve_skill_user(context))
             .filter(
                 (LineItem.name.ilike(f"%{term}%"))
                 | (LineItem.account_code.ilike(f"%{term}%"))

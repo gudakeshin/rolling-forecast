@@ -3,15 +3,171 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
 from app.api.auth import get_current_user
 from app.models.user import User
-from app.models.forecast import ForecastVersion, ForecastLineResult
+from app.models.forecast import ForecastVersion, ForecastLineResult, ModelMetadata
+from app.models.fx import ForecastAccuracyRecord
 from app.models.line_item import LineItem
 from app.models.override import Override
-from app.schemas.forecast import PanelDataResponse, ForecastLineResultResponse
+from app.schemas.forecast import PanelDataResponse
+from app.services.audit import record_audit
+from app.services.permissions import require_permission, user_can_view_line_item
 
 router = APIRouter(prefix="/panel", tags=["panel"])
+
+
+from app.services.accuracy_snapshot import realized_coverage_by_line
+from app.services.interval_calibration import DEFAULT_ALPHA
+
+
+def _extract_exog_payload(parameters: dict | None) -> dict | None:
+    """Return a compact exog payload for panel UI, if present."""
+    if not isinstance(parameters, dict):
+        return None
+    exog_spec = parameters.get("exog_spec")
+    if not isinstance(exog_spec, dict):
+        return None
+    return {
+        "mode": exog_spec.get("mode"),
+        "columns": exog_spec.get("columns") or [],
+        "drivers": exog_spec.get("drivers") or [],
+        "exog_mode_scores": exog_spec.get("exog_mode_scores"),
+    }
+
+
+def _extract_calibration_payload(parameters: dict | None) -> dict | None:
+    """Compact interval-calibration payload for the panel UI, if present.
+
+    Absent means the published band is the engine's own analytic interval, which
+    the UI should say plainly rather than implying a calibration that never ran.
+    """
+    if not isinstance(parameters, dict):
+        return None
+    cal = parameters.get("interval_calibration")
+    if not isinstance(cal, dict):
+        return None
+    return {
+        "method": cal.get("method"),
+        "n_residuals": cal.get("n_residuals"),
+        "scale": cal.get("scale"),
+        "calibrated_steps": cal.get("calibrated_steps"),
+        "extrapolated_steps": cal.get("extrapolated_steps"),
+        # Non-empty means the point sat outside its own earned band — i.e. the
+        # model is biased enough to matter. Worth showing, not worth hiding.
+        "bias_clamped_steps": cal.get("bias_clamped_steps"),
+        "saturated_horizons": cal.get("saturated_horizons") or [],
+    }
+
+
+def _version_payload(v: ForecastVersion) -> dict:
+    return {
+        "id": v.id,
+        "name": v.name,
+        "label": v.label,
+        "status": v.status,
+        "version_type": v.version_type,
+        "scenario": getattr(v, "scenario", None) or "base",
+        "horizon_months": v.horizon_months,
+        "base_period": v.base_period,
+        "total_line_items": v.total_line_items,
+        "high_confidence_count": v.high_confidence_count or 0,
+        "medium_confidence_count": v.medium_confidence_count or 0,
+        "low_confidence_count": v.low_confidence_count or 0,
+        "override_count": v.override_count or 0,
+        "generation_time_seconds": v.generation_time_seconds,
+        "created_at": v.created_at.isoformat() if v.created_at else None,
+    }
+
+
+@router.get("/versions")
+async def list_versions(
+    limit: int = Query(50, ge=1, le=200),
+    scenario: str | None = Query(None, description="Filter by scenario label (e.g. base, upside)"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List recent forecast versions (newest first) for the version picker."""
+    q = db.query(ForecastVersion).filter(ForecastVersion.status != "archived")
+    if scenario:
+        q = q.filter(ForecastVersion.scenario == scenario)
+    versions = q.order_by(ForecastVersion.created_at.desc()).limit(limit).all()
+    return [_version_payload(v) for v in versions]
+
+
+@router.get("/version/{version_id}")
+async def get_version_detail(
+    version_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get a single forecast version by id."""
+    v = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
+    if not v:
+        raise HTTPException(status_code=404, detail="Forecast version not found")
+    return _version_payload(v)
+
+
+@router.delete("/version/{version_id}")
+async def delete_version(
+    version_id: str,
+    current_user: User = Depends(require_permission("generate")),
+    db: Session = Depends(get_db),
+):
+    """Permanently delete a draft forecast version.
+
+    Restricted to status == "draft" regardless of version_type — a what-if
+    scenario and a plain "Generate a baseline forecast" re-run are equally
+    disposable while still draft, but anything that has entered review,
+    been approved, or published carries approvals/accuracy history and stays
+    undeletable through this route, full stop — there is no force override,
+    since that history is a compliance/audit-trail concern, not just UX.
+
+    Refused if a company boundary check fails, or if another (non-deleted)
+    version branched from this one — deleting it would either orphan or
+    silently sever that version's lineage.
+
+    line_results/overrides/driver_inputs/approval_steps/anomaly_dismissals/
+    accuracy_records/review_undo_snapshots all cascade via the ORM
+    relationships on ForecastVersion (see app/models/forecast.py) — this
+    route doesn't need to touch them individually.
+    """
+    from app.services.permissions import can_access_business_unit
+
+    version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
+    if not version:
+        raise HTTPException(404, "Forecast version not found")
+    if not can_access_business_unit(current_user, version.business_unit_id):
+        raise HTTPException(404, "Forecast version not found")
+    if version.status != "draft":
+        raise HTTPException(400, "Only draft versions can be deleted")
+
+    children = (
+        db.query(ForecastVersion.id)
+        .filter(ForecastVersion.parent_version_id == version.id)
+        .count()
+    )
+    if children:
+        raise HTTPException(
+            400,
+            f"Can't delete — {children} version(s) branched from this one. "
+            "Delete those first.",
+        )
+
+    record_audit(
+        db,
+        action="forecast_version.delete",
+        entity_type="forecast_version",
+        entity_id=version.id,
+        actor_id=current_user.id,
+        actor_username=current_user.username,
+        details={"name": version.name, "version_type": version.version_type},
+        commit=False,
+    )
+    db.delete(version)
+    db.commit()
+    return {"id": version_id, "status": "deleted"}
 
 
 @router.get("/forecast-table/{version_id}", response_model=PanelDataResponse)
@@ -21,6 +177,8 @@ async def get_forecast_table(
     category: str | None = Query(None, description="Filter by category"),
     confidence_level: str | None = Query(None, description="Filter by confidence level"),
     view: str | None = Query("summary", description="'summary' groups by line item, 'detail' shows all periods"),
+    limit: int | None = Query(None, ge=1, le=500, description="Page size (defaults to panel_page_size)"),
+    offset: int = Query(0, ge=0, description="Row offset for pagination"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -28,7 +186,10 @@ async def get_forecast_table(
 
     When view=summary (default): returns one row per line item with aggregated stats.
     When view=detail: returns all periods (original behavior).
+    Summary aggregates and quality_summary are computed over the full filtered set;
+    ``rows`` are paginated via limit/offset.
     """
+    page_size = limit or settings.panel_page_size
     version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
     if not version:
         raise HTTPException(status_code=404, detail="Forecast version not found")
@@ -39,6 +200,10 @@ async def get_forecast_table(
         .filter(ForecastLineResult.version_id == version_id)
     )
 
+    # BU-level read authorization
+    from app.services.permissions import line_item_scope_filter
+    query = line_item_scope_filter(query, current_user, LineItem)
+
     if period:
         query = query.filter(ForecastLineResult.period == period)
     if category:
@@ -46,12 +211,36 @@ async def get_forecast_table(
     if confidence_level:
         query = query.filter(ForecastLineResult.confidence_level == confidence_level)
 
-    results = query.order_by(LineItem.display_order, ForecastLineResult.period).all()
+    # Full filtered set for aggregates + grouping; only a page of rows is returned
+    all_filtered = query.order_by(LineItem.display_order, ForecastLineResult.period).all()
+    metadata_by_result_id: dict[str, dict] = {}
+    result_ids = [str(r.id) for r in all_filtered]
+    if result_ids:
+        metadata_rows = (
+            db.query(ModelMetadata.line_result_id, ModelMetadata.parameters)
+            .filter(ModelMetadata.line_result_id.in_(result_ids))
+            .all()
+        )
+        metadata_by_result_id = {
+            str(line_result_id): (parameters if isinstance(parameters, dict) else {})
+            for line_result_id, parameters in metadata_rows
+        }
+
+    all_scores = [r.confidence_score for r in all_filtered]
+    avg_score = sum(all_scores) / len(all_scores) if all_scores else 0
+    critical_count = sum(1 for r in all_filtered if r.ai_recommendation in ("override", "manual_input"))
+    warning_count = sum(1 for r in all_filtered if r.ai_recommendation == "review")
+    ok_count = sum(1 for r in all_filtered if r.ai_recommendation == "approve")
+    available_categories = sorted(
+        {r.line_item.category for r in all_filtered if r.line_item and r.line_item.category}
+    )
 
     if view == "detail":
-        # Original detailed view — one row per period
         rows = []
-        for r in results:
+        for r in all_filtered:
+            row_meta = metadata_by_result_id.get(str(r.id))
+            exog_payload = _extract_exog_payload(row_meta)
+            calibration_payload = _extract_calibration_payload(row_meta)
             rows.append({
                 "id": r.id,
                 "line_item_id": r.line_item_id,
@@ -70,23 +259,28 @@ async def get_forecast_table(
                 "override_value": r.override_value,
                 "indent_level": r.line_item.indent_level,
                 "is_subtotal": r.line_item.is_subtotal,
-                # AI analysis & remediation
                 "ai_recommendation": r.ai_recommendation,
                 "ai_reasoning": r.ai_reasoning,
                 "ai_risk_score": r.ai_risk_score,
                 "review_status": r.review_status,
+                "exog_used": bool(exog_payload),
+                "exog": exog_payload,
+                "bounds_method": r.bounds_method,
+                "calibration": calibration_payload,
             })
     else:
-        # Summary view — one row per line item with aggregated stats
         from collections import defaultdict
         groups: dict[int, list[ForecastLineResult]] = defaultdict(list)
-        for r in results:
+        for r in all_filtered:
             groups[r.line_item_id].append(r)
 
         rows = []
         for li_id, group in groups.items():
             li = group[0].line_item
             worst = min(group, key=lambda x: x.confidence_score)
+            worst_meta = metadata_by_result_id.get(str(worst.id))
+            exog_payload = _extract_exog_payload(worst_meta)
+            calibration_payload = _extract_calibration_payload(worst_meta)
             avg_conf = sum(r.confidence_score for r in group) / len(group) if group else 0
             total_p50 = sum(r.p50 for r in group)
             overridden_count = sum(1 for r in group if r.is_overridden)
@@ -112,23 +306,55 @@ async def get_forecast_table(
                 "override_count": overridden_count,
                 "indent_level": li.indent_level,
                 "is_subtotal": li.is_subtotal,
-                # AI analysis & remediation
                 "ai_recommendation": worst.ai_recommendation,
                 "ai_reasoning": worst.ai_reasoning,
                 "ai_risk_score": worst.ai_risk_score,
                 "review_status": worst.review_status,
+                "exog_used": bool(exog_payload),
+                "exog": exog_payload,
+                "bounds_method": worst.bounds_method,
+                "calibration": calibration_payload,
             })
 
-        # Sort by display_order (preserve P&L structure)
         rows.sort(key=lambda x: (x.get("indent_level", 0), x.get("line_item_name", "")))
 
-    # Compute quality summary stats
-    all_scores = [r.confidence_score for r in results]
-    avg_score = sum(all_scores) / len(all_scores) if all_scores else 0
+    # Version-level calibration roll-up, over the full filtered set rather than
+    # the page so the header does not shift as the analyst scrolls.
+    #
+    # Counted from the stored model metadata, NOT from bounds_method: MinT
+    # recomputes every interval from s'Ws afterwards and legitimately re-stamps
+    # that column, so it cannot answer "was this line's band earned?". MinT does
+    # derive its leaf sigma from the calibrated p10/p90 gap, so the calibration
+    # still flows into what is published — the metadata is just the honest
+    # record of which lines had one.
+    calibrated_line_ids = {
+        r.line_item_id
+        for r in all_filtered
+        if isinstance(
+            (metadata_by_result_id.get(str(r.id)) or {}).get("interval_calibration"), dict
+        )
+    }
+    all_line_ids = {r.line_item_id for r in all_filtered}
+    realized = realized_coverage_by_line(
+        db,
+        list(all_line_ids),
+        min_cycles=settings.conformal_realized_min_cycles,
+    )
+    calibration_summary = {
+        "calibrated_lines": len(calibrated_line_ids),
+        "total_lines": len(all_line_ids),
+        # Mean of per-line realized coverage, over lines with enough closed
+        # cycles to have one. None means "not enough history to claim anything".
+        "realized_coverage": (
+            round(sum(realized.values()) / len(realized), 4) if realized else None
+        ),
+        "lines_with_realized_coverage": len(realized),
+        "target_coverage": 1.0 - DEFAULT_ALPHA,
+    }
 
-    critical_count = sum(1 for r in results if r.ai_recommendation in ("override", "manual_input"))
-    warning_count = sum(1 for r in results if r.ai_recommendation == "review")
-    ok_count = sum(1 for r in results if r.ai_recommendation == "approve")
+    total_count = len(rows)
+    page_rows = rows[offset : offset + page_size]
+    has_more = offset + page_size < total_count
 
     return PanelDataResponse(
         panel_type="forecast_table",
@@ -150,10 +376,159 @@ async def get_forecast_table(
                 "ok_count": ok_count,
                 "total_scored": len(all_scores),
             },
+            "calibration_summary": calibration_summary,
             "view": view,
-            "rows": rows,
-            "total_count": len(rows),
-            "available_categories": sorted(set(r.line_item.category for r in results if r.line_item)),
+            "rows": page_rows,
+            "total_count": total_count,
+            "limit": page_size,
+            "offset": offset,
+            "has_more": has_more,
+            "available_categories": available_categories,
+        },
+    )
+
+
+@router.get("/why-this-number/{result_id}", response_model=PanelDataResponse)
+async def why_this_number(
+    result_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Everything the pipeline already knows about one forecast cell: model
+    selection (chosen model, runner-up, margin), exog admission and why,
+    calibration, structural-break/outlier handling, the reconciliation delta,
+    override history for this exact cell across versions, and realized
+    coverage. All computed at generation time and otherwise thrown away —
+    see forecast_pipeline.py's ModelMetadata.parameters writes."""
+    result = db.query(ForecastLineResult).filter(ForecastLineResult.id == result_id).first()
+    if not result:
+        raise HTTPException(404, "Forecast line result not found")
+    line_item = result.line_item
+    if not user_can_view_line_item(current_user, line_item):
+        raise HTTPException(404, "Forecast line result not found")
+
+    meta = result.model_metadata
+    params = meta.parameters if meta and isinstance(meta.parameters, dict) else {}
+    exog_spec = params.get("exog_spec") if isinstance(params.get("exog_spec"), dict) else None
+
+    reconciliation = None
+    if (
+        result.pre_reconcile_p50 is not None
+        and abs(result.pre_reconcile_p50 - result.p50) > 1e-9
+    ):
+        delta = result.p50 - result.pre_reconcile_p50
+        reconciliation = {
+            "pre_reconcile_p50": result.pre_reconcile_p50,
+            "published_p50": result.p50,
+            "delta": round(delta, 2),
+            "delta_pct": (
+                round(delta / abs(result.pre_reconcile_p50) * 100, 1)
+                if result.pre_reconcile_p50 else None
+            ),
+        }
+
+    # Override history for this exact (line_item, period) across every
+    # version — not just the version this cell happens to belong to.
+    overrides = (
+        db.query(Override)
+        .filter(
+            Override.line_item_id == result.line_item_id,
+            Override.period == result.period,
+        )
+        .order_by(Override.created_at.desc())
+        .all()
+    )
+    override_history = [
+        {
+            "id": o.id,
+            "version_id": o.version_id,
+            "original_model_value": o.original_model_value,
+            "override_value": o.override_value,
+            "reason": o.reason,
+            "status": o.status,
+            "user_id": o.user_id,
+            "created_at": o.created_at.isoformat() if o.created_at else None,
+        }
+        for o in overrides
+    ]
+
+    # Realized coverage for this exact cell (line_item, period), across
+    # every vintage that has since closed — not the line's lifetime average.
+    accuracy_rows = (
+        db.query(ForecastAccuracyRecord)
+        .filter(
+            ForecastAccuracyRecord.line_item_id == result.line_item_id,
+            ForecastAccuracyRecord.period == result.period,
+            ForecastAccuracyRecord.within_p10_p90.isnot(None),
+        )
+        .order_by(ForecastAccuracyRecord.created_at.desc())
+        .all()
+    )
+    realized_coverage = (
+        {
+            "n_vintages": len(accuracy_rows),
+            "n_within_band": sum(1 for r in accuracy_rows if r.within_p10_p90),
+            "latest_actual": accuracy_rows[0].actual,
+            "latest_pct_error": accuracy_rows[0].pct_error,
+        }
+        if accuracy_rows
+        else None
+    )
+
+    li_name = line_item.name if line_item else "line item"
+    return PanelDataResponse(
+        panel_type="why_this_number",
+        title=f"Why {li_name}: {result.period}",
+        data={
+            "result_id": result.id,
+            "line_item_id": result.line_item_id,
+            "line_item_name": li_name,
+            "period": result.period,
+            "p10": result.p10,
+            "p50": result.p50,
+            "p90": result.p90,
+            "model_type": result.model_type,
+            "model_mape": result.model_mape,
+            "model_mase": result.model_mase,
+            "model_pinball": result.model_pinball,
+            "model_r_squared": result.model_r_squared,
+            "confidence_score": result.confidence_score,
+            "confidence_level": result.confidence_level,
+            "bounds_method": result.bounds_method,
+            "is_overridden": result.is_overridden,
+            "model_selection": params.get("model_selection"),
+            "exog": (
+                {
+                    "mode": exog_spec.get("mode"),
+                    "admitted": exog_spec.get("exog_admitted"),
+                    "rejected_reason": exog_spec.get("exog_rejected_reason"),
+                    "columns": exog_spec.get("columns") or [],
+                    "drivers": exog_spec.get("drivers") or [],
+                    "plain_vs_exog": exog_spec.get("plain_vs_exog"),
+                    "exog_mode_scores": exog_spec.get("exog_mode_scores"),
+                }
+                if exog_spec
+                else None
+            ),
+            "calibration": _extract_calibration_payload(params),
+            "structural_break": (
+                {"detected": True, "period": meta.structural_break_period}
+                if meta and meta.structural_break_detected
+                else None
+            ),
+            "outlier_cleaning": (
+                {"cleaned_periods": meta.cleaned_periods, "n_cleaned": meta.outliers_cleaned}
+                if meta and meta.cleaned_periods
+                else None
+            ),
+            "seasonality": (
+                {"detected": True, "period": meta.seasonality_period}
+                if meta and meta.seasonality_detected
+                else None
+            ),
+            "reconciliation": reconciliation,
+            "override_history": override_history,
+            "realized_coverage": realized_coverage,
         },
     )
 
@@ -165,12 +540,18 @@ async def get_review_queue(
     db: Session = Depends(get_db),
 ):
     """Get items that need review, sorted by materiality."""
+    from app.services.permissions import line_item_scope_filter
+
     results = (
-        db.query(ForecastLineResult)
-        .join(LineItem)
-        .filter(
-            ForecastLineResult.version_id == version_id,
-            ForecastLineResult.confidence_level.in_(["low", "medium"]),
+        line_item_scope_filter(
+            db.query(ForecastLineResult)
+            .join(LineItem)
+            .filter(
+                ForecastLineResult.version_id == version_id,
+                ForecastLineResult.confidence_level.in_(["low", "medium"]),
+            ),
+            current_user,
+            LineItem,
         )
         .order_by(ForecastLineResult.confidence_score.asc())
         .all()
@@ -215,12 +596,21 @@ async def get_overrides_panel(
         .all()
     )
 
+    li_ids = {o.line_item_id for o in overrides}
+    line_items_by_id = {
+        li.id: li
+        for li in (
+            db.query(LineItem).filter(LineItem.id.in_(li_ids)).all() if li_ids else []
+        )
+    }
+
     items = []
     for o in overrides:
-        li = db.query(LineItem).filter(LineItem.id == o.line_item_id).first()
+        li = line_items_by_id.get(o.line_item_id)
         change_pct = ((o.override_value - o.original_model_value) / abs(o.original_model_value) * 100) if o.original_model_value != 0 else 0
         items.append({
             "id": o.id,
+            "line_item_id": o.line_item_id,
             "line_item_name": li.name if li else "Unknown",
             "period": o.period,
             "original_value": o.original_model_value,
@@ -248,6 +638,18 @@ async def get_overrides_panel(
     )
 
 
+@router.post("/overrides/{override_id}/revert")
+async def revert_override_endpoint(
+    override_id: str,
+    current_user: User = Depends(require_permission("override")),
+    db: Session = Depends(get_db),
+):
+    """Revert an active override and restore the original model value."""
+    from app.services.overrides import revert_override
+
+    return revert_override(db, override_id, current_user)
+
+
 @router.get("/comparison/{version_id_a}/{version_id_b}", response_model=PanelDataResponse)
 async def get_comparison_panel(
     version_id_a: str,
@@ -264,16 +666,22 @@ async def get_comparison_panel(
         raise HTTPException(status_code=404, detail="One or both versions not found")
 
     # Get aggregated results for both
+    from app.services.permissions import line_item_scope_filter
+
     def get_results(vid):
         return (
-            db.query(
-                ForecastLineResult.line_item_id,
-                LineItem.name.label("line_name"),
-                LineItem.category,
-                func.sum(ForecastLineResult.p50).label("total"),
+            line_item_scope_filter(
+                db.query(
+                    ForecastLineResult.line_item_id,
+                    LineItem.name.label("line_name"),
+                    LineItem.category,
+                    func.sum(ForecastLineResult.p50).label("total"),
+                )
+                .join(LineItem)
+                .filter(ForecastLineResult.version_id == vid),
+                current_user,
+                LineItem,
             )
-            .join(LineItem)
-            .filter(ForecastLineResult.version_id == vid)
             .group_by(ForecastLineResult.line_item_id, LineItem.name, LineItem.category)
             .all()
         )
@@ -291,10 +699,13 @@ async def get_comparison_panel(
         variance = val_a - val_b
         pct = (variance / abs(val_b) * 100) if val_b != 0 else 0
 
+        ref = ra or rb
+        if ref is None:
+            continue
         rows.append({
             "line_item_id": lid,
-            "line_item_name": (ra or rb).line_name,
-            "category": (ra or rb).category,
+            "line_item_name": ref.line_name,
+            "category": ref.category,
             "value_a": round(val_a, 2),
             "value_b": round(val_b, 2),
             "variance": round(variance, 2),
@@ -307,8 +718,16 @@ async def get_comparison_panel(
         panel_type="comparison",
         title=f"Comparison: {va.name} vs {vb.name}",
         data={
-            "version_a": {"id": va.id, "name": va.name},
-            "version_b": {"id": vb.id, "name": vb.name},
+            "version_a": {
+                "id": va.id,
+                "name": va.name,
+                "scenario": getattr(va, "scenario", None) or "base",
+            },
+            "version_b": {
+                "id": vb.id,
+                "name": vb.name,
+                "scenario": getattr(vb, "scenario", None) or "base",
+            },
             "rows": rows,
             "total_count": len(rows),
         },

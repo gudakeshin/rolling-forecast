@@ -26,13 +26,26 @@ networkx>=3.4.0
 # Auth
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.0
+bcrypt>=4.0.1,<4.1  # passlib incompatible with bcrypt 4.1+ (72-byte wrap bug)
+cryptography>=42.0.0
+structlog>=24.4.0
+
+# Rate limiting
+slowapi>=0.1.9
+
+# SQL safety
+sqlparse>=0.5.0
 
 # Streaming
 sse-starlette>=2.2.0
 
 # Context Engine / RAG
 chromadb>=0.4.0
-sentence-transformers>=2.2.0
+# sentence-transformers intentionally NOT installed: it pulls in torch
+# (multi-GB CUDA wheels) purely to run all-MiniLM-L6-v2, which Chroma
+# already bundles as ONNX. Set EMBEDDING_BACKEND=sentence_transformers
+# and install it explicitly only if you need a different model.
+langchain-text-splitters>=0.3.0
 pypdf>=4.0.0
 docx2txt>=0.8
 python-pptx>=0.6.21
@@ -50,3 +63,29 @@ python-dotenv>=1.0.0
 aiofiles>=24.1.0
 openpyxl>=3.1.0
 pyyaml>=6.0.0
+
+# Board pack / PDF
+python-pptx>=0.6.21
+reportlab>=4.0.0
+psycopg2-binary>=2.9.0
+
+# Observability (optional)
+opentelemetry-api>=1.28.0
+opentelemetry-sdk>=1.28.0
+opentelemetry-instrumentation-fastapi>=0.49b0
+prometheus-fastapi-instrumentator>=7.0.0,<8.0.0
+prometheus-client>=0.21.0
+
+# Job queue (optional — requires REDIS_URL)
+arq>=0.26.0
+redis>=5.0.0
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.24.0
+httpx>=0.27.0
+email-validator>=2.0.0
+
+# Lint / typecheck (CI)
+ruff>=0.8.0
+mypy>=1.13.0

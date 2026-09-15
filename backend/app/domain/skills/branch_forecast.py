@@ -1,9 +1,7 @@
 """BranchForecast skill -- scenario branching, comparison, and merge."""
 
 import logging
-import uuid
 from typing import Any
-from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -60,6 +58,10 @@ class BranchForecastSkill(BaseSkill):
                     "type": "string",
                     "description": "Description of the scenario",
                 },
+                "scenario": {
+                    "type": "string",
+                    "description": "Scenario label for the branch (default: inherits source, or 'upside' if unnamed)",
+                },
             },
             "required": ["action"],
         }
@@ -100,10 +102,12 @@ class BranchForecastSkill(BaseSkill):
         adjustments = params.get("adjustments", {})
 
         # Create the branch version
+        scenario = (params.get("scenario") or "").strip() or getattr(source, "scenario", None) or "upside"
         branch = ForecastVersion(
             name=branch_name,
             status="draft",
             version_type="scenario",
+            scenario=scenario,
             parent_version_id=source.id,
             actuals_dataset_id=source.actuals_dataset_id,
             actuals_hash=source.actuals_hash,
@@ -144,12 +148,12 @@ class BranchForecastSkill(BaseSkill):
                 override_value=r.override_value,
             )
 
-            # Apply bulk adjustments by category
+            # Apply bulk adjustments by category — leaf (non-calculated) items only
             if adjustments:
                 li = db.query(LineItem).filter(LineItem.id == r.line_item_id).first()
-                if li:
+                if li and not li.is_calculated:
                     for cat_pattern, pct_change in adjustments.items():
-                        if cat_pattern.lower() in li.category.lower():
+                        if cat_pattern.lower() in (li.category or "").lower():
                             factor = 1 + (pct_change / 100.0)
                             new_r.p50 = r.p50 * factor
                             if new_r.p10 is not None:
@@ -162,6 +166,11 @@ class BranchForecastSkill(BaseSkill):
 
             db.add(new_r)
 
+        db.flush()
+
+        # Recompute calculated lines + full MinT interval bounds
+        from app.services.reconciliation import reconcile_version
+        reconcile_version(db, branch.id)
         db.commit()
 
         # Build response

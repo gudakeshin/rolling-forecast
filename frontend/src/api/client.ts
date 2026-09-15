@@ -2,7 +2,35 @@ import { useAuthStore } from '../store/authStore';
 
 const BASE_URL = '/api';
 
-async function fetchApi(url: string, options: RequestInit = {}): Promise<Response> {
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function tryRefreshAccessToken(): Promise<boolean> {
+  if (refreshInFlight) return refreshInFlight;
+
+  refreshInFlight = (async () => {
+    const refresh = useAuthStore.getState().refreshToken;
+    if (!refresh) return false;
+    try {
+      const res = await fetch(`${BASE_URL}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: refresh }),
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      useAuthStore.getState().setTokens(data.access_token, data.refresh_token ?? null);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+
+  return refreshInFlight;
+}
+
+async function fetchApi(url: string, options: RequestInit = {}, retried = false): Promise<Response> {
   const token = useAuthStore.getState().token;
 
   const headers: Record<string, string> = {
@@ -22,7 +50,11 @@ async function fetchApi(url: string, options: RequestInit = {}): Promise<Respons
     headers,
   });
 
-  if (response.status === 401) {
+  if (response.status === 401 && !retried && !url.startsWith('/auth/')) {
+    const ok = await tryRefreshAccessToken();
+    if (ok) {
+      return fetchApi(url, options, true);
+    }
     useAuthStore.getState().logout();
     window.location.href = '/login';
   }
@@ -30,8 +62,8 @@ async function fetchApi(url: string, options: RequestInit = {}): Promise<Respons
   return response;
 }
 
-export async function apiGet<T>(url: string): Promise<T> {
-  const response = await fetchApi(url);
+export async function apiGet<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetchApi(url, init);
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Request failed' }));
     throw new Error(error.detail || 'Request failed');
@@ -63,13 +95,28 @@ export async function apiPut<T>(url: string, body?: any): Promise<T> {
   return response.json();
 }
 
-export async function apiDelete<T>(url: string): Promise<T> {
-  const response = await fetchApi(url, { method: 'DELETE' });
+export async function apiPatch<T>(url: string, body?: any): Promise<T> {
+  const response = await fetchApi(url, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Request failed' }));
     throw new Error(error.detail || 'Request failed');
   }
   return response.json();
+}
+
+export async function apiDelete<T = void>(url: string): Promise<T | void> {
+  const response = await fetchApi(url, { method: 'DELETE' });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Request failed' }));
+    throw new Error(error.detail || 'Request failed');
+  }
+  if (response.status === 204) return;
+  const text = await response.text();
+  if (!text) return;
+  return JSON.parse(text) as T;
 }
 
 export async function uploadFile(url: string, file: File): Promise<any> {
@@ -85,4 +132,4 @@ export async function uploadFile(url: string, file: File): Promise<any> {
   return response.json();
 }
 
-export { fetchApi };
+export { fetchApi, tryRefreshAccessToken };

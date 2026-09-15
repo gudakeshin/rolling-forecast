@@ -19,9 +19,9 @@ from sqlalchemy.orm import Session
 
 from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.domain.engines.model_registry import get_model_registry
-from app.models.actuals import ActualsDataset, ActualsRecord
+from app.models.actuals import ActualsRecord
 from app.models.line_item import LineItem
-from app.config import settings
+from app.services.period_calendar import get_calendar_config, period_to_date
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,14 @@ class PlanForecastSkill(BaseSkill):
                     "type": "string",
                     "description": "ID of the actuals dataset to analyze (uses latest if not specified)",
                 },
+                "business_unit": {
+                    "type": "string",
+                    "description": (
+                        "Name or id of the company/business unit to analyze. Required "
+                        "unless the caller belongs to exactly one business unit (then "
+                        "it's inferred), or dataset_id is given explicitly."
+                    ),
+                },
                 "sample_size": {
                     "type": "integer",
                     "description": "Number of line items to sample for model comparison (default: 5, max: 10)",
@@ -71,20 +79,58 @@ class PlanForecastSkill(BaseSkill):
         db: Session = context.db
         start_time = time.time()
 
-        # Get dataset
-        dataset_id = params.get("dataset_id") or context.context_manager.get_memory("last_dataset_id")
-        if not dataset_id:
-            dataset = db.query(ActualsDataset).order_by(ActualsDataset.ingested_at.desc()).first()
-            if not dataset:
-                return SkillResult.fail("No actuals data found. Please upload actuals first.")
-            dataset_id = dataset.id
-        else:
-            dataset = db.query(ActualsDataset).filter(ActualsDataset.id == dataset_id).first()
-            if not dataset:
-                return SkillResult.fail(f"Dataset '{dataset_id}' not found.")
+        from app.services.permissions import resolve_skill_user, scoped_line_items
 
-        # Get all non-calculated line items
-        line_items = db.query(LineItem).filter(LineItem.is_calculated == False).all()
+        actor = resolve_skill_user(context)
+
+        # Get dataset. An explicit param always wins; otherwise resolve_current_dataset
+        # prefers the most recently ingested *manually uploaded* (pinned) dataset
+        # over anything ingested since (including unattended scheduled/API pulls),
+        # falling back to plain "latest ingested" only when nothing is pinned.
+        # This intentionally does not consult "last_dataset_id" working memory —
+        # that memory is conversation-scoped and goes stale the moment actuals
+        # are re-ingested from a different conversation (or a fresh session),
+        # silently re-analyzing old data forever.
+        #
+        # Always scoped to one company — see generate_baseline.py for why an
+        # unscoped resolution across ALL companies is unsafe once more than
+        # one exists.
+        from app.services.actuals_resolution import resolve_current_dataset
+        from app.services.permissions import can_access_business_unit
+        from app.models.business_unit import BusinessUnit
+
+        bu_ref = params.get("business_unit")
+        business_unit_id = actor.business_unit_id if actor else None
+        if bu_ref:
+            bu = (
+                db.query(BusinessUnit)
+                .filter((BusinessUnit.id == bu_ref) | (BusinessUnit.name == bu_ref))
+                .first()
+            )
+            if not bu:
+                return SkillResult.fail(f"Business unit '{bu_ref}' not found.")
+            business_unit_id = bu.id
+
+        dataset_id = params.get("dataset_id")
+        if not dataset_id and not business_unit_id:
+            return SkillResult.fail(
+                "Which company/business unit is this for? Pass `business_unit` "
+                "(name or id) -- your account isn't assigned to exactly one, so it "
+                "can't be inferred."
+            )
+        dataset = resolve_current_dataset(db, dataset_id, business_unit_id=business_unit_id)
+        if not dataset:
+            if dataset_id:
+                return SkillResult.fail(f"Dataset '{dataset_id}' not found.")
+            return SkillResult.fail("No actuals data found. Please upload actuals first.")
+        if not can_access_business_unit(actor, dataset.business_unit_id):
+            return SkillResult.fail(f"Dataset '{dataset.id}' not found.")
+        dataset_id = dataset.id
+
+        # Get non-calculated line items in the caller's BU scope
+        line_items = scoped_line_items(
+            db, actor, LineItem.is_calculated == False  # noqa: E712
+        ).all()
         if not line_items:
             return SkillResult.fail("No line items found. Please ingest actuals data first.")
 
@@ -144,9 +190,25 @@ class PlanForecastSkill(BaseSkill):
             sample_items.extend([remaining[i] for i in extra])
 
         model_registry = get_model_registry()
+        from app.domain.engines.model_registry import effective_selection_rule
+
+        selection_rule = effective_selection_rule()
         comparison_results: list[dict] = []
-        model_win_counts: dict[str, int] = {"linear": 0, "ets": 0, "arima": 0, "prophet": 0}
-        model_avg_mape: dict[str, list[float]] = {"linear": [], "ets": [], "arima": [], "prophet": []}
+        model_win_counts: dict[str, int] = {}
+        model_avg_mape: dict[str, list[float]] = {}
+        cal_cfg = get_calendar_config(db)
+
+        # Materiality vs sample CoA (same gate generate_baseline uses)
+        from app.config import settings as _settings
+
+        trailing = {item["name"]: abs(float(item.get("mean", 0) or 0)) * max(int(item["n_points"]), 1)
+                    for item in sample_items}
+        # Fall back: use n_points * rough scale from data_summary mean if present
+        for d in data_summary:
+            if d["name"] in trailing and trailing[d["name"]] == 0:
+                trailing[d["name"]] = float(d.get("n_points") or 0)
+        grand = sum(trailing.values()) or 1.0
+        materiality_share = float(_settings.materiality_share)
 
         for item in sample_items:
             # Get the data for this line item
@@ -167,25 +229,56 @@ class PlanForecastSkill(BaseSkill):
                 continue
 
             values = pd.Series([r.value for r in records])
-            dates = pd.DatetimeIndex([pd.Timestamp(r.period + "-01") for r in records])
+            dates = pd.DatetimeIndex([
+                pd.Timestamp(period_to_date(r.period, cal_cfg)) for r in records
+            ])
 
-            # Run comparison
-            result = model_registry.compare_models(values, dates, test_size=6)
+            is_material = (trailing.get(item["name"], 0.0) / grand) >= materiality_share
+            # Same selection path as generate_baseline (two-stage + rule)
+            result = model_registry.compare_models(
+                values,
+                dates,
+                test_size=6,
+                selection_rule=selection_rule,
+                is_material=is_material,
+                two_stage=True,
+            )
+            if not result.best_model:
+                continue
             row = {
                 "line_item": item["name"],
                 "category": item["category"],
                 "data_points": str(item["n_points"]),
                 "volatility": f"{item['cv'] * 100:.0f}%",
                 "best_model": result.best_model.upper(),
-                "best_mape": f"{result.best_mape:.1f}%",
+                "best_mape": (
+                    f"{result.best_mape:.1f}%"
+                    if result.best_mape != float("inf")
+                    else "N/A"
+                ),
+                "best_mase": (
+                    f"{result.best_mase:.3f}"
+                    if result.best_mase != float("inf")
+                    else "N/A"
+                ),
             }
 
             for comp in result.comparisons:
-                if comp.mape != float("inf") and comp.mape is not None:
-                    row[comp.model_name] = f"{comp.mape:.1f}%"
-                    model_avg_mape[comp.model_name].append(comp.mape)
+                if comp.skipped_budget:
+                    row[comp.model_name] = "skipped"
+                    continue
+                if selection_rule == "mase_pinball_complexity":
+                    if comp.mase != float("inf") and comp.mase is not None:
+                        row[comp.model_name] = f"MASE {comp.mase:.3f}"
+                        model_avg_mape.setdefault(comp.model_name, []).append(comp.mase)
+                    else:
+                        row[comp.model_name] = (comp.error or "N/A")[:20]
                 else:
-                    row[comp.model_name] = comp.error[:20] if comp.error else "N/A"
+                    if comp.mape != float("inf") and comp.mape is not None:
+                        row[comp.model_name] = f"{comp.mape:.1f}%"
+                        model_avg_mape.setdefault(comp.model_name, []).append(comp.mape)
+                    else:
+                        row[comp.model_name] = (comp.error or "N/A")[:20]
 
             comparison_results.append(row)
             model_win_counts[result.best_model] = model_win_counts.get(result.best_model, 0) + 1
@@ -221,12 +314,24 @@ class PlanForecastSkill(BaseSkill):
             )
         )
 
-        # Model comparison table
+        # Model comparison table — columns follow registry complexity order
+        # NB: a walrus inside a comprehension binds in the *enclosing* scope, so
+        # this name must not collide with anything used later in the function.
+        display_models = [
+            n for n in model_registry.list_models_by_complexity()
+            if (candidate := model_registry.get(n)) and candidate.capabilities.auto_selectable
+        ]
         if comparison_results:
+            metric_label = (
+                "MASE (lower = better)"
+                if selection_rule == "mase_pinball_complexity"
+                else "MAPE (lower = better)"
+            )
             content_blocks.append(
                 self._text_block(
-                    f"**Model Comparison** — Tested all 4 algorithms on {len(comparison_results)} "
-                    f"representative line items using 6-month holdout cross-validation:"
+                    f"**Model Comparison** — Tested {len(display_models)} algorithms on "
+                    f"{len(comparison_results)} representative line items "
+                    f"(selection rule: `{selection_rule}`):"
                 )
             )
 
@@ -234,28 +339,29 @@ class PlanForecastSkill(BaseSkill):
                 {"key": "line_item", "label": "Line Item"},
                 {"key": "data_points", "label": "Months"},
             ]
-            for m in ["linear", "ets", "arima", "prophet"]:
-                comp_columns.append({"key": m, "label": m.upper()})
+            for model_name in display_models:
+                comp_columns.append({"key": model_name, "label": model_name.upper()})
             comp_columns.append({"key": "best_model", "label": "Winner"})
 
             content_blocks.append(
                 self._table_block(
-                    title="MAPE Scores by Model (lower = better fit)",
+                    title=f"Scores by Model — {metric_label}",
                     columns=comp_columns,
                     rows=comparison_results,
                 )
             )
 
         # Model performance summary
+        score_label = "Avg MASE" if selection_rule == "mase_pinball_complexity" else "Avg MAPE"
         perf_rows = []
-        for model_name in ["ets", "arima", "prophet", "linear"]:
+        for model_name in display_models:
             mapes = model_avg_mape.get(model_name, [])
             wins = model_win_counts.get(model_name, 0)
             if mapes:
                 avg = np.mean(mapes)
                 perf_rows.append({
                     "model": model_name.upper(),
-                    "avg_mape": f"{avg:.1f}%",
+                    "avg_score": f"{avg:.3f}" if selection_rule == "mase_pinball_complexity" else f"{avg:.1f}%",
                     "wins": str(wins),
                     "tested": str(len(mapes)),
                     "status": "Recommended" if wins > 0 else "Available",
@@ -263,10 +369,10 @@ class PlanForecastSkill(BaseSkill):
             else:
                 perf_rows.append({
                     "model": model_name.upper(),
-                    "avg_mape": "N/A",
+                    "avg_score": "N/A",
                     "wins": "0",
                     "tested": "0",
-                    "status": "Not enough data" if model_name in ("arima", "prophet") else "Available",
+                    "status": "Available",
                 })
 
         content_blocks.append(
@@ -274,7 +380,7 @@ class PlanForecastSkill(BaseSkill):
                 title="Algorithm Performance Summary",
                 columns=[
                     {"key": "model", "label": "Algorithm"},
-                    {"key": "avg_mape", "label": "Avg MAPE"},
+                    {"key": "avg_score", "label": score_label},
                     {"key": "wins", "label": "Best Fit Count"},
                     {"key": "tested", "label": "Tested On"},
                     {"key": "status", "label": "Status"},
@@ -305,6 +411,9 @@ class PlanForecastSkill(BaseSkill):
                 f"What would you like to do?"
             )
         )
+
+        context.context_manager.set_memory("plan_forecast_complete", True)
+        context.context_manager.set_memory("last_plan_best_model", best_overall)
 
         return SkillResult.ok(
             message=(

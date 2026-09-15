@@ -1,17 +1,27 @@
-"""ARIMA/SARIMA forecast model."""
+"""ARIMA/SARIMA forecast model — fit once, predict via filter (no re-optimize)."""
+
+from __future__ import annotations
+
+import logging
+import warnings
+from typing import Any
 
 import numpy as np
 import pandas as pd
-from typing import Any
-import logging
 
-from app.domain.engines.base_model import IForecastModel, ForecastOutput
+from app.domain.engines.base_model import (
+    ForecastOutput,
+    IForecastModel,
+    ModelCapabilities,
+    make_period_labels,
+    seasonal_period_length,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class ARIMAModel(IForecastModel):
-    """ARIMA/SARIMA model using statsmodels."""
+    """ARIMA/SARIMA model using statsmodels SARIMAX."""
 
     @property
     def name(self) -> str:
@@ -19,32 +29,64 @@ class ARIMAModel(IForecastModel):
 
     @property
     def min_data_points(self) -> int:
-        return 18  # Needs more data for differencing
+        return 18
 
-    def fit(self, series: pd.Series, dates: pd.DatetimeIndex) -> dict[str, Any]:
+    @property
+    def capabilities(self) -> ModelCapabilities:
+        return ModelCapabilities(
+            supports_exog=True,
+            complexity_rank=30,
+            min_data_points=18,
+            base_confidence=60.0,
+            cost_class="moderate",
+            display_label="ARIMA",
+        )
+
+    def fit(
+        self,
+        series: pd.Series,
+        dates: pd.DatetimeIndex,
+        *,
+        exog: pd.DataFrame | np.ndarray | None = None,
+    ) -> dict[str, Any]:
         from statsmodels.tsa.statespace.sarimax import SARIMAX
-        import warnings
 
         values = series.values.astype(float)
-        has_seasonality = len(values) >= 24
+        exog_arr = None
+        exog_cols: list[str] | None = None
+        if exog is not None:
+            if isinstance(exog, pd.DataFrame):
+                exog_cols = [str(c) for c in exog.columns]
+                exog_arr = np.asarray(exog.values, dtype=float)
+            else:
+                exog_arr = np.asarray(exog, dtype=float)
+            if exog_arr.ndim == 1:
+                exog_arr = exog_arr.reshape(-1, 1)
+            if len(exog_arr) != len(values):
+                raise ValueError("exog length must match training series length")
+        m = seasonal_period_length()
+        has_seasonality = len(values) >= 2 * m
 
         best_aic = float("inf")
-        best_params = None
-        best_order = None
-        best_seasonal = None
+        # Seeded with the fallback spec used below; the search overwrites both
+        # whenever it sets best_fitted, so they are never meaningfully unset.
+        best_order: tuple[int, int, int] = (1, 1, 0)
+        best_seasonal: tuple[int, int, int, int] = (0, 0, 0, 0)
+        best_fitted = None
 
-        # Grid search over common ARIMA orders
         orders = [(1, 1, 1), (1, 1, 0), (0, 1, 1), (2, 1, 1), (1, 0, 1)]
-        seasonal_orders = [(1, 1, 1, 12), (0, 1, 1, 12)] if has_seasonality else [(0, 0, 0, 0)]
+        seasonal_orders = (
+            [(1, 1, 1, m), (0, 1, 1, m), (0, 0, 0, 0)] if has_seasonality else [(0, 0, 0, 0)]
+        )
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-
             for order in orders:
                 for seasonal in seasonal_orders:
                     try:
                         model = SARIMAX(
                             values,
+                            exog=exog_arr,
                             order=order,
                             seasonal_order=seasonal,
                             enforce_stationarity=False,
@@ -55,30 +97,16 @@ class ARIMAModel(IForecastModel):
                             best_aic = fitted.aic
                             best_order = order
                             best_seasonal = seasonal
-                            best_params = {
-                                "order": list(order),
-                                "seasonal_order": list(seasonal),
-                                "aic": float(fitted.aic),
-                                "bic": float(fitted.bic),
-                            }
+                            best_fitted = fitted
                     except Exception:
                         continue
 
-        if best_params is None:
-            # Fallback to simplest ARIMA
+        if best_fitted is None:
             try:
-                model = SARIMAX(values, order=(1, 1, 0))
-                fitted = model.fit(disp=False)
-                best_order = (1, 1, 0)
-                best_seasonal = (0, 0, 0, 0)
-                best_params = {
-                    "order": [1, 1, 0],
-                    "seasonal_order": [0, 0, 0, 0],
-                    "aic": float(fitted.aic),
-                    "bic": float(fitted.bic),
-                }
+                model = SARIMAX(values, exog=exog_arr, order=best_order)
+                best_fitted = model.fit(disp=False)
             except Exception as e:
-                logger.warning(f"ARIMA fit failed completely: {e}")
+                logger.warning("ARIMA fit failed completely: %s", e)
                 return {
                     "_failed": True,
                     "error": str(e),
@@ -86,32 +114,31 @@ class ARIMAModel(IForecastModel):
                     "_values": values.tolist(),
                 }
 
-        # Refit best model for predictions
-        model = SARIMAX(
-            values,
-            order=tuple(best_order),
-            seasonal_order=tuple(best_seasonal),
-            enforce_stationarity=False,
-            enforce_invertibility=False,
-        )
-        fitted = model.fit(disp=False, maxiter=200)
-
-        residuals = fitted.resid
+        residuals = np.asarray(best_fitted.resid, dtype=float)
         mape = float(np.mean(np.abs(residuals[2:] / (values[2:] + 1e-10)))) * 100
-        ss_res = np.sum(residuals[2:] ** 2)
-        ss_tot = np.sum((values[2:] - np.mean(values[2:])) ** 2)
-        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+        ss_res = float(np.sum(residuals[2:] ** 2))
+        ss_tot = float(np.sum((values[2:] - np.mean(values[2:])) ** 2))
+        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
 
-        best_params.update({
-            "has_seasonality": has_seasonality and best_seasonal[0] > 0,
+        return {
+            "order": list(best_order),
+            "seasonal_order": list(best_seasonal),
+            "aic": float(best_fitted.aic),
+            "bic": float(best_fitted.bic),
+            "has_seasonality": has_seasonality and best_seasonal[-1] > 0 and any(best_seasonal[:3]),
             "residual_std": float(np.std(residuals)),
-            "mape": mape,
+            "in_sample_mape": mape,
             "r_squared": float(r_squared),
             "n_points": len(values),
+            # Fitted coefficients — predict uses filter(), not fit()
+            "_params": np.asarray(best_fitted.params, dtype=float).tolist(),
+            "_param_names": list(best_fitted.params.index.astype(str))
+            if hasattr(best_fitted.params, "index")
+            else None,
             "_values": values.tolist(),
-        })
-
-        return best_params
+            "_exog_columns": exog_cols,
+            "_exog_values": exog_arr.tolist() if exog_arr is not None else None,
+        }
 
     def predict(
         self,
@@ -119,60 +146,102 @@ class ARIMAModel(IForecastModel):
         horizon: int,
         last_date: pd.Timestamp,
         confidence_level: float = 0.80,
+        *,
+        exog_future: pd.DataFrame | np.ndarray | None = None,
     ) -> ForecastOutput:
         from statsmodels.tsa.statespace.sarimax import SARIMAX
-        import warnings
 
-        if params.get("_failed"):
-            values = np.array(params.get("_values", [0]))
-            forecast = np.full(horizon, values[-1])
-            std = np.std(values) if len(values) > 1 else 1.0
+        periods = make_period_labels(last_date, horizon)
+        alpha = 1.0 - confidence_level
+        exog_future_arr = None
+        if exog_future is not None:
+            if isinstance(exog_future, pd.DataFrame):
+                exog_future_arr = np.asarray(exog_future.values, dtype=float)
+            else:
+                exog_future_arr = np.asarray(exog_future, dtype=float)
+            if exog_future_arr.ndim == 1:
+                exog_future_arr = exog_future_arr.reshape(-1, 1)
+
+        if params.get("_failed") or "_params" not in params:
+            values = np.asarray(params.get("_values", [0]), dtype=float)
+            forecast = np.full(horizon, values[-1] if len(values) else 0.0)
+            std = float(np.std(values)) if len(values) > 1 else 1.0
             lower = forecast - 1.28 * std
             upper = forecast + 1.28 * std
         else:
-            values = np.array(params["_values"])
+            values = np.asarray(params["_values"], dtype=float)
             order = tuple(params["order"])
             seasonal_order = tuple(params["seasonal_order"])
+            param_vec = np.asarray(params["_params"], dtype=float)
+            exog_cols = params.get("_exog_columns")
+            has_exog = bool(exog_cols)
+            if has_exog:
+                if exog_future_arr is None:
+                    raise ValueError("exog_future required for exogenous ARIMA predict")
+                if len(exog_future_arr) < horizon:
+                    raise ValueError("exog_future shorter than forecast horizon")
 
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 model = SARIMAX(
                     values,
+                    exog=(
+                        np.asarray(params.get("_exog_values"), dtype=float)
+                        if has_exog and params.get("_exog_values") is not None
+                        else None
+                    ),
                     order=order,
                     seasonal_order=seasonal_order,
                     enforce_stationarity=False,
                     enforce_invertibility=False,
                 )
-                fitted = model.fit(disp=False, maxiter=200)
-                pred = fitted.get_forecast(steps=horizon, alpha=0.20)  # 80% CI
-                forecast = pred.predicted_mean
+                # Apply stored coefficients — do NOT re-optimize
+                fitted = model.filter(param_vec)
+                pred = fitted.get_forecast(
+                    steps=horizon,
+                    alpha=alpha,
+                    exog=(
+                        exog_future_arr[:horizon]
+                        if has_exog and exog_future_arr is not None
+                        else None
+                    ),
+                )
+                forecast = np.asarray(pred.predicted_mean, dtype=float)
                 ci = pred.conf_int()
-                lower = ci.iloc[:, 0].values
-                upper = ci.iloc[:, 1].values
+                if hasattr(ci, "iloc"):
+                    lower = np.asarray(ci.iloc[:, 0], dtype=float)
+                    upper = np.asarray(ci.iloc[:, 1], dtype=float)
+                else:
+                    ci_arr = np.asarray(ci, dtype=float)
+                    lower, upper = ci_arr[:, 0], ci_arr[:, 1]
 
-        # Period labels
-        periods = []
-        current = last_date
-        for _ in range(horizon):
-            current = current + pd.offsets.MonthBegin(1)
-            periods.append(current.strftime("%Y-%m"))
+        from app.services.driver_forecast_cache import extract_exog_betas
+
+        public_params = {k: v for k, v in params.items() if not str(k).startswith("_")}
+        betas = extract_exog_betas(params)
+        if betas:
+            public_params["exog_betas"] = betas
 
         return ForecastOutput(
             point_forecast=forecast,
             lower_bound=lower,
             upper_bound=upper,
             periods=periods,
-            model_type="arima",
-            parameters={k: v for k, v in params.items() if not k.startswith("_")},
+            model_type=self.name,
+            parameters=public_params,
             fit_metrics={
-                "mape": params.get("mape", 0),
+                "in_sample_mape": params.get("in_sample_mape", params.get("mape", 0)),
                 "r_squared": params.get("r_squared", 0),
                 "aic": params.get("aic"),
                 "bic": params.get("bic"),
             },
             diagnostics={
                 "seasonality_detected": params.get("has_seasonality", False),
-                "seasonality_period": 12 if params.get("has_seasonality") else None,
+                "seasonality_period": (
+                    params["seasonal_order"][-1]
+                    if params.get("has_seasonality") and params.get("seasonal_order")
+                    else None
+                ),
                 "order": params.get("order"),
                 "seasonal_order": params.get("seasonal_order"),
             },

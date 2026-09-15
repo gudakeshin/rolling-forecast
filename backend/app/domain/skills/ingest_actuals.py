@@ -1,13 +1,17 @@
 """IngestActuals skill -- loads and validates actuals data from CSV/API."""
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
+import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.services.ingestion.csv_adapter import CSVActualsProvider
+from app.services.upsert import bulk_upsert
 from app.models.actuals import ActualsDataset, ActualsRecord
+from app.models.business_unit import BusinessUnit
 from app.models.line_item import LineItem
 
 logger = logging.getLogger(__name__)
@@ -45,6 +49,15 @@ class IngestActualsSkill(BaseSkill):
                     "default": "csv",
                     "enum": ["csv", "api"],
                 },
+                "business_unit": {
+                    "type": "string",
+                    "description": (
+                        "Name or id of the company/business unit this data belongs to. "
+                        "Required unless the uploader belongs to exactly one business unit "
+                        "(then it's inferred). Never inferred from a column inside the file "
+                        "itself -- a company boundary can't be set by file content."
+                    ),
+                },
             },
             "required": ["file_path"],
         }
@@ -63,6 +76,37 @@ class IngestActualsSkill(BaseSkill):
 
         db: Session = context.db
 
+        # Resolve the company this upload belongs to -- explicit param wins,
+        # else the uploader's own single business unit. Never trust a
+        # business_unit value inside the file itself: that would let file
+        # content claim to belong to any company regardless of who uploaded
+        # it, defeating the whole point of scoping actuals by company.
+        from app.services.permissions import can_access_business_unit, resolve_skill_user
+
+        actor = resolve_skill_user(context)
+        bu_ref = params.get("business_unit")
+        business_unit: BusinessUnit | None = None
+        if bu_ref:
+            business_unit = (
+                db.query(BusinessUnit)
+                .filter((BusinessUnit.id == bu_ref) | (BusinessUnit.name == bu_ref))
+                .first()
+            )
+            if business_unit is None:
+                return SkillResult.fail(f"Business unit '{bu_ref}' not found.")
+            if not can_access_business_unit(actor, business_unit.id):
+                return SkillResult.fail(
+                    f"You don't have access to upload data for '{business_unit.name}'."
+                )
+        elif actor is not None and actor.business_unit_id:
+            business_unit = db.get(BusinessUnit, actor.business_unit_id)
+        if business_unit is None:
+            return SkillResult.fail(
+                "Which company/business unit is this data for? Pass `business_unit` "
+                "(name or id) -- your account isn't assigned to exactly one, so it "
+                "can't be inferred."
+            )
+
         # Use CSV adapter
         provider = CSVActualsProvider()
         result = await provider.pull_actuals({"file_path": file_path})
@@ -74,25 +118,73 @@ class IngestActualsSkill(BaseSkill):
             )
 
         df = result.dataframe
+        if df is None:
+            # A provider reporting success with no frame would otherwise blow up
+            # on .groupby() further down with an opaque AttributeError.
+            return SkillResult.fail(
+                "Ingestion reported success but returned no data frame — "
+                "nothing to load."
+            )
 
-        # Create ActualsDataset record
-        dataset = ActualsDataset(
-            source_type=source_type,
-            source_name=file_path.split("/")[-1],
-            file_hash=result.file_hash,
-            row_count=result.row_count,
-            period_start=result.period_start,
-            period_end=result.period_end,
-            periods_count=result.periods_count,
-            missing_periods=",".join(result.missing_periods) if result.missing_periods else None,
-            completeness_pct=result.completeness_pct,
+        # Idempotent on file hash *within this company* -- two companies
+        # uploading byte-identical content (e.g. the same template) must not
+        # collide onto the same dataset row.
+        dataset = (
+            db.query(ActualsDataset)
+            .filter(
+                ActualsDataset.file_hash == result.file_hash,
+                ActualsDataset.business_unit_id == business_unit.id,
+            )
+            .first()
         )
-        db.add(dataset)
-        db.flush()  # Get ID
+        if dataset is None:
+            dataset = ActualsDataset(
+                source_type=source_type,
+                source_name=file_path.split("/")[-1],
+                file_hash=result.file_hash,
+                row_count=result.row_count,
+                period_start=result.period_start,
+                period_end=result.period_end,
+                periods_count=result.periods_count,
+                missing_periods=",".join(result.missing_periods) if result.missing_periods else None,
+                completeness_pct=result.completeness_pct,
+                # This skill is exclusively the manual (chat/UI) upload path --
+                # make it authoritative over any unattended scheduled/API pull.
+                # See app/services/actuals_resolution.py.
+                is_pinned=True,
+                business_unit_id=business_unit.id,
+                storage_path=file_path,
+            )
+            db.add(dataset)
+            db.flush()
+        else:
+            dataset.source_type = source_type
+            dataset.source_name = file_path.split("/")[-1]
+            dataset.row_count = result.row_count
+            dataset.period_start = result.period_start
+            dataset.period_end = result.period_end
+            dataset.periods_count = result.periods_count
+            dataset.missing_periods = (
+                ",".join(result.missing_periods) if result.missing_periods else None
+            )
+            dataset.completeness_pct = result.completeness_pct
+            dataset.is_pinned = True
+            dataset.storage_path = file_path
+            # Re-ingesting identical content is still "the data given to us
+            # just now" -- bump ingested_at so latest-dataset resolution
+            # (generate_baseline/plan_forecast) picks this over anything
+            # ingested in between the two identical uploads.
+            dataset.ingested_at = datetime.now(timezone.utc)
+            db.flush()
 
-        # Create/update LineItems
-        existing_items = {li.account_code: li for li in db.query(LineItem).all()}
-        line_item_map = {}  # account_code -> LineItem
+        # Create/update LineItems, scoped to this company -- otherwise two
+        # companies both using account code "REV-001" would resolve to (and
+        # intermingle data under) the very same LineItem row.
+        existing_items = {
+            li.account_code: li
+            for li in db.query(LineItem).filter(LineItem.business_unit_id == business_unit.id).all()
+        }
+        line_item_map: dict[str, LineItem] = {}  # account_code -> LineItem
         new_items_count = 0
 
         accounts = df.groupby("account_code").first().reset_index()
@@ -105,7 +197,10 @@ class IngestActualsSkill(BaseSkill):
                     account_code=code,
                     name=str(row.get("account_name", code)),
                     category=str(row.get("category", "Other")),
-                    business_unit=str(row.get("business_unit", "")) if "business_unit" in row.index else None,
+                    # The company is whatever was authorized above, never a
+                    # value read out of the file (see business_unit param docs).
+                    business_unit=business_unit.name,
+                    business_unit_id=business_unit.id,
                     geography=str(row.get("geography", "")) if "geography" in row.index and pd.notna(row.get("geography")) else None,
                     product_line=str(row.get("product_line", "")) if "product_line" in row.index and pd.notna(row.get("product_line")) else None,
                 )
@@ -115,22 +210,44 @@ class IngestActualsSkill(BaseSkill):
                 existing_items[code] = li
                 new_items_count += 1
 
-        # Store actuals records
-        records = []
+        # Upsert actuals records (dedupe within CSV + safe re-ingest)
+        by_key: dict[tuple[int, str], dict[str, Any]] = {}
         for _, row in df.iterrows():
             code = str(row["account_code"])
-            li = line_item_map.get(code)
-            if li:
-                records.append(ActualsRecord(
-                    dataset_id=dataset.id,
-                    line_item_id=li.id,
-                    period=str(row["period"]),
-                    value=float(row["value"]),
-                    currency=str(row.get("currency", "USD")),
-                ))
+            mapped_li = line_item_map.get(code)
+            if not mapped_li:
+                continue
+            period = str(row["period"])
+            by_key[(mapped_li.id, period)] = {
+                "dataset_id": dataset.id,
+                "line_item_id": mapped_li.id,
+                "period": period,
+                "value": float(row["value"]),
+                "currency": str(row.get("currency", "USD")),
+            }
 
-        db.bulk_save_objects(records)
+        bulk_upsert(
+            db,
+            ActualsRecord,
+            list(by_key.values()),
+            conflict_cols=("dataset_id", "line_item_id", "period"),
+            update_cols=("value", "currency"),
+        )
+        db.flush()
+
+        # Wire standard P&L CoA dependencies so override recalc works
+        from app.services.coa_dependencies import ensure_standard_dependencies
+
+        deps_created = ensure_standard_dependencies(db, list(line_item_map.values()))
         db.commit()
+
+        # Vintage accuracy: match new actuals against prior forecast versions
+        try:
+            from app.services.accuracy_snapshot import AccuracySnapshotService
+            AccuracySnapshotService(db).on_actuals_ingested(dataset.id)
+            db.commit()
+        except Exception as e:
+            logger.warning("Accuracy snapshot failed: %s", e)
 
         # Update working memory
         context.context_manager.set_memory("last_dataset_id", dataset.id)
@@ -159,6 +276,7 @@ class IngestActualsSkill(BaseSkill):
                     {"metric": "Business units", "value": str(bus)},
                     {"metric": "Categories", "value": ", ".join(categories[:5])},
                     {"metric": "Completeness", "value": f"{result.completeness_pct}%"},
+                    {"metric": "P&L dependencies", "value": str(deps_created)},
                     {"metric": "Data hash", "value": result.file_hash[:12] + "..."},
                 ],
             ),
@@ -180,16 +298,15 @@ class IngestActualsSkill(BaseSkill):
             message=f"Loaded {result.row_count} actuals records ({result.periods_count} periods, {len(line_item_map)} line items) from {dataset.source_name}",
             data={
                 "dataset_id": dataset.id,
+                "business_unit_id": business_unit.id,
+                "business_unit": business_unit.name,
                 "row_count": result.row_count,
                 "periods_count": result.periods_count,
                 "line_items_count": len(line_item_map),
                 "period_start": result.period_start,
                 "period_end": result.period_end,
                 "file_hash": result.file_hash,
+                "dependencies_created": deps_created,
             },
             content_blocks=content_blocks,
         )
-
-
-# Need this import for pd.notna
-import pandas as pd

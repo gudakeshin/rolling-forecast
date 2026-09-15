@@ -5,11 +5,9 @@ from typing import Any
 
 import numpy as np
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 
 from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
-from app.models.forecast import ForecastVersion, ForecastLineResult
-from app.models.actuals import ActualsDataset, ActualsRecord
+from app.models.forecast import ForecastVersion
 from app.models.line_item import LineItem
 
 logger = logging.getLogger(__name__)
@@ -86,233 +84,212 @@ class AutoAccuracyReportSkill(BaseSkill):
     async def _accuracy_summary(
         self, db: Session, version: ForecastVersion, params: dict
     ) -> SkillResult:
-        """Compute accuracy metrics: MAPE, bias, hit rate per line item."""
+        """Horizon-bucketed MAPE/bias from forecast_accuracy_records + interval calibration."""
+        from app.models.fx import ForecastAccuracyRecord
+        from app.models.line_item import LineItem
+
         top_n = params.get("top_n", 10)
         category_filter = params.get("category")
 
-        # Get forecast data grouped by line item
-        query = (
-            db.query(
-                ForecastLineResult.line_item_id,
-                LineItem.name,
-                LineItem.category,
-                func.avg(ForecastLineResult.p50).label("avg_forecast"),
-            )
-            .join(LineItem)
-            .filter(ForecastLineResult.version_id == version.id)
+        q = (
+            db.query(ForecastAccuracyRecord, LineItem)
+            .join(LineItem, LineItem.id == ForecastAccuracyRecord.line_item_id)
+            .filter(ForecastAccuracyRecord.version_id == version.id)
         )
         if category_filter:
-            query = query.filter(LineItem.category.ilike(f"%{category_filter}%"))
+            q = q.filter(LineItem.category == category_filter)
+        rows = q.all()
 
-        forecast_data = query.group_by(
-            ForecastLineResult.line_item_id, LineItem.name, LineItem.category
-        ).all()
+        if not rows:
+            return SkillResult.ok(
+                message=(
+                    "No vintage accuracy records yet for this version. "
+                    "Ingest actuals covering forecast periods to populate them."
+                ),
+                data={"avg_mape": None, "records": 0},
+                content_blocks=[
+                    self._text_block(
+                        "No period-aligned accuracy records found. "
+                        "Upload actuals for forecasted periods to enable vintage tracking."
+                    )
+                ],
+            )
 
-        # Get actuals averages
-        actuals_map = {}
-        for row in db.query(
-            ActualsRecord.line_item_id,
-            func.avg(ActualsRecord.value).label("avg_actual"),
-        ).group_by(ActualsRecord.line_item_id).all():
-            actuals_map[row.line_item_id] = float(row.avg_actual)
+        # By horizon bucket
+        buckets: dict[str, list[ForecastAccuracyRecord]] = {
+            "1m": [], "2-3m": [], "4-6m": [], "7m+": [],
+        }
+        by_item: dict[int, list[ForecastAccuracyRecord]] = {}
+        for rec, li in rows:
+            by_item.setdefault(rec.line_item_id, []).append(rec)
+            h = rec.horizon_offset
+            if h <= 1:
+                buckets["1m"].append(rec)
+            elif h <= 3:
+                buckets["2-3m"].append(rec)
+            elif h <= 6:
+                buckets["4-6m"].append(rec)
+            else:
+                buckets["7m+"].append(rec)
 
-        # Compute metrics
-        items = []
-        total_mape = 0
-        total_bias = 0
-        hit_count = 0
-        comparable = 0
+        def _mape(recs: list) -> float | None:
+            pcts = [r.pct_error for r in recs if r.pct_error is not None]
+            return float(sum(pcts) / len(pcts)) if pcts else None
 
-        for row in forecast_data:
-            actual = actuals_map.get(row.line_item_id)
-            if actual is None or actual == 0:
+        def _coverage(recs: list) -> float | None:
+            flagged = [r for r in recs if r.within_p10_p90 is not None]
+            if not flagged:
+                return None
+            return sum(1 for r in flagged if r.within_p10_p90) / len(flagged) * 100
+
+        horizon_rows = []
+        for label, recs in buckets.items():
+            if not recs:
                 continue
-
-            forecast_val = float(row.avg_forecast)
-            error = forecast_val - actual
-            abs_pct_error = abs(error / actual) * 100
-            bias = (error / actual) * 100
-            accuracy = max(0, 100 - abs_pct_error)
-            within_10 = abs_pct_error <= 10
-
-            items.append({
-                "name": row.name,
-                "category": row.category,
-                "forecast": forecast_val,
-                "actual": actual,
-                "mape": abs_pct_error,
-                "bias": bias,
-                "accuracy": accuracy,
-                "within_10": within_10,
+            mape = _mape(recs)
+            cov = _coverage(recs)
+            note = ""
+            if cov is not None and cov < 70:
+                note = "intervals too narrow"
+            elif cov is not None and cov > 95:
+                note = "intervals too wide"
+            horizon_rows.append({
+                "horizon": label,
+                "n": str(len(recs)),
+                "mape": f"{mape:.1f}%" if mape is not None else "n/a",
+                "p10_p90_coverage": f"{cov:.0f}%" if cov is not None else "n/a",
+                "calibration": note or "ok",
             })
 
-            total_mape += abs_pct_error
-            total_bias += bias
-            comparable += 1
-            if within_10:
-                hit_count += 1
+        # Per line item
+        item_rows = []
+        for lid, recs in by_item.items():
+            li = next(li for r, li in rows if r.line_item_id == lid)
+            mape = _mape(recs)
+            bias = float(sum(r.predicted_p50 - r.actual for r in recs) / len(recs))
+            item_rows.append({
+                "name": li.name,
+                "category": li.category,
+                "n": len(recs),
+                "mape": mape or 999,
+                "bias": bias,
+                "mape_display": f"{mape:.1f}%" if mape is not None else "n/a",
+                "bias_display": f"{bias:+,.0f}",
+            })
+        item_rows.sort(key=lambda x: x["mape"])
 
-        if not items:
-            return SkillResult.ok(
-                message="No comparable data found (no overlapping forecast vs actuals periods).",
-                content_blocks=[self._text_block("Cannot compute accuracy without overlapping forecast and actuals periods.")],
-            )
+        avg_mape = _mape([r for r, _ in rows])
+        overall_cov = _coverage([r for r, _ in rows])
 
-        avg_mape = total_mape / comparable
-        avg_bias = total_bias / comparable
-        hit_rate = (hit_count / comparable) * 100
-        avg_accuracy = sum(i["accuracy"] for i in items) / len(items)
-
-        # Sort by MAPE for worst performers
-        items.sort(key=lambda x: x["mape"], reverse=True)
-
+        summary_text = (
+            f"**Vintage accuracy for {version.name}** — {len(rows)} period observations. "
+            f"Overall MAPE: **{avg_mape:.1f}%**"
+            if avg_mape is not None
+            else f"**Vintage accuracy for {version.name}** — {len(rows)} observations."
+        )
         content_blocks = [
-            self._text_block(
-                f"**Forecast Accuracy Report: {version.name}**\n"
-                f"Analyzed {comparable} line items with comparable actuals data."
+            self._text_block(summary_text),
+            self._table_block(
+                title="Accuracy by Horizon",
+                columns=[
+                    {"key": "horizon", "label": "Horizon"},
+                    {"key": "n", "label": "N"},
+                    {"key": "mape", "label": "MAPE"},
+                    {"key": "p10_p90_coverage", "label": "P10–P90 Coverage"},
+                    {"key": "calibration", "label": "Calibration"},
+                ],
+                rows=horizon_rows,
             ),
             self._table_block(
-                title="Overall Metrics",
+                title=f"Most Accurate (top {top_n})",
                 columns=[
-                    {"key": "metric", "label": "Metric"},
-                    {"key": "value", "label": "Value"},
-                    {"key": "rating", "label": "Rating"},
+                    {"key": "name", "label": "Line Item"},
+                    {"key": "category", "label": "Category"},
+                    {"key": "mape_display", "label": "MAPE"},
+                    {"key": "bias_display", "label": "Bias"},
                 ],
-                rows=[
-                    {
-                        "metric": "Average MAPE",
-                        "value": f"{avg_mape:.1f}%",
-                        "rating": "Good" if avg_mape < 10 else ("Fair" if avg_mape < 20 else "Needs Improvement"),
-                    },
-                    {
-                        "metric": "Average Bias",
-                        "value": f"{'+' if avg_bias > 0 else ''}{avg_bias:.1f}%",
-                        "rating": "Over-forecasting" if avg_bias > 2 else ("Under-forecasting" if avg_bias < -2 else "Balanced"),
-                    },
-                    {
-                        "metric": "Hit Rate (±10%)",
-                        "value": f"{hit_rate:.0f}%",
-                        "rating": "Good" if hit_rate > 70 else ("Fair" if hit_rate > 50 else "Low"),
-                    },
-                    {
-                        "metric": "Average Accuracy",
-                        "value": f"{avg_accuracy:.1f}%",
-                        "rating": "Good" if avg_accuracy > 85 else ("Fair" if avg_accuracy > 70 else "Needs Improvement"),
-                    },
+                rows=[{k: v for k, v in r.items() if k not in ("mape", "bias", "n")} for r in item_rows[:top_n]],
+            ),
+            self._table_block(
+                title=f"Least Accurate (bottom {top_n})",
+                columns=[
+                    {"key": "name", "label": "Line Item"},
+                    {"key": "category", "label": "Category"},
+                    {"key": "mape_display", "label": "MAPE"},
+                    {"key": "bias_display", "label": "Bias"},
                 ],
+                rows=[{k: v for k, v in r.items() if k not in ("mape", "bias", "n")} for r in item_rows[-top_n:][::-1]],
             ),
         ]
 
-        # Worst performers
-        worst_rows = [
-            {
-                "line_item": i["name"],
-                "category": i["category"],
-                "forecast": f"${i['forecast']:,.0f}",
-                "actual": f"${i['actual']:,.0f}",
-                "mape": f"{i['mape']:.1f}%",
-                "bias": f"{'+' if i['bias'] > 0 else ''}{i['bias']:.1f}%",
-            }
-            for i in items[:top_n]
-        ]
-        content_blocks.append(
-            self._table_block(
-                title=f"Least Accurate Items (Top {top_n})",
-                columns=[
-                    {"key": "line_item", "label": "Line Item"},
-                    {"key": "category", "label": "Category"},
-                    {"key": "forecast", "label": "Forecast"},
-                    {"key": "actual", "label": "Actual"},
-                    {"key": "mape", "label": "MAPE"},
-                    {"key": "bias", "label": "Bias"},
-                ],
-                rows=worst_rows,
-            )
+        msg = (
+            f"Accuracy summary: MAPE={avg_mape:.1f}%, coverage={overall_cov:.0f}%"
+            if avg_mape is not None and overall_cov is not None
+            else "Accuracy summary generated"
         )
-
-        # Best performers
-        items.sort(key=lambda x: x["mape"])
-        best_rows = [
-            {
-                "line_item": i["name"],
-                "category": i["category"],
-                "accuracy": f"{i['accuracy']:.1f}%",
-                "mape": f"{i['mape']:.1f}%",
-            }
-            for i in items[:5]
-        ]
-        content_blocks.append(
-            self._table_block(
-                title="Most Accurate Items (Top 5)",
-                columns=[
-                    {"key": "line_item", "label": "Line Item"},
-                    {"key": "category", "label": "Category"},
-                    {"key": "accuracy", "label": "Accuracy"},
-                    {"key": "mape", "label": "MAPE"},
-                ],
-                rows=best_rows,
-            )
-        )
-
         return SkillResult.ok(
-            message=f"Accuracy report: {avg_mape:.1f}% MAPE, {hit_rate:.0f}% hit rate across {comparable} items",
+            message=msg,
             data={
                 "avg_mape": avg_mape,
-                "avg_bias": avg_bias,
-                "hit_rate": hit_rate,
-                "comparable_items": comparable,
+                "interval_coverage": overall_cov,
+                "records": len(rows),
+                "by_horizon": horizon_rows,
             },
             content_blocks=content_blocks,
+            panel_payload={
+                "panel": "accuracy_tracking",
+                "params": {"version_id": version.id},
+                "title": "Accuracy Tracking",
+            },
         )
 
     async def _bias_analysis(
         self, db: Session, version: ForecastVersion, params: dict
     ) -> SkillResult:
-        """Detect systematic over/under-forecasting patterns."""
+        """Detect systematic over/under-forecasting from vintage accuracy records."""
+        from app.models.fx import ForecastAccuracyRecord
+
         category_filter = params.get("category")
 
-        # Get per-line forecast-vs-actual comparison
-        query = (
-            db.query(
-                ForecastLineResult.line_item_id,
-                LineItem.name,
-                LineItem.category,
-                ForecastLineResult.period,
-                ForecastLineResult.p50,
-            )
-            .join(LineItem)
-            .filter(ForecastLineResult.version_id == version.id)
+        q = (
+            db.query(ForecastAccuracyRecord, LineItem)
+            .join(LineItem, LineItem.id == ForecastAccuracyRecord.line_item_id)
+            .filter(ForecastAccuracyRecord.version_id == version.id)
         )
         if category_filter:
-            query = query.filter(LineItem.category.ilike(f"%{category_filter}%"))
+            q = q.filter(LineItem.category.ilike(f"%{category_filter}%"))
+        rows = q.all()
 
-        forecast_rows = query.all()
+        if not rows:
+            return SkillResult.ok(
+                message="No vintage accuracy records for bias analysis.",
+                content_blocks=[
+                    self._text_block(
+                        "No period-aligned accuracy records found. "
+                        "Ingest actuals covering forecast periods first."
+                    )
+                ],
+            )
 
-        # Get actuals by line item + period
-        actuals_map = {}
-        for row in db.query(ActualsRecord.line_item_id, ActualsRecord.period, ActualsRecord.value).all():
-            actuals_map[(row.line_item_id, row.period)] = float(row.value)
-
-        # Compute bias per line item across all overlapping periods
-        line_biases: dict[int, dict] = {}  # line_item_id -> {sum_bias, count, name, category}
-        for row in forecast_rows:
-            actual = actuals_map.get((row.line_item_id, row.period))
-            if actual is None or actual == 0:
+        line_biases: dict[int, dict] = {}
+        for rec, li in rows:
+            if rec.actual == 0:
                 continue
-
-            if row.line_item_id not in line_biases:
-                line_biases[row.line_item_id] = {
-                    "name": row.name,
-                    "category": row.category,
-                    "sum_bias": 0,
-                    "sum_abs_error": 0,
+            if rec.line_item_id not in line_biases:
+                line_biases[rec.line_item_id] = {
+                    "name": li.name,
+                    "category": li.category,
+                    "sum_bias": 0.0,
+                    "sum_abs_error": 0.0,
                     "count": 0,
                 }
-
-            error = float(row.p50) - actual
-            line_biases[row.line_item_id]["sum_bias"] += error / actual * 100
-            line_biases[row.line_item_id]["sum_abs_error"] += abs(error) / actual * 100
-            line_biases[row.line_item_id]["count"] += 1
+            pct = rec.pct_error
+            if pct is None:
+                pct = abs(rec.predicted_p50 - rec.actual) / abs(rec.actual) * 100
+            signed = (rec.predicted_p50 - rec.actual) / abs(rec.actual) * 100
+            line_biases[rec.line_item_id]["sum_bias"] += signed
+            line_biases[rec.line_item_id]["sum_abs_error"] += float(pct)
+            line_biases[rec.line_item_id]["count"] += 1
 
         if not line_biases:
             return SkillResult.ok(
@@ -320,12 +297,10 @@ class AutoAccuracyReportSkill(BaseSkill):
                 content_blocks=[self._text_block("Insufficient overlapping data for bias analysis.")],
             )
 
-        # Identify systematic bias
         bias_items = []
-        for li_id, data in line_biases.items():
+        for _li_id, data in line_biases.items():
             avg_bias = data["sum_bias"] / data["count"]
             avg_mape = data["sum_abs_error"] / data["count"]
-            # Tracking signal: cumulative bias / MAD
             mad = avg_mape if avg_mape > 0 else 1
             tracking_signal = abs(avg_bias) / mad
 
@@ -344,13 +319,12 @@ class AutoAccuracyReportSkill(BaseSkill):
                 "periods": data["count"],
             })
 
-        # Sort by absolute bias
         bias_items.sort(key=lambda x: abs(x["avg_bias"]), reverse=True)
 
         over_count = sum(1 for b in bias_items if b["bias_type"] == "Over-forecasting")
         under_count = sum(1 for b in bias_items if b["bias_type"] == "Under-forecasting")
 
-        rows = [
+        table_rows = [
             {
                 "line_item": b["name"],
                 "category": b["category"],
@@ -364,7 +338,7 @@ class AutoAccuracyReportSkill(BaseSkill):
 
         content_blocks = [
             self._text_block(
-                f"**Bias Analysis: {version.name}**\n"
+                f"**Bias Analysis (vintage): {version.name}**\n"
                 f"- Over-forecasting: **{over_count}** items\n"
                 f"- Under-forecasting: **{under_count}** items\n"
                 f"- Neutral: **{len(bias_items) - over_count - under_count}** items"
@@ -379,7 +353,7 @@ class AutoAccuracyReportSkill(BaseSkill):
                     {"key": "direction", "label": "Direction"},
                     {"key": "periods", "label": "Periods"},
                 ],
-                rows=rows,
+                rows=table_rows,
             ),
         ]
 
@@ -389,6 +363,7 @@ class AutoAccuracyReportSkill(BaseSkill):
                 "over_forecasting": over_count,
                 "under_forecasting": under_count,
                 "neutral": len(bias_items) - over_count - under_count,
+                "source": "forecast_accuracy_records",
             },
             content_blocks=content_blocks,
         )
@@ -396,7 +371,9 @@ class AutoAccuracyReportSkill(BaseSkill):
     async def _trend_over_time(
         self, db: Session, version: ForecastVersion, params: dict
     ) -> SkillResult:
-        """Show accuracy evolution across forecast versions."""
+        """Show accuracy evolution across forecast versions using vintage records."""
+        from app.models.fx import ForecastAccuracyRecord
+
         versions = (
             db.query(ForecastVersion)
             .order_by(ForecastVersion.created_at)
@@ -407,42 +384,30 @@ class AutoAccuracyReportSkill(BaseSkill):
         if len(versions) < 2:
             return SkillResult.ok(
                 message="Need at least 2 forecast versions to show trends.",
-                content_blocks=[self._text_block("Create more forecast versions to track accuracy trends over time.")],
+                content_blocks=[
+                    self._text_block(
+                        "Create more forecast versions to track accuracy trends over time."
+                    )
+                ],
             )
 
-        # For each version, compute average MAPE against actuals
-        actuals_map = {}
-        for row in db.query(ActualsRecord.line_item_id, func.avg(ActualsRecord.value).label("avg")).group_by(ActualsRecord.line_item_id).all():
-            actuals_map[row.line_item_id] = float(row.avg)
-
-        version_metrics = []
+        version_metrics: list[dict[str, Any]] = []
         for v in versions:
-            forecasts = (
-                db.query(
-                    ForecastLineResult.line_item_id,
-                    func.avg(ForecastLineResult.p50).label("avg_fc"),
-                )
-                .filter(ForecastLineResult.version_id == v.id)
-                .group_by(ForecastLineResult.line_item_id)
+            recs = (
+                db.query(ForecastAccuracyRecord)
+                .filter(ForecastAccuracyRecord.version_id == v.id)
                 .all()
             )
-
-            mapes = []
-            for row in forecasts:
-                actual = actuals_map.get(row.line_item_id)
-                if actual and actual != 0:
-                    mapes.append(abs((float(row.avg_fc) - actual) / actual) * 100)
-
-            avg_mape = np.mean(mapes) if mapes else None
-
+            pcts = [r.pct_error for r in recs if r.pct_error is not None]
+            avg_mape = float(np.mean(pcts)) if pcts else None
             version_metrics.append({
                 "version": v.name,
                 "created": v.created_at.strftime("%Y-%m-%d") if v.created_at else "N/A",
-                "lines": len(mapes),
+                "lines": len(pcts),
                 "avg_mape": avg_mape,
             })
 
-        rows = [
+        table_rows = [
             {
                 "version": m["version"],
                 "date": m["created"],
@@ -453,20 +418,21 @@ class AutoAccuracyReportSkill(BaseSkill):
             for m in version_metrics
         ]
 
-        # Add trend arrows
-        for i in range(1, len(rows)):
+        for i in range(1, len(table_rows)):
             prev = version_metrics[i - 1]["avg_mape"]
             curr = version_metrics[i]["avg_mape"]
             if prev is not None and curr is not None:
                 if curr < prev:
-                    rows[i]["trend"] = "Improving"
+                    table_rows[i]["trend"] = "Improving"
                 elif curr > prev:
-                    rows[i]["trend"] = "Declining"
+                    table_rows[i]["trend"] = "Declining"
                 else:
-                    rows[i]["trend"] = "Stable"
+                    table_rows[i]["trend"] = "Stable"
 
         content_blocks = [
-            self._text_block(f"**Accuracy Trend** across {len(versions)} forecast versions"),
+            self._text_block(
+                f"**Accuracy Trend (vintage)** across {len(versions)} forecast versions"
+            ),
             self._table_block(
                 title="MAPE Over Time",
                 columns=[
@@ -476,20 +442,26 @@ class AutoAccuracyReportSkill(BaseSkill):
                     {"key": "avg_mape", "label": "Avg MAPE"},
                     {"key": "trend", "label": "Trend"},
                 ],
-                rows=rows,
+                rows=table_rows,
             ),
         ]
 
         return SkillResult.ok(
             message=f"Accuracy trend across {len(versions)} versions",
-            data={"versions_analyzed": len(versions), "metrics": version_metrics},
+            data={
+                "versions_analyzed": len(versions),
+                "metrics": version_metrics,
+                "source": "forecast_accuracy_records",
+            },
             content_blocks=content_blocks,
         )
 
     async def _line_item_detail(
         self, db: Session, version: ForecastVersion, params: dict
     ) -> SkillResult:
-        """Deep dive on a specific line item's accuracy."""
+        """Deep dive on a specific line item's vintage accuracy."""
+        from app.models.fx import ForecastAccuracyRecord
+
         name = params.get("line_item_name", "")
         if not name:
             return SkillResult.fail("Line item name is required for detail analysis.")
@@ -505,75 +477,87 @@ class AutoAccuracyReportSkill(BaseSkill):
         if not li:
             return SkillResult.fail(f"Line item '{name}' not found.")
 
-        # Get forecast periods
-        forecasts = (
-            db.query(ForecastLineResult)
+        recs = (
+            db.query(ForecastAccuracyRecord)
             .filter(
-                ForecastLineResult.version_id == version.id,
-                ForecastLineResult.line_item_id == li.id,
+                ForecastAccuracyRecord.version_id == version.id,
+                ForecastAccuracyRecord.line_item_id == li.id,
             )
-            .order_by(ForecastLineResult.period)
+            .order_by(ForecastAccuracyRecord.period)
             .all()
         )
 
-        # Get actuals for same periods
-        actuals_map = {}
-        for row in db.query(ActualsRecord).filter(ActualsRecord.line_item_id == li.id).all():
-            actuals_map[row.period] = float(row.value)
+        if not recs:
+            return SkillResult.ok(
+                message=f"No vintage accuracy records for {li.name}.",
+                content_blocks=[
+                    self._text_block(
+                        f"No period-aligned accuracy records for **{li.name}**. "
+                        "Ingest actuals for forecasted periods to populate them."
+                    )
+                ],
+            )
 
-        rows = []
+        table_rows = []
         errors = []
-        for f in forecasts:
-            actual = actuals_map.get(f.period)
-            if actual is not None and actual != 0:
-                error = (float(f.p50) - actual) / actual * 100
+        for rec in recs:
+            if rec.actual != 0:
+                error = (rec.predicted_p50 - rec.actual) / abs(rec.actual) * 100
                 abs_error = abs(error)
                 errors.append(abs_error)
-                rows.append({
-                    "period": f.period,
-                    "forecast": f"${f.p50:,.0f}",
-                    "actual": f"${actual:,.0f}",
+                table_rows.append({
+                    "period": rec.period,
+                    "horizon": str(rec.horizon_offset),
+                    "forecast": f"${rec.predicted_p50:,.0f}",
+                    "actual": f"${rec.actual:,.0f}",
                     "error": f"{'+' if error > 0 else ''}{error:.1f}%",
-                    "accuracy": f"{max(0, 100 - abs_error):.1f}%",
+                    "in_band": (
+                        "yes" if rec.within_p10_p90 is True
+                        else "no" if rec.within_p10_p90 is False
+                        else "n/a"
+                    ),
                 })
             else:
-                rows.append({
-                    "period": f.period,
-                    "forecast": f"${f.p50:,.0f}",
-                    "actual": "N/A",
+                table_rows.append({
+                    "period": rec.period,
+                    "horizon": str(rec.horizon_offset),
+                    "forecast": f"${rec.predicted_p50:,.0f}",
+                    "actual": f"${rec.actual:,.0f}",
                     "error": "N/A",
-                    "accuracy": "N/A",
+                    "in_band": "n/a",
                 })
 
-        avg_mape = np.mean(errors) if errors else 0
-        avg_accuracy = 100 - avg_mape if errors else 0
+        avg_mape = float(np.mean(errors)) if errors else 0.0
+        avg_accuracy = 100 - avg_mape if errors else 0.0
+        model = next((r.model_type for r in recs if r.model_type), "N/A")
 
         content_blocks = [
             self._text_block(
-                f"**Accuracy Detail: {li.name}** ({li.account_code})\n"
-                f"Category: {li.category} | Model: {forecasts[0].model_type if forecasts else 'N/A'}\n"
+                f"**Accuracy Detail (vintage): {li.name}** ({li.account_code})\n"
+                f"Category: {li.category} | Model: {model}\n"
                 f"Average MAPE: **{avg_mape:.1f}%** | Average Accuracy: **{avg_accuracy:.1f}%**"
             ),
             self._table_block(
-                title=f"{li.name} — Period-by-Period Accuracy",
+                title="Period Detail",
                 columns=[
                     {"key": "period", "label": "Period"},
+                    {"key": "horizon", "label": "Horizon"},
                     {"key": "forecast", "label": "Forecast"},
                     {"key": "actual", "label": "Actual"},
                     {"key": "error", "label": "Error"},
-                    {"key": "accuracy", "label": "Accuracy"},
+                    {"key": "in_band", "label": "In P10–P90"},
                 ],
-                rows=rows,
+                rows=table_rows,
             ),
         ]
 
         return SkillResult.ok(
-            message=f"Accuracy detail for {li.name}: {avg_mape:.1f}% MAPE, {avg_accuracy:.1f}% accuracy",
+            message=f"Detail for {li.name}: MAPE={avg_mape:.1f}%",
             data={
                 "line_item": li.name,
                 "avg_mape": avg_mape,
-                "avg_accuracy": avg_accuracy,
-                "periods_compared": len(errors),
+                "periods": len(recs),
+                "source": "forecast_accuracy_records",
             },
             content_blocks=content_blocks,
         )
