@@ -388,5 +388,14 @@ def register_all_skills() -> SkillsRegistry:
     registry.register(ListModelPresetsSkill())
     registry.register(ManageModelPresetsSkill())
 
+    # Actuals dataset precedence — visibility/control over manual-upload pins
+    from app.domain.skills.manage_actuals_dataset import (
+        ListActualsDatasetsSkill,
+        ManageActualsDatasetSkill,
+    )
+
+    registry.register(ListActualsDatasetsSkill())
+    registry.register(ManageActualsDatasetSkill())
+
     logger.info(f"Registered {len(registry.list_names())} skills: {registry.list_names()}")
     return registry

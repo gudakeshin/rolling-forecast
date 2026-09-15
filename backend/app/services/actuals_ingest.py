@@ -76,11 +76,18 @@ async def persist_pulled_actuals(
     *,
     actor_id: str | None,
     actor_username: str,
+    integration_connection_id: str | None = None,
 ) -> dict:
     """Persist a successful `IngestionResult` and run accuracy-snapshot matching.
 
     Raises HTTPException(400) if `result` reports failure — callers running
     outside a request cycle (the cron job) should catch that themselves.
+
+    Never pinned (`is_pinned` stays False) -- this is always an automated
+    pull (interactive `/integrations/*/pull` or the nightly cron), never the
+    manual chat/UI upload path (`app.domain.skills.ingest_actuals`), so it
+    never outranks a manually uploaded dataset. See
+    app/services/actuals_resolution.py.
     """
     if not result.success:
         raise HTTPException(400, result.error or "Pull failed")
@@ -94,6 +101,7 @@ async def persist_pulled_actuals(
         period_end=result.period_end,
         periods_count=result.periods_count,
         completeness_pct=result.completeness_pct,
+        integration_connection_id=integration_connection_id,
     )
     db.add(dataset)
     db.flush()

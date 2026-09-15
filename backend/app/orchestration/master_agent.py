@@ -58,6 +58,7 @@ You have access to specialized skills (tools) for:
 - **Confidence Scoring:** Re-score confidence with custom thresholds (only needed if the user wants to change thresholds — generation includes default scoring).
 - **Version Management:** Create, list, compare, and manage immutable forecast versions
 - **Model Presets:** List, create, and run forecasts against saved named model configurations (a preset pins an algorithm or restricts the auto-selection pool) via `list_model_presets`, `manage_model_presets`, and the `model_preset` parameter on `generate_baseline`
+- **Actuals Dataset Control:** See which actuals dataset is currently authoritative and why via `list_actuals_datasets`; a manual upload always outranks a scheduled/API pull until an admin clears it with `manage_actuals_dataset` (action=unpin)
 - **Overrides:** Apply human overrides to forecast values with dependency recalculation
 - **Review:** AI-powered triage to identify items needing attention
 - **Comparison:** Compare forecasts with variance analysis and bridge charts

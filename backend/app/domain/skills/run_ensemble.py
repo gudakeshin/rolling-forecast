@@ -125,12 +125,20 @@ class RunEnsembleSkill(BaseSkill):
                 content_blocks=[self._text_block("No low/medium confidence items to ensemble. Specify a line item name, or all items already have high confidence.")],
             )
 
-        # Get the dataset for historical data
-        dataset = (
-            db.query(ActualsDataset)
-            .filter(ActualsDataset.id == version.actuals_dataset_id)
-            .first()
-        ) if version.actuals_dataset_id else db.query(ActualsDataset).order_by(ActualsDataset.ingested_at.desc()).first()
+        # Get the dataset for historical data. A version's own actuals_dataset_id
+        # is authoritative once set (the dataset it was actually built from must
+        # never change retroactively) — only fall back to dataset resolution
+        # (pinned/manual over unattended-pull "latest") when it's unset.
+        if version.actuals_dataset_id:
+            dataset = (
+                db.query(ActualsDataset)
+                .filter(ActualsDataset.id == version.actuals_dataset_id)
+                .first()
+            )
+        else:
+            from app.services.actuals_resolution import resolve_current_dataset
+
+            dataset = resolve_current_dataset(db)
 
         if not dataset:
             return SkillResult.fail("No actuals dataset found for ensemble modeling.")

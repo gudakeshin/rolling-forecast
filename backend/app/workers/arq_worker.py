@@ -194,10 +194,15 @@ async def run_generate_baseline(
 
 async def scheduled_integration_sync(ctx: dict) -> dict:
     """Nightly: pull every auto-pull-enabled connection, then queue a new
-    draft baseline if new rows landed. Makes the 'rolling' in Rolling Forecast
-    real instead of manual-click-only."""
+    draft baseline if new rows landed *and* one of the just-pulled datasets is
+    actually the one that would be used (i.e. no manually uploaded dataset is
+    pinned ahead of it — see app/services/actuals_resolution.py). Makes the
+    'rolling' in Rolling Forecast real instead of manual-click-only, without
+    silently overriding an analyst's fresh manual upload."""
     from app.config import settings
     from app.database import SessionLocal
+    from app.services.actuals_resolution import resolve_current_dataset
+    from app.services.notifications import notify_users, users_with_permission
     from app.services.scheduled_ingestion import sync_all_enabled_connections
 
     db = SessionLocal()
@@ -214,19 +219,49 @@ async def scheduled_integration_sync(ctx: dict) -> dict:
             logger.warning("scheduled_integration_sync error: %s", err)
 
         if summary["total_rows"] > 0 and settings.auto_regenerate_on_ingest:
-            from app.services.job_queue import enqueue_generate_baseline
+            current = resolve_current_dataset(db)
+            pulled_ids = {p["dataset_id"] for p in summary["pulled"] if p.get("dataset_id")}
+            if current is not None and current.id in pulled_ids:
+                from app.services.job_queue import enqueue_generate_baseline
 
-            job = await enqueue_generate_baseline(
-                version_name="pending",
-                params={"model_type": "auto"},
-                user_id=None,
-                conversation_id="cron-scheduled-integration-sync",
-            )
-            summary["regenerate_job_id"] = job.get("job_id")
-            logger.info(
-                "scheduled_integration_sync: queued baseline regeneration job %s",
-                job.get("job_id"),
-            )
+                job = await enqueue_generate_baseline(
+                    version_name="pending",
+                    params={"model_type": "auto"},
+                    user_id=None,
+                    conversation_id="cron-scheduled-integration-sync",
+                )
+                summary["regenerate_job_id"] = job.get("job_id")
+                logger.info(
+                    "scheduled_integration_sync: queued baseline regeneration job %s",
+                    job.get("job_id"),
+                )
+            else:
+                # New data landed but a manually uploaded dataset remains
+                # pinned as current -- don't silently regenerate off (or
+                # displace) it. Let can_generate users know instead.
+                names = ", ".join(p["connection_name"] for p in summary["pulled"])
+                notify_users(
+                    db,
+                    users_with_permission(db, "can_generate"),
+                    kind="actuals_pull_superseded",
+                    title="New actuals pulled but not applied",
+                    body=(
+                        f"New actuals landed from {names}, but a manually uploaded "
+                        f"dataset remains authoritative, so no forecast was "
+                        f"regenerated. Unpin it (manage_actuals_dataset) to let "
+                        f"scheduled data take over."
+                    ),
+                    entity_type="actuals_dataset",
+                    entity_id=current.id if current else None,
+                    dedup_key_prefix=f"actuals_pull_superseded:{','.join(sorted(pulled_ids))}",
+                )
+                db.commit()
+                summary["regenerate_skipped_reason"] = "superseded_by_pinned_dataset"
+                logger.info(
+                    "scheduled_integration_sync: skipped baseline regeneration, "
+                    "pinned dataset %s remains current",
+                    current.id if current else None,
+                )
         return summary
     finally:
         db.close()

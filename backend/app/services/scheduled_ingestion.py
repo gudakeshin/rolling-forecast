@@ -61,6 +61,7 @@ async def run_scheduled_pull(db: Session, conn: IntegrationConnection) -> dict:
     return await persist_pulled_actuals(
         db, result, conn.kind, source_name,
         actor_id=None, actor_username=SCHEDULER_ACTOR_USERNAME,
+        integration_connection_id=conn.id,
     )
 
 
@@ -77,11 +78,17 @@ async def sync_all_enabled_connections(db: Session) -> dict:
     synced = 0
     total_rows = 0
     errors: list[dict] = []
+    pulled: list[dict] = []
     for conn in connections:
         try:
             outcome = await run_scheduled_pull(db, conn)
             synced += 1
             total_rows += outcome.get("row_count", 0) or 0
+            pulled.append({
+                "connection_id": conn.id,
+                "connection_name": conn.name,
+                "dataset_id": outcome.get("dataset_id"),
+            })
         except Exception as e:
             logger.exception("Scheduled pull failed for connection %s (%s)", conn.id, conn.name)
             db.rollback()
@@ -91,4 +98,5 @@ async def sync_all_enabled_connections(db: Session) -> dict:
         "connections_synced": synced,
         "total_rows": total_rows,
         "errors": errors,
+        "pulled": pulled,
     }

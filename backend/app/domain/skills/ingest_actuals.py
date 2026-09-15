@@ -102,6 +102,10 @@ class IngestActualsSkill(BaseSkill):
                 periods_count=result.periods_count,
                 missing_periods=",".join(result.missing_periods) if result.missing_periods else None,
                 completeness_pct=result.completeness_pct,
+                # This skill is exclusively the manual (chat/UI) upload path --
+                # make it authoritative over any unattended scheduled/API pull.
+                # See app/services/actuals_resolution.py.
+                is_pinned=True,
             )
             db.add(dataset)
             db.flush()
@@ -116,6 +120,7 @@ class IngestActualsSkill(BaseSkill):
                 ",".join(result.missing_periods) if result.missing_periods else None
             )
             dataset.completeness_pct = result.completeness_pct
+            dataset.is_pinned = True
             # Re-ingesting identical content is still "the data given to us
             # just now" -- bump ingested_at so latest-dataset resolution
             # (generate_baseline/plan_forecast) picks this over anything

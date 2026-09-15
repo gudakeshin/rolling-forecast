@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.domain.engines.model_registry import get_model_registry
-from app.models.actuals import ActualsDataset, ActualsRecord
+from app.models.actuals import ActualsRecord
 from app.models.line_item import LineItem
 from app.services.period_calendar import get_calendar_config, period_to_date
 
@@ -71,21 +71,23 @@ class PlanForecastSkill(BaseSkill):
         db: Session = context.db
         start_time = time.time()
 
-        # Get dataset. An explicit param always wins; otherwise use the truly
-        # most-recently-ingested dataset rather than "last_dataset_id" working
-        # memory — that memory is conversation-scoped and goes stale the
-        # moment actuals are re-ingested from a different conversation (or a
-        # fresh session), silently re-analyzing old data forever.
+        # Get dataset. An explicit param always wins; otherwise resolve_current_dataset
+        # prefers the most recently ingested *manually uploaded* (pinned) dataset
+        # over anything ingested since (including unattended scheduled/API pulls),
+        # falling back to plain "latest ingested" only when nothing is pinned.
+        # This intentionally does not consult "last_dataset_id" working memory —
+        # that memory is conversation-scoped and goes stale the moment actuals
+        # are re-ingested from a different conversation (or a fresh session),
+        # silently re-analyzing old data forever.
+        from app.services.actuals_resolution import resolve_current_dataset
+
         dataset_id = params.get("dataset_id")
-        if not dataset_id:
-            dataset = db.query(ActualsDataset).order_by(ActualsDataset.ingested_at.desc()).first()
-            if not dataset:
-                return SkillResult.fail("No actuals data found. Please upload actuals first.")
-            dataset_id = dataset.id
-        else:
-            dataset = db.query(ActualsDataset).filter(ActualsDataset.id == dataset_id).first()
-            if not dataset:
+        dataset = resolve_current_dataset(db, dataset_id)
+        if not dataset:
+            if dataset_id:
                 return SkillResult.fail(f"Dataset '{dataset_id}' not found.")
+            return SkillResult.fail("No actuals data found. Please upload actuals first.")
+        dataset_id = dataset.id
 
         # Get non-calculated line items in the caller's BU scope
         from app.services.permissions import resolve_skill_user, scoped_line_items

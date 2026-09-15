@@ -56,6 +56,15 @@ def ensure_app_db_schema_columns() -> None:
             conn.execute(
                 text("ALTER TABLE line_items ADD COLUMN is_target_bearing BOOLEAN DEFAULT 1")
             )
+        ad_cols = {c["name"] for c in inspect(engine).get_columns("actuals_datasets")}
+        if "is_pinned" not in ad_cols:
+            conn.execute(
+                text("ALTER TABLE actuals_datasets ADD COLUMN is_pinned BOOLEAN DEFAULT 0")
+            )
+        if "integration_connection_id" not in ad_cols:
+            conn.execute(
+                text("ALTER TABLE actuals_datasets ADD COLUMN integration_connection_id VARCHAR(36)")
+            )
 
 
 @pytest.fixture(scope="session", autouse=True)

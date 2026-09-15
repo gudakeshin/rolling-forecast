@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     Integer,
+    Boolean,
     ForeignKey,
     Text,
     UniqueConstraint,
@@ -49,6 +50,15 @@ class ActualsDataset(Base):
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Set only by manual (chat/UI) ingestion — makes this dataset authoritative
+    # for "current dataset" resolution over anything auto-pulled afterward.
+    # See app/services/actuals_resolution.py.
+    is_pinned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Set only by scheduled/API pulls (app/services/actuals_ingest.py) —
+    # which IntegrationConnection produced this dataset, if any.
+    integration_connection_id: Mapped[str | None] = mapped_column(
+        ForeignKey("integration_connections.id"), nullable=True
+    )
 
     records: Mapped[list["ActualsRecord"]] = relationship(
         back_populates="dataset", cascade="all, delete-orphan"
