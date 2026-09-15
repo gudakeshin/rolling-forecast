@@ -1,7 +1,9 @@
 """Per-fold-origin driver forecasts for honest Phase 8 CV (exog_mode=forecast).
 
-Caches forecasts keyed by ``(driver_id, train_end_period, horizon)`` so folds that
-share an origin across models do not re-fit the driver.
+Caches forecasts keyed by ``(driver_id, train_end_period, horizon, data_fingerprint)``
+so folds that share an origin across models do not re-fit the driver, while a change
+to the driver's underlying actuals (a re-upload, a correction, new data landing)
+naturally misses the cache instead of silently replaying a stale forecast.
 """
 
 from __future__ import annotations
@@ -15,12 +17,28 @@ from app.domain.engines.model_registry import ModelRegistry
 from app.services.driver_series import materialize_driver_series
 from app.services.period_calendar import FiscalCalendarConfig, period_to_date
 
-# Process-local cache — cleared between baseline runs via ``clear_driver_forecast_cache``.
-_CACHE: dict[tuple[int, str, int], pd.Series] = {}
+# Process-local cache. Unbounded for the life of the process — the data
+# fingerprint in the key (see _fingerprint below) is what keeps entries from
+# going stale, not eviction, so this never needs clearing between runs. A
+# previous version relied on callers invoking clear_driver_forecast_cache()
+# between baseline runs; nothing ever did, so a driver's forecast at a given
+# origin was computed once and served forever regardless of new data. Kept
+# as a no-op for any external caller still importing it.
+_CACHE: dict[tuple[int, str, int, int], pd.Series] = {}
 
 
 def clear_driver_forecast_cache() -> None:
     _CACHE.clear()
+
+
+def _fingerprint(hist: pd.Series) -> int:
+    """Cheap fingerprint of a driver's truncated actuals history.
+
+    Changes whenever a value anywhere in the history changes, is added, or is
+    removed — a re-upload or correction lands a fresh cache key instead of
+    reusing a forecast fit before the edit.
+    """
+    return hash(tuple(round(float(v), 6) for v in hist.values))
 
 
 def forecast_driver_at_origin(
@@ -42,19 +60,21 @@ def forecast_driver_at_origin(
     if horizon <= 0:
         return pd.Series(dtype=float)
 
-    cache_key = (int(driver_id), str(train_end_period), int(horizon))
+    # Materializing history is a cheap indexed read (already required on any
+    # cache miss); doing it before the cache check lets the key reflect the
+    # actual data instead of just the (driver, origin, horizon) coordinates.
+    actual = materialize_driver_series(db, driver_id=driver_id, value_type="actual")
+    hist = actual[actual.index.astype(str) <= str(train_end_period)].astype(float)
+    cache_key = (int(driver_id), str(train_end_period), int(horizon), _fingerprint(hist))
     if cache_key in _CACHE:
         cached = _CACHE[cache_key]
         return cached.reindex(pd.Index(future_periods, dtype=str))
 
-    actual = materialize_driver_series(db, driver_id=driver_id, value_type="actual")
     if actual.empty:
         empty = pd.Series(dtype=float)
         _CACHE[cache_key] = empty
         return empty
 
-    # Restrict to periods at or before the fold origin
-    hist = actual[actual.index.astype(str) <= str(train_end_period)].astype(float)
     if len(hist) < 12:
         empty = pd.Series(dtype=float)
         _CACHE[cache_key] = empty
