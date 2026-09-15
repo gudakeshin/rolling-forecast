@@ -12,6 +12,7 @@ from app.models.fx import ForecastAccuracyRecord
 from app.models.line_item import LineItem
 from app.models.override import Override
 from app.schemas.forecast import PanelDataResponse
+from app.services.audit import record_audit
 from app.services.permissions import require_permission, user_can_view_line_item
 
 router = APIRouter(prefix="/panel", tags=["panel"])
@@ -106,6 +107,42 @@ async def get_version_detail(
     if not v:
         raise HTTPException(status_code=404, detail="Forecast version not found")
     return _version_payload(v)
+
+
+@router.delete("/version/{version_id}")
+async def delete_version(
+    version_id: str,
+    current_user: User = Depends(require_permission("generate")),
+    db: Session = Depends(get_db),
+):
+    """Archive a draft forecast version so it drops out of the version picker.
+
+    Restricted to status == "draft" regardless of version_type — a what-if
+    scenario and a plain "Generate a baseline forecast" re-run are equally
+    disposable while still draft, but anything that has entered review,
+    been approved, or published carries approvals/accuracy history and stays
+    undeletable through this route.
+    """
+    version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
+    if not version:
+        raise HTTPException(404, "Forecast version not found")
+    if version.status == "archived":
+        return {"id": version.id, "status": "archived"}
+    if version.status != "draft":
+        raise HTTPException(400, "Only draft versions can be deleted")
+
+    version.status = "archived"
+    record_audit(
+        db,
+        action="forecast_version.archive",
+        entity_type="forecast_version",
+        entity_id=version.id,
+        actor_id=current_user.id,
+        actor_username=current_user.username,
+        details={"name": version.name, "version_type": version.version_type},
+    )
+    db.commit()
+    return {"id": version.id, "status": "archived"}
 
 
 @router.get("/forecast-table/{version_id}", response_model=PanelDataResponse)

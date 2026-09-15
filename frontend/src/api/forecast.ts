@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPut } from './client';
+import { apiDelete, apiGet, apiPost, apiPut } from './client';
 import type { ForecastVersion, ForecastLineResult } from '../types/forecast';
 
 // ─── Forecast Versions ───────────────────────────────────
@@ -10,6 +10,17 @@ export async function getVersions(scenario?: string): Promise<ForecastVersion[]>
 
 export async function getVersion(versionId: string): Promise<ForecastVersion> {
   return apiGet<ForecastVersion>(`/panel/version/${versionId}`);
+}
+
+/** Archives a draft forecast version (what-if scenario or plain baseline
+ * re-run) so it drops out of the version picker. Rejected for anything past
+ * draft status — see backend `delete_version`. */
+export async function archiveForecastVersion(
+  versionId: string,
+): Promise<{ id: string; status: string }> {
+  const result = await apiDelete<{ id: string; status: string }>(`/panel/version/${versionId}`);
+  if (!result) throw new Error('Failed to delete version');
+  return result;
 }
 
 export async function getLatestVersion(): Promise<ForecastVersion | null> {

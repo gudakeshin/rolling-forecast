@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { GitBranch, Loader2, Plus, Trash2 } from 'lucide-react';
 import { listDrivers, type Driver } from '../../api/drivers';
-import { createWhatIf, deleteScenario, type DriverShock } from '../../api/scenarios';
+import { createWhatIf, type DriverShock } from '../../api/scenarios';
+import { archiveForecastVersion } from '../../api/forecast';
 import { useI18n } from '../../i18n/useI18n';
 import { usePanelStore } from '../../store/panelStore';
 import { useVersionStore } from '../../store/versionStore';
@@ -32,8 +33,8 @@ export function WhatIfPanel() {
   const [result, setResult] = useState<any>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const scenarioVersions = versions
-    .filter((v) => v.version_type === 'scenario')
+  const draftVersions = versions
+    .filter((v) => v.status === 'draft')
     .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
 
   const handleDelete = useCallback(
@@ -46,7 +47,7 @@ export function WhatIfPanel() {
       if (!ok) return;
       setDeletingId(versionId);
       try {
-        await deleteScenario(versionId);
+        await archiveForecastVersion(versionId);
         toast.success(t('whatIf.delete.success', { label: versionLabel }));
         await refreshVersions();
       } catch (e: any) {
@@ -247,11 +248,12 @@ export function WhatIfPanel() {
 
       <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl p-3 space-y-2">
         <span className="text-sm font-semibold text-white">{t('whatIf.existing')}</span>
-        {scenarioVersions.length === 0 ? (
+        <p className="text-xs text-surface-500">{t('whatIf.existing.subtitle')}</p>
+        {draftVersions.length === 0 ? (
           <p className="text-xs text-surface-500">{t('whatIf.existing.empty')}</p>
         ) : (
           <ul className="space-y-1">
-            {scenarioVersions.map((v) => (
+            {draftVersions.map((v) => (
               <li
                 key={v.id}
                 className="flex items-center justify-between gap-2 text-xs bg-surface-900 border border-surface-700 rounded-lg px-2 py-1.5"
@@ -259,10 +261,19 @@ export function WhatIfPanel() {
                 <button
                   type="button"
                   onClick={() => setActiveVersionId(v.id)}
-                  className="truncate text-left text-surface-200 hover:underline"
+                  className="flex-1 min-w-0 flex items-center gap-1.5 text-left text-surface-200 hover:underline"
                   title={v.name}
                 >
-                  {v.label || v.name}
+                  <span
+                    className={`shrink-0 px-1 py-0.5 rounded text-[10px] font-medium uppercase tracking-wide ${
+                      v.version_type === 'scenario'
+                        ? 'bg-deloitte-green/15 text-deloitte-green'
+                        : 'bg-surface-700 text-surface-400'
+                    }`}
+                  >
+                    {v.version_type === 'scenario' ? t('whatIf.badge.scenario') : t('whatIf.badge.baseline')}
+                  </span>
+                  <span className="truncate">{v.label || v.name}</span>
                 </button>
                 <button
                   type="button"
