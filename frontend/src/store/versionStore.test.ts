@@ -71,6 +71,39 @@ describe('versionStore', () => {
     expect(useVersionStore.getState().activeVersionId).toBe('up-1');
   });
 
+  it('setActiveVersionId cascades to open panels bound to a version', () => {
+    useVersionStore.setState({
+      versions: [
+        makeVersion({ id: 'base-1', name: 'Base', scenario: 'base' }),
+        makeVersion({ id: 'base-2', name: 'Base v2', scenario: 'base' }),
+      ],
+      activeVersionId: 'base-1',
+      activeScenario: 'base',
+    });
+
+    const setPanelParams = vi.fn();
+    const setLoading = vi.fn();
+    const bridgeState = {
+      isOpen: true,
+      panelParams: { version_id: 'base-1', offset: 5 },
+      setPanelParams,
+      setLoading,
+    };
+    (globalThis as any).__RF_PANEL_STORE__ = { getState: () => bridgeState };
+    (globalThis as any).__RF_PANEL_STORE_2__ = undefined;
+
+    useVersionStore.getState().setActiveVersionId('base-2');
+
+    expect(useVersionStore.getState().activeVersionId).toBe('base-2');
+    expect(setPanelParams).toHaveBeenCalledWith(
+      expect.objectContaining({ version_id: 'base-2', offset: 0 }),
+    );
+    expect(setLoading).toHaveBeenCalledWith(true);
+
+    delete (globalThis as any).__RF_PANEL_STORE__;
+    delete (globalThis as any).__RF_PANEL_STORE_2__;
+  });
+
   it('switches scenario and picks first version in that scenario', () => {
     useVersionStore.setState({
       versions: [

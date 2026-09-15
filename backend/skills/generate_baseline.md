@@ -35,6 +35,15 @@ parameters:
       all registered models are considered (subject to the two-stage cost screen).
       Use when the user wants to limit comparison scope (e.g., ["ets", "arima"]).
     required: false
+  - name: model_preset
+    type: string
+    description: >
+      Name or id of a saved model preset (see list_model_presets /
+      manage_model_presets) to use instead of specifying model_type/
+      models_to_test directly. Any model_type/models_to_test/horizon_months
+      passed explicitly alongside this still take priority over the preset's
+      values — the preset only fills in what wasn't explicitly given.
+    required: false
   - name: random_seed
     type: integer
     description: Random seed for reproducibility (default 42)
@@ -83,3 +92,5 @@ The response includes a MAPE comparison table showing how each model scored per 
 - User confirmed auto-selection → `model_type="auto"` (default)
 - "Only use ETS and ARIMA" → `model_type="auto"`, `models_to_test=["ets", "arima"]`
 - "Use Prophet for everything" → `model_type="prophet"`
+- "Run a forecast with my Conservative model" → `model_preset="Conservative"`
+- "Run it with Conservative but only 6 months" → `model_preset="Conservative"`, `horizon_months=6`

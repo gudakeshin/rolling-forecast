@@ -21,6 +21,7 @@ from app.models.sign_prior import SignPrior
 from app.models.anomaly_dismissal import AnomalyDismissal
 from app.models.notification import Notification
 from app.models.review_undo import ReviewUndoSnapshot
+from app.models.model_preset import ModelPreset
 
 __all__ = [
     "User",
@@ -60,4 +61,5 @@ __all__ = [
     "AnomalyDismissal",
     "Notification",
     "ReviewUndoSnapshot",
+    "ModelPreset",
 ]

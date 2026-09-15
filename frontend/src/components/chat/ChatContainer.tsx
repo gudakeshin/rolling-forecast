@@ -1,5 +1,6 @@
 import { useRef, useEffect } from 'react';
 import { useChatStore } from '../../store/chatStore';
+import { useVersionStore } from '../../store/versionStore';
 import { MessageList } from './MessageList';
 import { InputBar } from './InputBar';
 import { getConversations, sendMessage } from '../../api/chat';
@@ -7,6 +8,20 @@ import type { ContentBlock } from '../../types/chat';
 import { Upload, BarChart3, Search, GitCompare } from 'lucide-react';
 import { useI18n } from '../../i18n/useI18n';
 import { toast } from '../../store/toastStore';
+
+/** A skill just surfaced a forecast version (e.g. generate_baseline's
+ * "View Full Forecast Table" trigger) — make it the app's active version so
+ * panels opened afterward (sidebar nav, Header dropdown) show it instead of
+ * whatever was active before this run. */
+function syncActiveVersionFromBlock(block: ContentBlock) {
+  if (block.type !== 'panel_trigger') return;
+  const versionId = block.data?.params?.version_id;
+  if (!versionId || versionId === useVersionStore.getState().activeVersionId) return;
+  void useVersionStore
+    .getState()
+    .refresh()
+    .then(() => useVersionStore.getState().setActiveVersionId(versionId));
+}
 
 export function ChatContainer() {
   const {
@@ -99,6 +114,7 @@ export function ChatContainer() {
             case 'content_block':
               addStreamContentBlock(event.data as ContentBlock);
               finalBlocks.push(event.data as ContentBlock);
+              syncActiveVersionFromBlock(event.data as ContentBlock);
               break;
             case 'tool_start':
               setToolInProgress(event.data.tool_name);
@@ -108,7 +124,12 @@ export function ChatContainer() {
               break;
             case 'message_end':
               finalContent = event.data.content || '';
-              if (event.data.content_blocks) finalBlocks = event.data.content_blocks;
+              if (event.data.content_blocks) {
+                finalBlocks = event.data.content_blocks;
+                // Non-streaming responses deliver blocks only here, never via
+                // individual 'content_block' events — cover that path too.
+                finalBlocks.forEach(syncActiveVersionFromBlock);
+              }
               finalToolCalls = event.data.tool_calls || [];
               break;
             case 'error':

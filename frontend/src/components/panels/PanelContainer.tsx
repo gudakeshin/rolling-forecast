@@ -3,7 +3,7 @@ import {
   Loader2, Table, GitCompare, Edit, ClipboardList, Settings2,
   LayoutDashboard, Shield, Target, FileInput, AlertTriangle, FolderOpen,
   CheckSquare, Activity, Sparkles, GitBranch, Brain, Lightbulb,
-  Inbox, RefreshCw, MessageSquare,
+  Inbox, RefreshCw, MessageSquare, Play,
 } from 'lucide-react';
 import {
   usePanelStore,
@@ -57,6 +57,9 @@ const ExplainabilityPanel = lazy(() =>
   import('./ExplainabilityPanel').then((m) => ({ default: memo(m.ExplainabilityPanel) })),
 );
 const WhatIfPanel = lazy(() => import('./WhatIfPanel').then((m) => ({ default: memo(m.WhatIfPanel) })));
+const RunForecastPanel = lazy(() =>
+  import('./RunForecastPanel').then((m) => ({ default: memo(m.RunForecastPanel) })),
+);
 const HeuristicsPanel = lazy(() => import('./HeuristicsPanel').then((m) => ({ default: memo(m.HeuristicsPanel) })));
 const AdminConsolePanel = lazy(() =>
   import('./AdminConsolePanel').then((m) => ({ default: memo(m.AdminConsolePanel) })),
@@ -87,6 +90,7 @@ const panelIcons: Record<string, any> = {
   drivers: Activity,
   explainability: Sparkles,
   what_if: GitBranch,
+  run_forecast: Play,
   heuristics: Brain,
   anomaly_dashboard: AlertTriangle,
   document_library: FolderOpen,
@@ -113,6 +117,11 @@ const STATIC_PANELS: Record<string, { title: string; titleKey?: MessageKey; rend
     render: () => <ExplainabilityPanel />,
   },
   what_if: { title: 'What If', titleKey: 'panel.whatIf', render: () => <WhatIfPanel /> },
+  run_forecast: {
+    title: 'Run Forecast',
+    titleKey: 'panel.runForecast',
+    render: () => <RunForecastPanel />,
+  },
   heuristics: { title: 'Heuristics', titleKey: 'panel.heuristics', render: () => <HeuristicsPanel /> },
   admin_console: { title: 'Admin Console', render: () => <AdminConsolePanel /> },
 };

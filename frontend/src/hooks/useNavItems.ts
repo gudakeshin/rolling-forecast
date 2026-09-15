@@ -13,6 +13,7 @@ import {
   Activity,
   FolderOpen,
   Settings2,
+  Play,
 } from 'lucide-react';
 import { useAuthStore, useCan } from '../store/authStore';
 import { usePanelStore } from '../store/panelStore';
@@ -62,6 +63,13 @@ export function useNavItems(): NavGroup[] {
     {
       titleKey: 'nav.group.forecast',
       items: [
+        {
+          key: 'run_forecast',
+          labelKey: 'nav.runForecast',
+          icon: Play,
+          show: canGenerate,
+          onClick: open('run_forecast'),
+        },
         {
           key: 'forecast_table',
           labelKey: 'nav.forecast',

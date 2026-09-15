@@ -1,6 +1,7 @@
 """IngestActuals skill -- loads and validates actuals data from CSV/API."""
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
@@ -115,6 +116,11 @@ class IngestActualsSkill(BaseSkill):
                 ",".join(result.missing_periods) if result.missing_periods else None
             )
             dataset.completeness_pct = result.completeness_pct
+            # Re-ingesting identical content is still "the data given to us
+            # just now" -- bump ingested_at so latest-dataset resolution
+            # (generate_baseline/plan_forecast) picks this over anything
+            # ingested in between the two identical uploads.
+            dataset.ingested_at = datetime.now(timezone.utc)
             db.flush()
 
         # Create/update LineItems

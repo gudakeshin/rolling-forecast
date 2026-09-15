@@ -64,6 +64,10 @@ class ForecastVersion(Base):
     random_seed: Mapped[int] = mapped_column(Integer, default=42)
     # Selection rule pinned at version creation (mape | mase_pinball_complexity)
     selection_rule: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Saved model preset used to generate this version, if any (see ModelPreset)
+    model_preset_id: Mapped[str | None] = mapped_column(
+        ForeignKey("model_presets.id"), nullable=True
+    )
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(

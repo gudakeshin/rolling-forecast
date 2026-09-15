@@ -20,6 +20,7 @@ const en = {
   'nav.causalDrivers': 'Causal Drivers',
   'nav.explain': 'Explainability',
   'nav.whatIf': 'What-If Scenarios',
+  'nav.runForecast': 'Run Forecast',
   'nav.anomalies': 'Anomalies',
   'nav.heuristics': 'Heuristics',
   'nav.admin': 'Admin Console',
@@ -246,6 +247,24 @@ const en = {
     'Delete "{label}"? This removes it from the version picker. The underlying forecast data is archived, not erased.',
   'whatIf.delete.success': 'Deleted {label}',
   'whatIf.delete.error': 'Failed to delete version',
+  // Run Forecast panel
+  'runForecast.title': 'Run forecast',
+  'runForecast.subtitle':
+    'Generate a new forecast version using a saved model preset. Manage presets in Admin → Models.',
+  'runForecast.preset': 'Model preset',
+  'runForecast.horizon': 'Horizon override (months)',
+  'runForecast.horizonPlaceholder': 'preset default',
+  'runForecast.scenario': 'Scenario label',
+  'runForecast.run': 'Run forecast',
+  'runForecast.starting': 'Starting…',
+  'runForecast.done': 'Forecast complete',
+  'runForecast.openTable': 'Open forecast table',
+  'runForecast.emptyPresets':
+    'No model presets yet. Create one in Admin → Models to run a forecast here.',
+  'runForecast.error.noPreset': 'Select a model preset first',
+  'runForecast.error.loadPresets': 'Failed to load model presets',
+  'runForecast.error.run': 'Failed to start forecast',
+  'runForecast.error.jobFailed': 'Forecast job failed',
   'heuristics.subtitle':
     'Patterns mined from closed cycles. Nothing here changes a forecast until you promote it, and override-derived patterns stay advisory even then.',
   'heuristics.status.candidate': 'Candidates',
@@ -275,6 +294,7 @@ const en = {
   'panel.explainability': 'Explain Variance',
   'panel.whatIf': 'What-if Scenario',
   'panel.heuristics': 'Learned Heuristics',
+  'panel.runForecast': 'Run Forecast',
 } as const;
 
 type MessageDict = { [K in keyof typeof en]: string };
@@ -297,6 +317,7 @@ const es: MessageDict = {
   'nav.causalDrivers': 'Drivers causales',
   'nav.explain': 'Explicabilidad',
   'nav.whatIf': 'Escenarios what-if',
+  'nav.runForecast': 'Ejecutar pronóstico',
   'nav.anomalies': 'Anomalías',
   'nav.heuristics': 'Heurísticas',
   'nav.admin': 'Consola de administración',
@@ -520,6 +541,24 @@ const es: MessageDict = {
     '¿Eliminar "{label}"? Esto lo quita del selector de versiones. Los datos del pronóstico subyacente se archivan, no se borran.',
   'whatIf.delete.success': '{label} eliminado',
   'whatIf.delete.error': 'Error al eliminar la versión',
+  // Panel de ejecutar pronóstico
+  'runForecast.title': 'Ejecutar pronóstico',
+  'runForecast.subtitle':
+    'Genera una nueva versión de pronóstico usando un modelo guardado. Administra los modelos en Admin → Modelos.',
+  'runForecast.preset': 'Modelo guardado',
+  'runForecast.horizon': 'Horizonte (meses, opcional)',
+  'runForecast.horizonPlaceholder': 'valor por defecto',
+  'runForecast.scenario': 'Etiqueta de escenario',
+  'runForecast.run': 'Ejecutar pronóstico',
+  'runForecast.starting': 'Iniciando…',
+  'runForecast.done': 'Pronóstico completo',
+  'runForecast.openTable': 'Abrir tabla de pronóstico',
+  'runForecast.emptyPresets':
+    'Aún no hay modelos guardados. Crea uno en Admin → Modelos para ejecutar un pronóstico aquí.',
+  'runForecast.error.noPreset': 'Selecciona un modelo primero',
+  'runForecast.error.loadPresets': 'Error al cargar los modelos guardados',
+  'runForecast.error.run': 'Error al iniciar el pronóstico',
+  'runForecast.error.jobFailed': 'El trabajo de pronóstico falló',
   'heuristics.subtitle':
     'Patrones extraídos de ciclos cerrados. Nada aquí cambia un pronóstico hasta que lo promueva, y los patrones derivados de ajustes siguen siendo solo informativos.',
   'heuristics.status.candidate': 'Candidatos',
@@ -550,6 +589,7 @@ const es: MessageDict = {
   'panel.explainability': 'Explicar variación',
   'panel.whatIf': 'Escenario what-if',
   'panel.heuristics': 'Heurísticas aprendidas',
+  'panel.runForecast': 'Ejecutar pronóstico',
 };
 
 const messages: Record<Locale, MessageDict> = { en, es };

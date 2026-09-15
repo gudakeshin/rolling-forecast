@@ -39,10 +39,13 @@ def ensure_app_db_schema_columns() -> None:
     with engine.begin() as conn:
         if "pre_reconcile_p50" not in flr_cols:
             conn.execute(text("ALTER TABLE forecast_line_results ADD COLUMN pre_reconcile_p50 FLOAT"))
-        if "selection_rule" not in {
-            c["name"] for c in inspect(engine).get_columns("forecast_versions")
-        }:
+        fv_cols = {c["name"] for c in inspect(engine).get_columns("forecast_versions")}
+        if "selection_rule" not in fv_cols:
             conn.execute(text("ALTER TABLE forecast_versions ADD COLUMN selection_rule VARCHAR(64)"))
+        if "model_preset_id" not in fv_cols:
+            conn.execute(
+                text("ALTER TABLE forecast_versions ADD COLUMN model_preset_id VARCHAR(36)")
+            )
         if "model_mase" not in flr_cols:
             conn.execute(text("ALTER TABLE forecast_line_results ADD COLUMN model_mase FLOAT"))
         if "model_pinball" not in flr_cols:

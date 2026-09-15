@@ -379,5 +379,14 @@ def register_all_skills() -> SkillsRegistry:
 
     registry.register(DiscoverDriversSkill())
 
+    # Model presets — named shortcuts over generate_baseline's model params
+    from app.domain.skills.manage_model_presets import (
+        ListModelPresetsSkill,
+        ManageModelPresetsSkill,
+    )
+
+    registry.register(ListModelPresetsSkill())
+    registry.register(ManageModelPresetsSkill())
+
     logger.info(f"Registered {len(registry.list_names())} skills: {registry.list_names()}")
     return registry

@@ -295,6 +295,15 @@ class GenerateBaselineSkill(BaseSkill):
                     ),
                     "default": "auto",
                 },
+                "model_preset": {
+                    "type": "string",
+                    "description": (
+                        "Name or id of a saved model preset (created via manage_model_presets / "
+                        "the Manage Models admin tab) to use instead of specifying model_type/"
+                        "models_to_test directly. Any model_type/models_to_test/horizon_months "
+                        "passed explicitly alongside this still take priority over the preset."
+                    ),
+                },
                 "models_to_test": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -376,6 +385,32 @@ class GenerateBaselineSkill(BaseSkill):
         models_to_test = params.get("models_to_test", None)  # None = all models
         random_seed = params.get("random_seed", 42)
 
+        # Saved model preset: fills in model_type/models_to_test/horizon_months
+        # gaps only — an explicit param always wins over the preset's defaults,
+        # so "use my Conservative preset but 6 months" works in one call.
+        model_preset_id = params.get("model_preset_id")
+        preset_warnings: list[str] = []
+        model_preset_ref = params.get("model_preset")
+        if model_preset_ref:
+            from app.services.model_presets import resolve_preset as resolve_model_preset
+
+            try:
+                resolved_preset = resolve_model_preset(
+                    db, model_preset_ref, override_horizon=params.get("horizon_months")
+                )
+            except ValueError as e:
+                return SkillResult.fail(str(e))
+            model_preset_id = resolved_preset["preset_id"]
+            preset_warnings = resolved_preset["warnings"]
+            if "model_type" not in params:
+                model_type = resolved_preset["model_type"]
+            if "models_to_test" not in params:
+                models_to_test = resolved_preset["models_to_test"]
+            if resolved_preset["horizon_months"] is not None:
+                horizon = resolved_preset["horizon_months"]
+            for w in preset_warnings:
+                logger.warning("model_preset resolution: %s", w)
+
         # Settings flips (benchmarks / metric) must refresh the singleton
         reset_model_registry()
         model_registry = get_model_registry()
@@ -444,6 +479,7 @@ class GenerateBaselineSkill(BaseSkill):
             base_period=dataset.period_end,
             random_seed=random_seed,
             selection_rule=selection_rule,
+            model_preset_id=model_preset_id,
             created_by=context.user_id,  # SoD: creator cannot self-approve
         )
         # FX: resolve reporting currency up front
