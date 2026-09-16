@@ -138,6 +138,7 @@ aiohttp==3.14.1 \
     --hash=sha256:fc0cacab7ba4e56f0f81c82a98c09bed2f39c940107b03a34b168bdf7597edd3
     # via
     #   kubernetes
+    #   langchain-community
 aiosignal==1.4.0 \
     --hash=sha256:053243f8b92b990551949e63930a839ff0cf0b0ebbe0597b0f3fb19e1a0fe82e \
     --hash=sha256:f47eecd9468083c2029cc99945502cb7708b082c232f9aca65da147157b251c7
@@ -1280,6 +1281,10 @@ httpx==0.28.1 \
     #   langgraph-sdk
     #   langsmith
     #   openai
+httpx-sse==0.4.3 \
+    --hash=sha256:0ac1c9fe3c0afad2e0ebb25a934a59f4c7823b60792691f779fad2c5568830fc \
+    --hash=sha256:9b1ed0127459a66014aec3c56bebd93da3c1bc8bb6618c8082039a44889a755d
+    # via langchain-community
 huggingface-hub==1.23.0 \
     --hash=sha256:b1d604788f5adc7f0eb246e03e0ec19011ca06e38400218c347dccc3dffa64a2 \
     --hash=sha256:c04997fb8bbdace1e57b7703d30ed7678af51f70d00d241819ff411b92ae9a88
@@ -1555,6 +1560,14 @@ langchain-anthropic==1.3.3 \
     --hash=sha256:8008ce5fb680268681673e09f93a9ac08eba9e304477101e5e138f06b5cd8710
     # via
     #   -r requirements.txt
+langchain-classic==1.0.8 \
+    --hash=sha256:1a11ea7fbe630c4f2af2f3873d27718ceac9488cf32d0821030be7cf039a6213 \
+    --hash=sha256:ada0cc341a8a5b80fb24d73bdfaaeb849056ee2d8a41cc468355163fd3667484
+    # via langchain-community
+langchain-community==0.4.2 \
+    --hash=sha256:84dd8c5122532394d5b6849a5fc9995ef28e4f77227daeb09f24b3d942e9e466 \
+    --hash=sha256:a99308160d53d7e9b5965ee665e5173709914338210089fd5788ad724432c21e
+    # via -r requirements.txt
 langchain-core==1.4.9 \
     --hash=sha256:28e3909e2a10cc81504952d795ac0a9e014c0018121ef89d48dd396fa09ec624 \
     --hash=sha256:f8078901145bed0466755277500a5a22822a7b628808c4c0a28d4fc88895fcf2
@@ -1562,6 +1575,8 @@ langchain-core==1.4.9 \
     #   -r requirements.txt
     #   langchain
     #   langchain-anthropic
+    #   langchain-classic
+    #   langchain-community
     #   langchain-text-splitters
     #   langgraph
     #   langgraph-checkpoint
@@ -1576,6 +1591,7 @@ langchain-text-splitters==1.1.2 \
     --hash=sha256:a2de0d799ff31886429fd6e2e0032df275b60ec817c19059a7b46181cc1c2f10
     # via
     #   -r requirements.txt
+    #   langchain-classic
 langgraph==1.0.8 \
     --hash=sha256:2630fc578846995114fd659f8b14df9eff5a4e78c49413f67718725e88ceb544 \
     --hash=sha256:da737177c024caad7e5262642bece4f54edf4cba2c905a1d1338963f41cf0904
@@ -1601,6 +1617,8 @@ langsmith==0.7.3 \
     --hash=sha256:0223b97021af62d2cf53c8a378a27bd22e90a7327e45b353e0069ae60d5d6f9e \
     --hash=sha256:03659bf9274e6efcead361c9c31a7849ea565ae0d6c0d73e1d8b239029eff3be
     # via
+    #   langchain-classic
+    #   langchain-community
     #   langchain-core
 librt==0.13.0 \
     --hash=sha256:05d96b80b95d3a2721b619f8982b8558848b04875bb4772fd54842b59f61dd97 \
@@ -2405,6 +2423,7 @@ numpy==2.4.2 \
     #   chromadb
     #   cmdstanpy
     #   contourpy
+    #   langchain-community
     #   matplotlib
     #   onnxruntime
     #   pandas
@@ -3329,6 +3348,7 @@ pydantic==2.12.5 \
     #   fastapi
     #   langchain
     #   langchain-anthropic
+    #   langchain-classic
     #   langchain-core
     #   langgraph
     #   langsmith
@@ -3464,6 +3484,7 @@ pydantic-settings==2.13.0 \
     # via
     #   -r requirements.txt
     #   chromadb
+    #   langchain-community
 pygments==2.19.2 \
     --hash=sha256:636cb2477cec7f8952536970bc533bc43743542f70392ae026374600add5b887 \
     --hash=sha256:86540386c03d588bb81d44bc3928634ff26449851e99741617ecb9037ee5ec0b
@@ -3645,6 +3666,8 @@ pyyaml==6.0.3 \
     #   chromadb
     #   huggingface-hub
     #   kubernetes
+    #   langchain-classic
+    #   langchain-community
     #   langchain-core
     #   uvicorn
 redis==5.3.1 \
@@ -3669,6 +3692,8 @@ requests==2.32.5 \
     --hash=sha256:dbba0bac56e100853db0ea71b82b4dfd5fe2bf6d3754a8893c3af500cec7d7cf
     # via
     #   kubernetes
+    #   langchain-classic
+    #   langchain-community
     #   langsmith
     #   requests-oauthlib
     #   requests-toolbelt
@@ -4032,6 +4057,8 @@ sqlalchemy==2.0.46 \
     # via
     #   -r requirements.txt
     #   alembic
+    #   langchain-classic
+    #   langchain-community
 sqlparse==0.5.5 \
     --hash=sha256:12a08b3bf3eec877c519589833aed092e2444e68240a3577e8e26148acc7b1ba \
     --hash=sha256:e20d4a9b0b8585fdf63b10d30066c7c94c5d7a7ec47c889a2d83a3caa93ff28e
@@ -4103,6 +4130,7 @@ tenacity==9.1.4 \
     --hash=sha256:adb31d4c263f2bd041081ab33b498309a57c77f9acf2db65aadf0898179cf93a
     # via
     #   chromadb
+    #   langchain-community
     #   langchain-core
 threadpoolctl==3.6.0 \
     --hash=sha256:43a0b8fd5a2928500110039e43a5eed8480b918967083ea48dc3ab9f13c4a7fb \

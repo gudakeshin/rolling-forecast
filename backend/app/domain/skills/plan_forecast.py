@@ -96,11 +96,17 @@ class PlanForecastSkill(BaseSkill):
         # unscoped resolution across ALL companies is unsafe once more than
         # one exists.
         from app.services.actuals_resolution import resolve_current_dataset
-        from app.services.permissions import can_access_business_unit
+        from app.services.permissions import can_access_business_unit, can_view_all_bus
         from app.models.business_unit import BusinessUnit
 
         bu_ref = params.get("business_unit")
-        business_unit_id = actor.business_unit_id if actor else None
+        # See ingest_actuals.py's identical guard: an admin/cross-BU caller's
+        # own business_unit_id says nothing about which company this is for.
+        business_unit_id = (
+            actor.business_unit_id
+            if actor is not None and actor.business_unit_id and not can_view_all_bus(actor)
+            else None
+        )
         if bu_ref:
             bu = (
                 db.query(BusinessUnit)
@@ -115,8 +121,12 @@ class PlanForecastSkill(BaseSkill):
         if not dataset_id and not business_unit_id:
             return SkillResult.fail(
                 "Which company/business unit is this for? Pass `business_unit` "
-                "(name or id) -- your account isn't assigned to exactly one, so it "
-                "can't be inferred."
+                "(name or id) -- "
+                + (
+                    "your account can act across multiple companies, so it must be stated explicitly."
+                    if actor is not None and can_view_all_bus(actor)
+                    else "your account isn't assigned to exactly one, so it can't be inferred."
+                )
             )
         dataset = resolve_current_dataset(db, dataset_id, business_unit_id=business_unit_id)
         if not dataset:

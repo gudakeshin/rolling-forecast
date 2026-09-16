@@ -444,7 +444,7 @@ class GenerateBaselineSkill(BaseSkill):
                 "Proceeding with baseline generation; run plan_forecast first for model selection guidance."
             )
 
-        from app.services.permissions import resolve_skill_user, scoped_line_items
+        from app.services.permissions import can_view_all_bus, resolve_skill_user, scoped_line_items
 
         actor = resolve_skill_user(context)
 
@@ -464,7 +464,16 @@ class GenerateBaselineSkill(BaseSkill):
         from app.models.business_unit import BusinessUnit
 
         bu_ref = params.get("business_unit")
-        business_unit_id = actor.business_unit_id if actor else None
+        # See ingest_actuals.py's identical guard: inferring from the
+        # caller's own business_unit_id is only safe for a genuine
+        # single-company user -- an admin/cross-BU caller's own assignment
+        # (often just a generic "Default" bucket) says nothing about which
+        # company THIS forecast is for.
+        business_unit_id = (
+            actor.business_unit_id
+            if actor is not None and actor.business_unit_id and not can_view_all_bus(actor)
+            else None
+        )
         if bu_ref:
             bu = (
                 db.query(BusinessUnit)
@@ -479,8 +488,12 @@ class GenerateBaselineSkill(BaseSkill):
         if not dataset_id and not business_unit_id:
             return SkillResult.fail(
                 "Which company/business unit is this forecast for? Pass `business_unit` "
-                "(name or id) -- your account isn't assigned to exactly one, so it "
-                "can't be inferred."
+                "(name or id) -- "
+                + (
+                    "your account can act across multiple companies, so it must be stated explicitly."
+                    if actor is not None and can_view_all_bus(actor)
+                    else "your account isn't assigned to exactly one, so it can't be inferred."
+                )
             )
         dataset = resolve_current_dataset(db, dataset_id, business_unit_id=business_unit_id)
         if not dataset:

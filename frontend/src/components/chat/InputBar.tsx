@@ -215,8 +215,12 @@ export function InputBar({ onSend, onStop, isStreaming }: Props) {
 
     try {
       if (ACTUALS_EXTENSIONS.has(ext)) {
+        // /upload/actuals ingests immediately by default (ingest=true) — no
+        // chat round-trip needed for the LLM to notice and call ingest_actuals.
         const result = await uploadFile('/upload/actuals', file);
-        onSend(`I've uploaded a file: ${result.filename}. Please ingest the actuals data from ${result.file_path}`);
+        setUploadStatus(result.message || `${file.name} ingested`);
+        onSend(`I've uploaded and ingested "${result.filename}" as actuals data. ${result.message || ''}`);
+        setTimeout(() => setUploadStatus(null), 5000);
       } else if (CONTEXT_EXTENSIONS.has(ext) || !ACTUALS_EXTENSIONS.has(ext)) {
         const formData = new FormData();
         formData.append('file', file);

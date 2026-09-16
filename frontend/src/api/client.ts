@@ -127,7 +127,8 @@ export async function uploadFile(url: string, file: File): Promise<any> {
     body: formData,
   });
   if (!response.ok) {
-    throw new Error('Upload failed');
+    const error = await response.json().catch(() => ({ detail: 'Upload failed' }));
+    throw new Error(error.detail || 'Upload failed');
   }
   return response.json();
 }

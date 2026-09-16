@@ -81,7 +81,11 @@ class IngestActualsSkill(BaseSkill):
         # business_unit value inside the file itself: that would let file
         # content claim to belong to any company regardless of who uploaded
         # it, defeating the whole point of scoping actuals by company.
-        from app.services.permissions import can_access_business_unit, resolve_skill_user
+        from app.services.permissions import (
+            can_access_business_unit,
+            can_view_all_bus,
+            resolve_skill_user,
+        )
 
         actor = resolve_skill_user(context)
         bu_ref = params.get("business_unit")
@@ -98,13 +102,24 @@ class IngestActualsSkill(BaseSkill):
                 return SkillResult.fail(
                     f"You don't have access to upload data for '{business_unit.name}'."
                 )
-        elif actor is not None and actor.business_unit_id:
+        elif actor is not None and actor.business_unit_id and not can_view_all_bus(actor):
+            # Inferring from the caller's own assignment is only safe for a
+            # genuine single-company user. An admin/cross-BU caller's own
+            # business_unit_id (often just a generic "Default" bucket) says
+            # nothing about which company THIS upload is for -- silently
+            # defaulting there would misattribute every admin upload rather
+            # than asking, which is exactly the bug that let one company's
+            # data get pinned as another's "current" dataset.
             business_unit = db.get(BusinessUnit, actor.business_unit_id)
         if business_unit is None:
             return SkillResult.fail(
                 "Which company/business unit is this data for? Pass `business_unit` "
-                "(name or id) -- your account isn't assigned to exactly one, so it "
-                "can't be inferred."
+                "(name or id) -- "
+                + (
+                    "your account can act across multiple companies, so it must be stated explicitly."
+                    if actor is not None and can_view_all_bus(actor)
+                    else "your account isn't assigned to exactly one, so it can't be inferred."
+                )
             )
 
         # Use CSV adapter

@@ -1,11 +1,30 @@
-import { useState, useCallback, useMemo, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   Upload, Link2, Search, Trash2, FileText, FileSpreadsheet,
   Globe, File, Loader2, CheckCircle, XCircle,
   FolderOpen, Plus, ExternalLink, Tag, Clock, Database, Download,
 } from 'lucide-react';
 import { apiPost, apiDelete, apiGet } from '../../api/client';
+import { useAuthStore } from '../../store/authStore';
 import { DataTable, downloadCsv, type DataTableColumn } from '../ui/DataTable';
+
+interface BusinessUnitOption {
+  id: string;
+  name: string;
+}
+
+// A CSV/Excel file is financial actuals data, not a reference document --
+// route it to the forecast-ingestion pipeline instead of the RAG document
+// index, matching the same extension-based split the chat's own upload
+// button already makes (see components/chat/InputBar.tsx). Uploading it
+// here previously always indexed it for chat search only, so a forecast
+// re-run kept using whatever dataset was already current -- silently never
+// picking up the "new" data at all.
+const ACTUALS_EXTENSIONS = new Set(['.csv', '.xlsx', '.xls']);
+
+function getFileExtension(name: string): string {
+  return (name.lastIndexOf('.') >= 0 ? name.slice(name.lastIndexOf('.')) : '').toLowerCase();
+}
 
 const FILE_ICONS: Record<string, typeof FileText> = {
   pdf: FileText,
@@ -75,6 +94,7 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
   const d = data?.data || data;
   const initialDocs: DocItem[] = d?.documents || [];
   const summary = d?.summary || {};
+  const canViewAllBus = useAuthStore((s) => Boolean(s.user?.can_admin));
 
   const [documents, setDocuments] = useState<DocItem[]>(initialDocs);
   const [activeTab, setActiveTab] = useState<'documents' | 'upload' | 'search'>('documents');
@@ -83,6 +103,20 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+
+  // Actuals uploads (CSV/XLSX) need a company -- a regular user's own single
+  // business unit is inferred automatically server-side, but a cross-company
+  // caller must say which one, or every upload silently lands wherever their
+  // own account happens to be assigned. Only relevant to those callers.
+  const [businessUnits, setBusinessUnits] = useState<BusinessUnitOption[]>([]);
+  const [businessUnitInput, setBusinessUnitInput] = useState('');
+
+  useEffect(() => {
+    if (!canViewAllBus) return;
+    void apiGet<BusinessUnitOption[]>('/admin/business-units')
+      .then(setBusinessUnits)
+      .catch(() => { /* non-fatal: the upload just requires typing the name manually */ });
+  }, [canViewAllBus]);
 
   // URL ingestion
   const [urlInput, setUrlInput] = useState('');
@@ -164,20 +198,31 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
 
     let successCount = 0;
     let failCount = 0;
+    const ingestMessages: string[] = [];
 
     for (const file of Array.from(files)) {
+      const ext = getFileExtension(file.name);
       try {
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('scope', 'user');
-        const res = await apiPost<any>('/context/upload', formData);
-        if (res.status === 'ready') {
+        if (ACTUALS_EXTENSIONS.has(ext)) {
+          // Ingests immediately (ingest=true default) into the forecast
+          // system -- this is financial data, not a reference document.
+          const formData = new FormData();
+          formData.append('file', file);
+          if (businessUnitInput.trim()) formData.append('business_unit', businessUnitInput.trim());
+          const res = await apiPost<any>('/upload/actuals', formData);
           successCount++;
-        } else if (res.status === 'failed') {
-          failCount++;
-          setUploadError(res.error_message || `Failed to process ${file.name}`);
+          ingestMessages.push(res.message || `${file.name} ingested`);
         } else {
-          successCount++;
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('scope', 'user');
+          const res = await apiPost<any>('/context/upload', formData);
+          if (res.status === 'failed') {
+            failCount++;
+            setUploadError(res.error_message || `Failed to process ${file.name}`);
+          } else {
+            successCount++;
+          }
         }
       } catch (e: any) {
         failCount++;
@@ -187,11 +232,15 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
 
     setIsUploading(false);
     if (successCount > 0) {
-      setUploadSuccess(`Uploaded ${successCount} file${successCount > 1 ? 's' : ''} successfully`);
+      setUploadSuccess(
+        ingestMessages.length > 0
+          ? ingestMessages.join(' ')
+          : `Uploaded ${successCount} file${successCount > 1 ? 's' : ''} successfully`,
+      );
     }
     await refreshDocuments();
     setTimeout(() => { setUploadSuccess(null); setUploadError(null); }, 5000);
-  }, [refreshDocuments]);
+  }, [refreshDocuments, businessUnitInput]);
 
   const handleUrlIngest = useCallback(async () => {
     if (!urlInput.trim()) return;
@@ -306,6 +355,29 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
       {/* Upload Tab */}
       {activeTab === 'upload' && (
         <div className="space-y-3">
+          {canViewAllBus && (
+            <div className="bg-surface-800/40 border border-surface-700/50 rounded-lg p-3">
+              <label className="block text-xs text-surface-400 uppercase tracking-wider font-semibold mb-1.5">
+                Company (for CSV/XLSX actuals)
+              </label>
+              <input
+                type="text"
+                list="document-library-business-units"
+                value={businessUnitInput}
+                onChange={e => setBusinessUnitInput(e.target.value)}
+                placeholder="e.g. Carl Zeiss India — pick existing or type a new company"
+                className="w-full bg-surface-900/60 border border-surface-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-surface-600 focus:outline-none focus:border-deloitte-green/50"
+              />
+              <datalist id="document-library-business-units">
+                {businessUnits.map(bu => <option key={bu.id} value={bu.name} />)}
+              </datalist>
+              <p className="text-xs text-surface-600 mt-1">
+                Your account can act across multiple companies, so CSV/XLSX uploads require this —
+                otherwise there's no way to tell which company the data belongs to.
+              </p>
+            </div>
+          )}
+
           {/* File Upload Zone */}
           <button
             type="button"
@@ -333,7 +405,7 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
               {isUploading ? 'Processing...' : 'Drop files here or click to upload'}
             </p>
             <p className="text-xs text-surface-600">
-              PDF, DOCX, PPTX, XLSX, CSV, TXT, HTML
+              PDF, DOCX, PPTX, TXT, HTML for chat reference &middot; CSV, XLSX ingested as actuals data
             </p>
           </button>
 
