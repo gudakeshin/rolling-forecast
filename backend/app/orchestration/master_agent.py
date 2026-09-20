@@ -479,16 +479,22 @@ class MasterAgent:
                         final_text, allowed_figures
                     )
                     if total > 0 and verified < total:
+                        # Same "status" block shape as BaseSkill._status_block (label/
+                        # progress/step/is_complete) — the frontend's StatusCard renders
+                        # an active job's progress bar when is_complete is False and
+                        # polls /jobs/{job_id}; this note is neither, so it must be
+                        # marked complete up front or the card spins forever on a
+                        # job that doesn't exist.
                         grounding_note = {
                             "type": "status",
                             "data": {
-                                "step": "numeric_grounding",
-                                "verified": verified,
-                                "total": total,
-                                "message": (
+                                "label": (
                                     f"{total - verified} figure(s) not found in tool "
                                     "results — marked as [unverified]."
                                 ),
+                                "progress": 1,
+                                "step": "numeric_grounding",
+                                "is_complete": True,
                             },
                         }
                         final_text = cleaned

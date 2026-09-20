@@ -29,14 +29,18 @@ function parseJobId(data: StatusData): string | null {
 }
 
 export function StatusCard({ data: initialData }: Props) {
+  const jobId = parseJobId(initialData);
+  // A status block with no job to poll can never transition out of "running"
+  // on its own — treat it as already complete rather than spinning forever
+  // (this happens for one-shot notes like the numeric-grounding check, which
+  // reuse this same block shape but aren't backed by a job).
   const [label, setLabel] = useState(initialData.label);
-  const [progress, setProgress] = useState(initialData.progress);
+  const [progress, setProgress] = useState(initialData.progress ?? (jobId ? 0 : 1));
   const [step, setStep] = useState(initialData.step);
-  const [isComplete, setIsComplete] = useState(initialData.is_complete);
+  const [isComplete, setIsComplete] = useState(initialData.is_complete ?? !jobId);
   const [error, setError] = useState<string | null>(null);
 
-  const jobId = parseJobId(initialData);
-  const pct = Math.round(progress * 100);
+  const pct = Math.round((progress || 0) * 100);
 
   useEffect(() => {
     if (!jobId || initialData.is_complete) return;
