@@ -3,9 +3,15 @@ import type { ForecastVersion, ForecastLineResult } from '../types/forecast';
 
 // ─── Forecast Versions ───────────────────────────────────
 
-export async function getVersions(scenario?: string): Promise<ForecastVersion[]> {
-  const qs = scenario ? `?scenario=${encodeURIComponent(scenario)}` : '';
-  return apiGet<ForecastVersion[]>(`/panel/versions${qs}`);
+export async function getVersions(
+  scenario?: string,
+  businessUnitId?: string | null,
+): Promise<ForecastVersion[]> {
+  const params = new URLSearchParams();
+  if (scenario) params.set('scenario', scenario);
+  if (businessUnitId) params.set('business_unit_id', businessUnitId);
+  const qs = params.toString();
+  return apiGet<ForecastVersion[]>(`/panel/versions${qs ? `?${qs}` : ''}`);
 }
 
 export async function getVersion(versionId: string): Promise<ForecastVersion> {

@@ -2,6 +2,7 @@ import { Component, type ErrorInfo, type ReactNode, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from './store/authStore';
 import { useVersionStore } from './store/versionStore';
+import { useWorkspaceStore } from './store/workspaceStore';
 import { AppLayout } from './components/common/AppLayout';
 import { LoginForm } from './components/common/LoginForm';
 import { PanelUrlSync } from './components/common/PanelUrlSync';
@@ -100,13 +101,15 @@ function AuthBootstrap() {
   const token = useAuthStore((s) => s.token);
   const fetchMe = useAuthStore((s) => s.fetchMe);
   const hydrateVersions = useVersionStore((s) => s.hydrate);
+  const hydrateWorkspace = useWorkspaceStore((s) => s.hydrate);
 
   useEffect(() => {
     if (token) {
-      void fetchMe();
-      void hydrateVersions();
+      // Workspace depends on the user's capability flags from /auth/me, and
+      // versions depend on the resolved workspace to scope the picker.
+      void fetchMe().then(() => hydrateWorkspace().then(() => hydrateVersions()));
     }
-  }, [token, fetchMe, hydrateVersions]);
+  }, [token, fetchMe, hydrateVersions, hydrateWorkspace]);
 
   return null;
 }

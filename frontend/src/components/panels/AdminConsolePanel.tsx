@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Users, Shield, ListTree, ScrollText, DollarSign, RefreshCw, Cpu, Pencil, Trash2 } from 'lucide-react';
-import { apiGet, apiPost, apiPut, uploadFile } from '../../api/client';
+import { Users, Shield, ListTree, ScrollText, DollarSign, RefreshCw, Cpu, Pencil, Trash2, Building2, Plus } from 'lucide-react';
+import { apiGet, apiPatch, apiPost, apiPut, uploadFile } from '../../api/client';
 import { rescoreAll } from '../../api/dashboard';
 import {
   listModelPresets,
@@ -14,8 +14,25 @@ import {
 import type { User } from '../../types/auth';
 import { toast } from '../../store/toastStore';
 import { confirmDialog } from '../../store/confirmStore';
+import { useWorkspaceStore } from '../../store/workspaceStore';
 
-type Tab = 'users' | 'roles' | 'coa' | 'audit' | 'fx' | 'models';
+type Tab = 'users' | 'roles' | 'companies' | 'coa' | 'audit' | 'fx' | 'models';
+
+interface BusinessUnit {
+  id: string;
+  name: string;
+}
+
+const ROLE_PERMISSION_KEYS: { key: string; label: string }[] = [
+  { key: 'can_input', label: 'Input drivers' },
+  { key: 'can_generate', label: 'Generate forecasts' },
+  { key: 'can_override', label: 'Override values' },
+  { key: 'can_review', label: 'Review/approve' },
+  { key: 'can_publish', label: 'Publish' },
+  { key: 'can_admin', label: 'Admin' },
+  { key: 'can_view_all_bus', label: 'View all companies' },
+  { key: 'can_manage_drivers', label: 'Manage drivers' },
+];
 
 const emptyPresetForm = {
   name: '',
@@ -37,9 +54,19 @@ interface FxRate {
 /** Admin console — wraps user/role/CoA/FX/audit management inside the slide-over
  * panel shell instead of a standalone full-page route. */
 export function AdminConsolePanel() {
+  const hydrateWorkspace = useWorkspaceStore((s) => s.hydrate);
   const [tab, setTab] = useState<Tab>('users');
   const [users, setUsers] = useState<User[]>([]);
   const [roles, setRoles] = useState<any[]>([]);
+  const [businessUnits, setBusinessUnits] = useState<BusinessUnit[]>([]);
+  const [newCompanyName, setNewCompanyName] = useState('');
+  const [creatingCompany, setCreatingCompany] = useState(false);
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [editRoleName, setEditRoleName] = useState('');
+  const [editBusinessUnit, setEditBusinessUnit] = useState('');
+  const [editActive, setEditActive] = useState(true);
+  const [savingUserId, setSavingUserId] = useState<string | null>(null);
+  const [savingRoleName, setSavingRoleName] = useState<string | null>(null);
   const [coa, setCoa] = useState<any>(null);
   const [audit, setAudit] = useState<any>(null);
   const [fxRates, setFxRates] = useState<FxRate[]>([]);
@@ -84,8 +111,18 @@ export function AdminConsolePanel() {
   const load = async (t: Tab) => {
     setError('');
     try {
-      if (t === 'users') setUsers(await apiGet('/admin/users'));
+      if (t === 'users') {
+        const [userRows, roleRows, buRows] = await Promise.all([
+          apiGet<User[]>('/admin/users'),
+          apiGet<any[]>('/admin/roles'),
+          apiGet<BusinessUnit[]>('/admin/business-units'),
+        ]);
+        setUsers(userRows);
+        setRoles(roleRows);
+        setBusinessUnits(buRows);
+      }
       if (t === 'roles') setRoles(await apiGet('/admin/roles'));
+      if (t === 'companies') setBusinessUnits(await apiGet('/admin/business-units'));
       if (t === 'coa') setCoa(await apiGet('/admin/coa'));
       if (t === 'audit') setAudit(await apiGet('/admin/audit?limit=50'));
       if (t === 'fx') {
@@ -171,6 +208,87 @@ export function AdminConsolePanel() {
     }
   };
 
+  const createCompany = async () => {
+    const name = newCompanyName.trim();
+    if (!name) return;
+    setCreatingCompany(true);
+    setError('');
+    try {
+      await apiPost('/admin/business-units', { name });
+      setNewCompanyName('');
+      toast.success(`Created workspace "${name}"`);
+      await load('companies');
+      // The new company should show up in every workspace switcher right away.
+      void hydrateWorkspace();
+    } catch (e: any) {
+      setError(e.message || 'Failed to create company');
+      toast.error(e.message || 'Failed to create company');
+    } finally {
+      setCreatingCompany(false);
+    }
+  };
+
+  const startEditUser = (u: User) => {
+    setEditingUserId(u.id);
+    setEditRoleName(u.role_name);
+    setEditBusinessUnit(u.business_unit || '');
+    setEditActive(u.is_active);
+  };
+
+  const cancelEditUser = () => setEditingUserId(null);
+
+  const saveUser = async (u: User) => {
+    setSavingUserId(u.id);
+    setError('');
+    try {
+      await apiPatch(`/admin/users/${u.id}`, {
+        role_name: editRoleName,
+        business_unit: editBusinessUnit,
+        is_active: editActive,
+      });
+      toast.success(`Updated ${u.username}`);
+      setEditingUserId(null);
+      await load('users');
+      // A BU reassignment can affect who is a cross-company caller, and
+      // switching a company off the roster of BUs a switcher should offer.
+      void hydrateWorkspace();
+    } catch (e: any) {
+      setError(e.message || 'Failed to update user');
+      toast.error(e.message || 'Failed to update user');
+    } finally {
+      setSavingUserId(null);
+    }
+  };
+
+  const toggleRolePermission = (roleName: string, key: string) => {
+    setRoles((prev) =>
+      prev.map((r) => (r.name === roleName ? { ...r, [key]: !r[key] } : r)),
+    );
+  };
+
+  const saveRole = async (role: any) => {
+    setSavingRoleName(role.name);
+    setError('');
+    try {
+      await apiPatch(`/admin/roles/${role.name}`, {
+        can_input: role.can_input,
+        can_generate: role.can_generate,
+        can_override: role.can_override,
+        can_review: role.can_review,
+        can_publish: role.can_publish,
+        can_admin: role.can_admin,
+        can_view_all_bus: role.can_view_all_bus,
+        can_manage_drivers: role.can_manage_drivers,
+      });
+      toast.success(`Updated role "${role.name}"`);
+    } catch (e: any) {
+      setError(e.message || 'Failed to update role');
+      toast.error(e.message || 'Failed to update role');
+    } finally {
+      setSavingRoleName(null);
+    }
+  };
+
   const uploadFxCsv = async (file: File) => {
     try {
       const res = await uploadFile('/admin/fx/rates/upload', file);
@@ -184,6 +302,7 @@ export function AdminConsolePanel() {
   const tabs: { id: Tab; label: string; icon: typeof Users }[] = [
     { id: 'users', label: 'Users', icon: Users },
     { id: 'roles', label: 'Roles', icon: Shield },
+    { id: 'companies', label: 'Companies', icon: Building2 },
     { id: 'coa', label: 'Chart of Accounts', icon: ListTree },
     { id: 'fx', label: 'FX Rates', icon: DollarSign },
     { id: 'models', label: 'Models', icon: Cpu },
@@ -308,20 +427,94 @@ export function AdminConsolePanel() {
               <th className="py-2">Username</th>
               <th>Email</th>
               <th>Role</th>
-              <th>BU</th>
+              <th>Company</th>
               <th>Active</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {users.map((u) => (
-              <tr key={u.id} className="border-t border-surface-700/40">
-                <td className="py-2">{u.username}</td>
-                <td className="text-surface-400">{u.email}</td>
-                <td>{u.role_name}</td>
-                <td className="text-surface-400">{u.business_unit || '—'}</td>
-                <td>{u.is_active ? 'Yes' : 'No'}</td>
-              </tr>
-            ))}
+            {users.map((u) => {
+              const editing = editingUserId === u.id;
+              return (
+                <tr key={u.id} className="border-t border-surface-700/40">
+                  <td className="py-2">{u.username}</td>
+                  <td className="text-surface-400">{u.email}</td>
+                  <td>
+                    {editing ? (
+                      <select
+                        value={editRoleName}
+                        onChange={(e) => setEditRoleName(e.target.value)}
+                        className="bg-surface-800 border border-surface-600 rounded-lg px-2 py-1 text-xs"
+                      >
+                        {roles.map((r) => (
+                          <option key={r.name} value={r.name}>{r.name}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      u.role_name
+                    )}
+                  </td>
+                  <td className="text-surface-400">
+                    {editing ? (
+                      <select
+                        value={editBusinessUnit}
+                        onChange={(e) => setEditBusinessUnit(e.target.value)}
+                        className="bg-surface-800 border border-surface-600 rounded-lg px-2 py-1 text-xs"
+                      >
+                        <option value="">— None —</option>
+                        {businessUnits.map((bu) => (
+                          <option key={bu.id} value={bu.name}>{bu.name}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      u.business_unit || '—'
+                    )}
+                  </td>
+                  <td>
+                    {editing ? (
+                      <input
+                        type="checkbox"
+                        checked={editActive}
+                        onChange={(e) => setEditActive(e.target.checked)}
+                        aria-label={`${u.username} active`}
+                      />
+                    ) : (
+                      u.is_active ? 'Yes' : 'No'
+                    )}
+                  </td>
+                  <td>
+                    {editing ? (
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => saveUser(u)}
+                          disabled={savingUserId === u.id}
+                          className="text-xs px-2 py-1 bg-deloitte-green text-white font-semibold rounded-lg disabled:opacity-50"
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          onClick={cancelEditUser}
+                          className="text-xs px-2 py-1 bg-surface-800 border border-surface-700 text-surface-300 rounded-lg"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => startEditUser(u)}
+                        className="text-surface-400 hover:text-white"
+                        aria-label={`Edit ${u.username}`}
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}
@@ -330,20 +523,81 @@ export function AdminConsolePanel() {
         <div className="space-y-3">
           {roles.map((r) => (
             <div key={r.id} className="bg-surface-900 border border-surface-700/50 rounded-lg p-4">
-              <div className="font-semibold mb-1">{r.name}</div>
+              <div className="flex items-center justify-between mb-1">
+                <div className="font-semibold">{r.name}</div>
+                <button
+                  type="button"
+                  onClick={() => saveRole(r)}
+                  disabled={savingRoleName === r.name}
+                  className="text-xs px-2.5 py-1 bg-deloitte-green text-white font-semibold rounded-lg disabled:opacity-50"
+                >
+                  Save
+                </button>
+              </div>
               <p className="text-xs text-surface-500 mb-2">{r.description}</p>
-              <div className="flex flex-wrap gap-2 text-xs">
-                {['can_input', 'can_generate', 'can_override', 'can_review', 'can_publish', 'can_admin'].map(
-                  (k) =>
-                    r[k] && (
-                      <span key={k} className="px-2 py-0.5 bg-deloitte-green/15 text-deloitte-green rounded">
-                        {k.replace('can_', '')}
-                      </span>
-                    ),
-                )}
+              <div className="flex flex-wrap gap-3 text-xs">
+                {ROLE_PERMISSION_KEYS.map(({ key, label }) => (
+                  <label key={key} className="flex items-center gap-1.5 text-surface-300">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(r[key])}
+                      onChange={() => toggleRolePermission(r.name, key)}
+                    />
+                    {label}
+                  </label>
+                ))}
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {tab === 'companies' && (
+        <div className="space-y-4">
+          <div className="bg-surface-900 border border-surface-700/50 rounded-xl p-4 space-y-3">
+            <h3 className="text-sm font-semibold">New workspace</h3>
+            <p className="text-xs text-surface-500">
+              Each company is its own workspace — its datasets, drivers, and forecasts never
+              mix with another company's data.
+            </p>
+            <div className="flex gap-2">
+              <input
+                value={newCompanyName}
+                onChange={(e) => setNewCompanyName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && createCompany()}
+                placeholder="Company name (e.g. Carl Zeiss India)"
+                className="flex-1 bg-surface-800 border border-surface-600 rounded-lg px-3 py-1.5 text-sm"
+              />
+              <button
+                type="button"
+                onClick={createCompany}
+                disabled={creatingCompany || !newCompanyName.trim()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs bg-deloitte-green text-white font-semibold rounded-lg disabled:opacity-50"
+              >
+                <Plus className="w-3.5 h-3.5" /> Create
+              </button>
+            </div>
+          </div>
+
+          <table className="w-full text-sm">
+            <thead className="text-surface-500 text-left">
+              <tr>
+                <th className="py-2">Company</th>
+              </tr>
+            </thead>
+            <tbody>
+              {businessUnits.map((bu) => (
+                <tr key={bu.id} className="border-t border-surface-700/40">
+                  <td className="py-2">{bu.name}</td>
+                </tr>
+              ))}
+              {!businessUnits.length && (
+                <tr>
+                  <td className="py-4 text-surface-500 text-center">No companies yet</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       )}
 

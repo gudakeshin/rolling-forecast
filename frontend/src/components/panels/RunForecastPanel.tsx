@@ -1,17 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { Play, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Play, Loader2, CheckCircle2, AlertCircle, Building2 } from 'lucide-react';
 import { apiGet } from '../../api/client';
 import { listModelPresets, runForecastWithPreset, type ModelPreset } from '../../api/modelPresets';
 import { useI18n } from '../../i18n/useI18n';
 import { useAuthStore } from '../../store/authStore';
 import { usePanelStore } from '../../store/panelStore';
 import { useVersionStore } from '../../store/versionStore';
+import { useWorkspaceStore } from '../../store/workspaceStore';
 import { toast } from '../../store/toastStore';
-
-interface BusinessUnit {
-  id: string;
-  name: string;
-}
 
 /** Make a just-generated forecast the app's active version so panels opened
  * afterward (sidebar nav, Header dropdown) show it, not whatever was active
@@ -35,14 +31,16 @@ interface JobRecord {
 
 type RunState = 'idle' | 'running' | 'done' | 'error';
 
-export function RunForecastPanel() {
+export function RunForecastPanel({ datasetId }: { datasetId?: string | null } = {}) {
   const { t } = useI18n();
   const openPanel = usePanelStore((s) => s.openPanel);
-  const canViewAllBus = useAuthStore((s) => Boolean(s.user?.can_admin));
+  const canViewAllBus = useAuthStore((s) => Boolean(s.user?.can_view_all_bus));
+  const workspaceId = useWorkspaceStore((s) => s.currentBusinessUnitId);
+  const workspaceName = useWorkspaceStore((s) => s.currentBusinessUnitName);
+  const businessUnits = useWorkspaceStore((s) => s.businessUnits);
 
   const [presets, setPresets] = useState<ModelPreset[]>([]);
   const [presetId, setPresetId] = useState('');
-  const [businessUnits, setBusinessUnits] = useState<BusinessUnit[]>([]);
   const [businessUnitId, setBusinessUnitId] = useState('');
   const [horizonMonths, setHorizonMonths] = useState('');
   const [scenario, setScenario] = useState('base');
@@ -62,20 +60,17 @@ export function RunForecastPanel() {
         if (rows.length) setPresetId((prev) => prev || rows[0].id);
       })
       .catch((e) => toast.error(e?.message || t('runForecast.error.loadPresets')));
-    // Only relevant to cross-company admins — a regular user belongs to at
-    // most one business unit, which the backend infers automatically.
-    if (canViewAllBus) {
-      void apiGet<BusinessUnit[]>('/admin/business-units')
-        .then(setBusinessUnits)
-        .catch(() => {
-          /* non-fatal: falls back to backend inference / explicit dataset_id */
-        });
-    }
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Default the override dropdown to the active workspace, not blank —
+  // still explicitly changeable by a cross-company caller.
+  useEffect(() => {
+    if (canViewAllBus && workspaceId) setBusinessUnitId((prev) => prev || workspaceId);
+  }, [canViewAllBus, workspaceId]);
 
   const stopPolling = () => {
     if (pollRef.current) {
@@ -127,6 +122,7 @@ export function RunForecastPanel() {
     setProgress(0);
     try {
       const res = await runForecastWithPreset(presetId, {
+        dataset_id: datasetId || undefined,
         business_unit: businessUnitId || undefined,
         horizon_months: horizonMonths ? Number(horizonMonths) : undefined,
         scenario: scenario.trim() || 'base',
@@ -165,6 +161,19 @@ export function RunForecastPanel() {
           <span className="text-sm font-semibold text-white">{t('runForecast.title')}</span>
         </div>
         <p className="text-xs text-surface-400">{t('runForecast.subtitle')}</p>
+
+        {workspaceName && !canViewAllBus && (
+          <div className="flex items-center gap-1.5 text-xs text-surface-400">
+            <Building2 className="w-3.5 h-3.5 text-surface-500" aria-hidden="true" />
+            <span>{t('runForecast.workspaceLabel')}: <span className="text-surface-200 font-medium">{workspaceName}</span></span>
+          </div>
+        )}
+
+        {datasetId && (
+          <div className="text-xs text-deloitte-green bg-deloitte-green/10 border border-deloitte-green/25 rounded-lg px-2.5 py-1.5">
+            {t('workspace.runForecastFromDataset')}
+          </div>
+        )}
 
         {presets.length === 0 ? (
           <p className="text-xs text-surface-500">{t('runForecast.emptyPresets')}</p>

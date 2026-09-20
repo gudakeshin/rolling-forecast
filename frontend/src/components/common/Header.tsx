@@ -1,6 +1,7 @@
-import { LogOut, Languages, Menu, Search, X } from 'lucide-react';
+import { LogOut, Languages, Menu, Search, X, Building2 } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { useVersionStore } from '../../store/versionStore';
+import { useWorkspaceStore } from '../../store/workspaceStore';
 import { useChatStore } from '../../store/chatStore';
 import { useCommandPaletteStore } from '../../store/commandPaletteStore';
 import { useI18n } from '../../i18n/useI18n';
@@ -17,6 +18,12 @@ export function Header() {
   const activeScenario = useVersionStore((s) => s.activeScenario);
   const setActiveVersionId = useVersionStore((s) => s.setActiveVersionId);
   const setActiveScenario = useVersionStore((s) => s.setActiveScenario);
+  const refreshVersions = useVersionStore((s) => s.refresh);
+  const canViewAllBus = Boolean(user?.can_view_all_bus);
+  const workspaceId = useWorkspaceStore((s) => s.currentBusinessUnitId);
+  const workspaceName = useWorkspaceStore((s) => s.currentBusinessUnitName);
+  const workspaceOptions = useWorkspaceStore((s) => s.businessUnits);
+  const setWorkspace = useWorkspaceStore((s) => s.setCurrent);
   const sidebarExpanded = useChatStore((s) => s.sidebarExpanded);
   const toggleSidebar = useChatStore((s) => s.toggleSidebar);
   const openCommandPalette = useCommandPaletteStore((s) => s.open);
@@ -24,6 +31,12 @@ export function Header() {
 
   const scenarios = Array.from(new Set(versions.map((v) => v.scenario || 'base'))).sort();
   const versionsInScenario = versions.filter((v) => (v.scenario || 'base') === activeScenario);
+
+  const handleWorkspaceChange = (id: string) => {
+    const bu = workspaceOptions.find((b) => b.id === id);
+    setWorkspace(id, bu?.name ?? null);
+    void refreshVersions();
+  };
 
   const cycleLocale = () => {
     const next: Locale = locale === 'en' ? 'es' : 'en';
@@ -57,6 +70,33 @@ export function Header() {
             </div>
           </div>
         </div>
+
+        {(canViewAllBus || workspaceName) && (
+          <div className="hidden md:flex items-center gap-1.5 pl-1">
+            <div className="w-px h-5 bg-surface-700 mx-1" />
+            <Building2 className="w-3.5 h-3.5 text-surface-500 shrink-0" aria-hidden="true" />
+            {canViewAllBus ? (
+              <select
+                value={workspaceId || ''}
+                onChange={(e) => handleWorkspaceChange(e.target.value)}
+                className="max-w-[9rem] text-[11.5px] font-medium bg-surface-900 border border-surface-700 rounded-lg px-2 py-1.5 text-surface-300 focus:outline-none focus:border-deloitte-green/50"
+                aria-label={t('nav.workspace')}
+                title={t('nav.workspace')}
+              >
+                {workspaceOptions.map((bu) => (
+                  <option key={bu.id} value={bu.id}>{bu.name}</option>
+                ))}
+              </select>
+            ) : (
+              <span
+                className="text-[11.5px] font-medium text-surface-300 truncate max-w-[9rem]"
+                title={t('nav.workspace')}
+              >
+                {workspaceName}
+              </span>
+            )}
+          </div>
+        )}
 
         {versions.length > 0 && (
           <div className="hidden md:flex items-center gap-1.5 pl-1">

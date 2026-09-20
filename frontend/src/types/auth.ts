@@ -4,6 +4,7 @@ export interface User {
   username: string;
   full_name: string;
   business_unit: string | null;
+  business_unit_id?: string | null;
   role_name: string;
   is_active: boolean;
   can_input?: boolean;
@@ -13,6 +14,7 @@ export interface User {
   can_publish?: boolean;
   can_admin?: boolean;
   can_manage_drivers?: boolean;
+  can_view_all_bus?: boolean;
 }
 
 export interface LoginRequest {

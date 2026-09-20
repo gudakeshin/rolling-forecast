@@ -100,7 +100,10 @@ const panelIcons: Record<string, any> = {
 };
 
 // Panel types that fetch nothing from the server — they own their data.
-const STATIC_PANELS: Record<string, { title: string; titleKey?: MessageKey; render: () => ReactNode }> = {
+const STATIC_PANELS: Record<
+  string,
+  { title: string; titleKey?: MessageKey; render: (params?: Record<string, any>) => ReactNode }
+> = {
   skill_editor: {
     title: 'Skill Editor',
     render: () => (
@@ -120,7 +123,7 @@ const STATIC_PANELS: Record<string, { title: string; titleKey?: MessageKey; rend
   run_forecast: {
     title: 'Run Forecast',
     titleKey: 'panel.runForecast',
-    render: () => <RunForecastPanel />,
+    render: (params) => <RunForecastPanel datasetId={params?.dataset_id} />,
   },
   heuristics: { title: 'Heuristics', titleKey: 'panel.heuristics', render: () => <HeuristicsPanel /> },
   admin_console: { title: 'Admin Console', render: () => <AdminConsolePanel /> },
@@ -306,7 +309,7 @@ function PanelContainerBody({ variant }: { variant: PanelSlot }) {
     : panelData?.title || panelType?.replace(/_/g, ' ') || 'Details';
 
   const content = staticPanel ? (
-    staticPanel.render()
+    staticPanel.render(panelParams)
   ) : isLoading ? (
     <div className="flex flex-col items-center justify-center h-32 gap-2">
       <Loader2 className="w-6 h-6 animate-spin text-deloitte-green" />

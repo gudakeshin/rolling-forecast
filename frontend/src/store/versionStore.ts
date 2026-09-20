@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { ForecastVersion } from '../types/forecast';
 import { getVersions } from '../api/forecast';
+import { useWorkspaceStore } from './workspaceStore';
 
 interface VersionState {
   versions: ForecastVersion[];
@@ -77,7 +78,8 @@ export const useVersionStore = create<VersionState>()(
       hydrate: async () => {
         set({ isLoading: true, error: null });
         try {
-          const versions = await getVersions();
+          const businessUnitId = useWorkspaceStore.getState().currentBusinessUnitId;
+          const versions = await getVersions(undefined, businessUnitId);
           const current = get().activeVersionId;
           const scenario = get().activeScenario || 'base';
           const stillValid = current && versions.some((v) => v.id === current);

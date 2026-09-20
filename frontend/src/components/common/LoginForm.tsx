@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
 import { useVersionStore } from '../../store/versionStore';
+import { useWorkspaceStore } from '../../store/workspaceStore';
 import { apiPost } from '../../api/client';
 import type { TokenResponse } from '../../types/auth';
 import { TrendingUp } from 'lucide-react';
@@ -14,6 +15,7 @@ export function LoginForm() {
   const login = useAuthStore((s) => s.login);
   const fetchMe = useAuthStore((s) => s.fetchMe);
   const hydrateVersions = useVersionStore((s) => s.hydrate);
+  const hydrateWorkspace = useWorkspaceStore((s) => s.hydrate);
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -28,6 +30,7 @@ export function LoginForm() {
       });
       login(response);
       await fetchMe();
+      await hydrateWorkspace();
       void hydrateVersions();
       navigate('/');
     } catch (err: any) {

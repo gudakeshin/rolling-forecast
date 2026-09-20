@@ -33,6 +33,7 @@ const en = {
   'nav.group.library': 'Library',
   'nav.group.admin': 'Admin',
   'nav.version': 'Active forecast version',
+  'nav.workspace': 'Workspace (company)',
   'nav.signOut': 'Sign out',
   'nav.menu': 'Open navigation menu',
   'nav.closeMenu': 'Close navigation menu',
@@ -252,6 +253,8 @@ const en = {
   'runForecast.subtitle':
     'Generate a new forecast version using a saved model preset. Manage presets in Admin → Models.',
   'runForecast.preset': 'Model preset',
+  'runForecast.workspaceLabel': 'Workspace',
+  'workspace.runForecastFromDataset': 'Running a new forecast from this dataset',
   'runForecast.businessUnit': 'Company',
   'runForecast.businessUnitInferred': 'Your company (default)',
   'runForecast.horizon': 'Horizon override (months)',
@@ -332,6 +335,7 @@ const es: MessageDict = {
   'nav.group.library': 'Biblioteca',
   'nav.group.admin': 'Admin',
   'nav.version': 'Versión de pronóstico activa',
+  'nav.workspace': 'Espacio de trabajo (empresa)',
   'nav.signOut': 'Cerrar sesión',
   'nav.menu': 'Abrir menú de navegación',
   'nav.closeMenu': 'Cerrar menú de navegación',
@@ -548,6 +552,8 @@ const es: MessageDict = {
   'runForecast.subtitle':
     'Genera una nueva versión de pronóstico usando un modelo guardado. Administra los modelos en Admin → Modelos.',
   'runForecast.preset': 'Modelo guardado',
+  'runForecast.workspaceLabel': 'Espacio de trabajo',
+  'workspace.runForecastFromDataset': 'Ejecutando un nuevo pronóstico a partir de este conjunto de datos',
   'runForecast.businessUnit': 'Empresa',
   'runForecast.businessUnitInferred': 'Tu empresa (por defecto)',
   'runForecast.horizon': 'Horizonte (meses, opcional)',
