@@ -105,6 +105,7 @@ def test_submit_for_approval_notifies_first_level_reviewers(
         id="approval-notif-v1", name="Approval Notif Test", status="draft",
         version_type="baseline", horizon_months=1, scenario="base",
         created_by=seed_users["analyst"].id,
+        business_unit_id=seed_users["analyst"].business_unit_id,
     )
     db_session.add(version)
     db_session.commit()
@@ -157,6 +158,7 @@ def test_approving_level_one_notifies_level_two(db_session, seed_users, seed_rev
         id="approval-notif-v2", name="Two Level Test", status="draft",
         version_type="baseline", horizon_months=1, scenario="base",
         created_by=seed_users["analyst"].id,
+        business_unit_id=seed_users["analyst"].business_unit_id,
     )
     db_session.add(version)
     db_session.commit()

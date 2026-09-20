@@ -15,6 +15,7 @@ from app.schemas.forecast import PanelDataResponse
 from app.services.audit import record_audit
 from app.services.permissions import (
     can_access_business_unit,
+    get_accessible_forecast_version,
     require_permission,
     user_can_view_line_item,
     version_scope_filter,
@@ -120,9 +121,7 @@ async def get_version_detail(
     db: Session = Depends(get_db),
 ):
     """Get a single forecast version by id."""
-    v = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-    if not v or not can_access_business_unit(current_user, v.business_unit_id):
-        raise HTTPException(status_code=404, detail="Forecast version not found")
+    v = get_accessible_forecast_version(db, current_user, version_id)
     return _version_payload(v)
 
 
@@ -150,13 +149,7 @@ async def delete_version(
     relationships on ForecastVersion (see app/models/forecast.py) — this
     route doesn't need to touch them individually.
     """
-    from app.services.permissions import can_access_business_unit
-
-    version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-    if not version:
-        raise HTTPException(404, "Forecast version not found")
-    if not can_access_business_unit(current_user, version.business_unit_id):
-        raise HTTPException(404, "Forecast version not found")
+    version = get_accessible_forecast_version(db, current_user, version_id)
     if version.status != "draft":
         raise HTTPException(400, "Only draft versions can be deleted")
 
@@ -207,9 +200,7 @@ async def get_forecast_table(
     ``rows`` are paginated via limit/offset.
     """
     page_size = limit or settings.panel_page_size
-    version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-    if not version:
-        raise HTTPException(status_code=404, detail="Forecast version not found")
+    version = get_accessible_forecast_version(db, current_user, version_id)
 
     query = (
         db.query(ForecastLineResult)
@@ -602,9 +593,7 @@ async def get_overrides_panel(
     db: Session = Depends(get_db),
 ):
     """Get all overrides for a version to display in the side panel."""
-    version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-    if not version:
-        raise HTTPException(status_code=404, detail="Forecast version not found")
+    version = get_accessible_forecast_version(db, current_user, version_id)
 
     overrides = (
         db.query(Override)
@@ -664,6 +653,13 @@ async def revert_override_endpoint(
     """Revert an active override and restore the original model value."""
     from app.services.overrides import revert_override
 
+    override = db.query(Override).filter(Override.id == override_id).first()
+    if override is None:
+        raise HTTPException(404, "Override not found")
+    version = db.query(ForecastVersion).filter(ForecastVersion.id == override.version_id).first()
+    if version is None or not can_access_business_unit(current_user, version.business_unit_id):
+        raise HTTPException(404, "Override not found")
+
     return revert_override(db, override_id, current_user)
 
 
@@ -677,10 +673,8 @@ async def get_comparison_panel(
     """Get version comparison data for the side panel."""
     from sqlalchemy import func
 
-    va = db.query(ForecastVersion).filter(ForecastVersion.id == version_id_a).first()
-    vb = db.query(ForecastVersion).filter(ForecastVersion.id == version_id_b).first()
-    if not va or not vb:
-        raise HTTPException(status_code=404, detail="One or both versions not found")
+    va = get_accessible_forecast_version(db, current_user, version_id_a)
+    vb = get_accessible_forecast_version(db, current_user, version_id_b)
 
     # Get aggregated results for both
     from app.services.permissions import line_item_scope_filter

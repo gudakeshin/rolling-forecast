@@ -167,6 +167,31 @@ def version_scope_filter(query: _Q, user: User | None, version_model) -> _Q:
     return query.filter(version_model.business_unit_id == bu_id)
 
 
+def get_accessible_forecast_version(
+    db: Session,
+    user: User | None,
+    version_id: str,
+    *,
+    version_model=None,
+):
+    """Fetch a ForecastVersion by id, 404ing if it doesn't exist OR the
+    caller can't access its company -- the same shape either way, so a 404
+    never reveals whether a version exists in another company.
+
+    Callers needing an additional check (e.g. version.status) should do it
+    after this returns; don't special-case that here, since a status check
+    failing is a different, revealing error (400, not 404) and must stay
+    that way.
+    """
+    if version_model is None:
+        from app.models.forecast import ForecastVersion as version_model  # noqa: N813
+
+    version = db.query(version_model).filter(version_model.id == version_id).first()
+    if version is None or not can_access_business_unit(user, version.business_unit_id):
+        raise HTTPException(404, "Forecast version not found")
+    return version
+
+
 def require_permission(permission: str):
     """FastAPI dependency factory that enforces a Role.can_* flag."""
     # Lazy import to avoid circular dependency with app.api.auth

@@ -371,7 +371,7 @@ class ApplyOverrideSkill(BaseSkill):
     ) -> SkillResult:
         """Revert an existing override."""
         from app.services.overrides import revert_override
-        from app.services.permissions import resolve_skill_user, scoped_line_items
+        from app.services.permissions import can_access_business_unit, resolve_skill_user, scoped_line_items
 
         override_id = params.get("override_id")
         version_id = params.get("version_id") or context.context_manager.get_active_version_id()
@@ -384,6 +384,11 @@ class ApplyOverrideSkill(BaseSkill):
         if override_id:
             override = db.query(Override).filter(Override.id == override_id).first()
             if not override:
+                return SkillResult.fail(f"Override '{override_id}' not found.")
+            ov_version = db.query(ForecastVersion).filter(ForecastVersion.id == override.version_id).first()
+            if ov_version is None or not can_access_business_unit(
+                resolve_skill_user(context), ov_version.business_unit_id
+            ):
                 return SkillResult.fail(f"Override '{override_id}' not found.")
             overrides_to_revert.append(override)
         else:

@@ -255,3 +255,136 @@ async def test_explicit_dataset_id_cannot_bypass_company_scope(db_session, two_c
         two_companies["ctx_a"],
     )
     assert not outcome.success
+
+
+def _make_version(db_session, business_unit, *, status="draft", parent_version_id=None, name="V"):
+    from app.models.forecast import ForecastVersion
+
+    v = ForecastVersion(
+        name=name,
+        status=status,
+        version_type="baseline",
+        horizon_months=3,
+        business_unit_id=business_unit.id,
+        parent_version_id=parent_version_id,
+    )
+    db_session.add(v)
+    db_session.commit()
+    return v
+
+
+@pytest.mark.asyncio
+async def test_approvals_never_cross_companies(db_session, two_companies):
+    """submit/status/decide on approvals.py must all be refused cross-company --
+    previously each fetched ForecastVersion/ApprovalStep by raw id with no
+    company check at all."""
+    from fastapi import HTTPException
+
+    from app.api import approvals
+    from app.models.approval import ApprovalStep, ApprovalWorkflow
+
+    version_b = _make_version(db_session, two_companies["company_b"], status="draft")
+
+    wf = ApprovalWorkflow(
+        name="Standard",
+        levels=[{"level": 1, "role": "reviewer"}],
+        require_sod=False,
+    )
+    db_session.add(wf)
+    db_session.commit()
+
+    # submit_for_approval: user_a must not be able to submit company B's version.
+    with pytest.raises(HTTPException) as exc:
+        await approvals.submit_for_approval(
+            approvals.SubmitApprovalRequest(version_id=version_b.id),
+            current_user=two_companies["user_a"],
+            db=db_session,
+        )
+    assert exc.value.status_code == 404
+
+    # approval_status: same refusal.
+    with pytest.raises(HTTPException) as exc:
+        await approvals.approval_status(
+            version_id=version_b.id, current_user=two_companies["user_a"], db=db_session
+        )
+    assert exc.value.status_code == 404
+
+    # decide_step: submit for real as company B, then try to decide as user_a.
+    submit_result = await approvals.submit_for_approval(
+        approvals.SubmitApprovalRequest(version_id=version_b.id, workflow_id=wf.id),
+        current_user=two_companies["user_b"],
+        db=db_session,
+    )
+    assert submit_result["success"]
+    step = (
+        db_session.query(ApprovalStep)
+        .filter(ApprovalStep.version_id == version_b.id)
+        .first()
+    )
+    assert step is not None
+    with pytest.raises(HTTPException) as exc:
+        await approvals.decide_step(
+            approvals.DecideRequest(step_id=step.id, action="approve"),
+            current_user=two_companies["user_a"],
+            db=db_session,
+        )
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_budget_bridge_prior_version_never_crosses_companies(db_session, two_companies):
+    """budget_bridge's 'prior version' fallback must stay inside the caller's
+    company even when another company has a newer published version --
+    previously it searched published/approved versions globally."""
+    from app.api import executive
+
+    version_a = _make_version(db_session, two_companies["company_a"], status="draft", name="A current")
+    # Newer, published, but belongs to company B -- must never be picked as
+    # company A's "prior" comparison.
+    _make_version(db_session, two_companies["company_b"], status="published", name="B published")
+
+    result = await executive.budget_bridge(
+        version_id=version_a.id,
+        materiality_pct=5.0,
+        page=1,
+        page_size=50,
+        attribute=False,
+        convention="volume_first",
+        current_user=two_companies["user_a"],
+        db=db_session,
+    )
+    assert result["prior_version_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_dashboard_and_panel_endpoints_refuse_cross_company_versions(db_session, two_companies):
+    """Representative sample of the newly-guarded dashboard.py/panel.py
+    endpoints -- proves get_accessible_forecast_version is actually wired in,
+    not exhaustive per-endpoint coverage."""
+    from fastapi import HTTPException
+
+    from app.api import dashboard, panel
+
+    version_b = _make_version(db_session, two_companies["company_b"], status="draft")
+
+    with pytest.raises(HTTPException) as exc:
+        await dashboard.get_review_dashboard(
+            version_id=version_b.id, current_user=two_companies["user_a"], db=db_session
+        )
+    assert exc.value.status_code == 404
+
+    with pytest.raises(HTTPException) as exc:
+        await panel.get_forecast_table(
+            version_id=version_b.id, current_user=two_companies["user_a"], db=db_session
+        )
+    assert exc.value.status_code == 404
+
+    version_a = _make_version(db_session, two_companies["company_a"], status="draft")
+    with pytest.raises(HTTPException) as exc:
+        await panel.get_comparison_panel(
+            version_id_a=version_a.id,
+            version_id_b=version_b.id,
+            current_user=two_companies["user_a"],
+            db=db_session,
+        )
+    assert exc.value.status_code == 404

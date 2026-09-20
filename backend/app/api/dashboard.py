@@ -23,6 +23,7 @@ from app.models.review_undo import ReviewUndoSnapshot
 from app.schemas.forecast import PanelDataResponse
 from app.services.permissions import (
     can_view_all_bus,
+    get_accessible_forecast_version,
     line_item_scope_filter,
     require_permission,
     scoped_line_items,
@@ -413,9 +414,7 @@ async def get_executive_dashboard(
     """
     from app.models.driver_input import DriverInput
 
-    version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-    if not version:
-        raise HTTPException(status_code=404, detail="Forecast version not found")
+    version = get_accessible_forecast_version(db, current_user, version_id)
 
     # ─── 1. Load all results and build lookups ────────
     all_results = (
@@ -1138,9 +1137,7 @@ async def get_review_dashboard(
     db: Session = Depends(get_db),
 ):
     """Enhanced review dashboard with AI analysis, buckets, and interactive actions."""
-    version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-    if not version:
-        raise HTTPException(status_code=404, detail="Forecast version not found")
+    version = get_accessible_forecast_version(db, current_user, version_id)
 
     results = (
         _scoped_results_query(db, current_user, version_id)
@@ -1736,9 +1733,7 @@ async def get_accuracy_tracking(
     """Accuracy tracking from vintage forecast_accuracy_records (fallback: live join)."""
     from app.models.fx import ForecastAccuracyRecord
 
-    version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-    if not version:
-        raise HTTPException(status_code=404, detail="Forecast version not found")
+    version = get_accessible_forecast_version(db, current_user, version_id)
 
     vintage_q = (
         db.query(ForecastAccuracyRecord, LineItem)
@@ -2046,9 +2041,7 @@ async def get_driver_inputs(
     from app.models.driver_input import DriverInput, DriverFormConfig
     from app.services.permissions import can_view_all_bus
 
-    version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-    if not version:
-        raise HTTPException(status_code=404, detail="Forecast version not found")
+    version = get_accessible_forecast_version(db, current_user, version_id)
 
     # Get existing driver inputs, scoped to the caller's company -- there is
     # no "shared" bucket, so a caller with no business_unit_id assigned sees
@@ -2170,9 +2163,7 @@ async def submit_driver_inputs(
     from app.services.driver_submission import apply_driver_submission
     from app.services.permissions import can_view_all_bus
 
-    version = db.query(ForecastVersion).filter(ForecastVersion.id == request.version_id).first()
-    if not version:
-        raise HTTPException(status_code=404, detail="Forecast version not found")
+    version = get_accessible_forecast_version(db, current_user, request.version_id)
     if version.status not in ("draft", "in_review"):
         raise HTTPException(
             status_code=400,
@@ -2275,9 +2266,7 @@ async def rescore_forecasts(
     from app.services.audit import record_audit
     from app.domain.engines.model_registry import effective_selection_rule
 
-    version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-    if not version:
-        raise HTTPException(status_code=404, detail="Forecast version not found")
+    version = get_accessible_forecast_version(db, current_user, version_id)
 
     live_rule = effective_selection_rule()
     pinned = version.selection_rule
@@ -2487,11 +2476,7 @@ async def inline_override(
     if not result:
         raise HTTPException(status_code=404, detail="Forecast line result not found")
 
-    version = db.query(ForecastVersion).filter(
-        ForecastVersion.id == result.version_id
-    ).first()
-    if not version:
-        raise HTTPException(status_code=404, detail="Forecast version not found")
+    version = get_accessible_forecast_version(db, current_user, result.version_id)
 
     # Determine which results to override
     if request.apply_to == "all":
@@ -2619,9 +2604,7 @@ async def get_anomaly_dashboard(
     5. Returns structured data for filtering and interactive review
     """
 
-    version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-    if not version:
-        raise HTTPException(status_code=404, detail="Forecast version not found")
+    version = get_accessible_forecast_version(db, current_user, version_id)
 
     # ── Gather data ───────────────────────────────────
     results = (

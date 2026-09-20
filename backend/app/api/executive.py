@@ -22,7 +22,9 @@ from app.models.actuals import ActualsRecord
 from app.models.override import Override
 from app.services.permissions import (
     allowed_line_item_ids,
+    can_access_business_unit,
     can_view_all_bus,
+    get_accessible_forecast_version,
     require_permission,
     scoped_line_items,
     user_can_view_line_item,
@@ -102,9 +104,7 @@ async def download_board_pack(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-    if not version:
-        raise HTTPException(404, "Forecast version not found")
+    version = get_accessible_forecast_version(db, current_user, version_id)
 
     if format == "pptx":
         data = build_board_pack_pptx(db, version)
@@ -146,9 +146,7 @@ async def budget_bridge(
 ):
     """Compare forecast vs budget vs prior vs YTD actuals with materiality flags."""
     page_size = page_size or settings.panel_page_size
-    version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-    if not version:
-        raise HTTPException(404, "Forecast version not found")
+    version = get_accessible_forecast_version(db, current_user, version_id)
 
     budget = None
     if budget_version_id:
@@ -163,12 +161,18 @@ async def budget_bridge(
 
     prior = None
     if version.parent_version_id:
-        prior = db.query(ForecastVersion).filter(ForecastVersion.id == version.parent_version_id).first()
+        parent = db.query(ForecastVersion).filter(ForecastVersion.id == version.parent_version_id).first()
+        if parent is not None and can_access_business_unit(current_user, parent.business_unit_id):
+            prior = parent
     if not prior:
+        # Same-company only -- without this filter, a version with no
+        # explicit parent could silently pick another company's published
+        # version as its "prior" comparison.
         prior = (
             db.query(ForecastVersion)
             .filter(
                 ForecastVersion.id != version.id,
+                ForecastVersion.business_unit_id == version.business_unit_id,
                 ForecastVersion.status.in_(["published", "approved"]),
             )
             .order_by(ForecastVersion.created_at.desc())
@@ -341,9 +345,7 @@ async def driver_drilldown(
     from app.models.driver_input import DriverInput
     from app.services.variance_attribution import attribute_variance
 
-    version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-    if not version:
-        raise HTTPException(404, "Forecast version not found")
+    version = get_accessible_forecast_version(db, current_user, version_id)
 
     allowed_ids = allowed_line_item_ids(db, current_user)
     overrides = db.query(Override).filter(
@@ -453,9 +455,7 @@ async def distribute_pack(
     db: Session = Depends(get_db),
 ):
     """Email board pack to recipients (SMTP). Records audit even if SMTP not configured."""
-    version = db.query(ForecastVersion).filter(ForecastVersion.id == body.version_id).first()
-    if not version:
-        raise HTTPException(404, "Forecast version not found")
+    version = get_accessible_forecast_version(db, current_user, body.version_id)
 
     if body.format == "pptx":
         data = build_board_pack_pptx(db, version)

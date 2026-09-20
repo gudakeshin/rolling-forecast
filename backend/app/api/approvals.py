@@ -13,7 +13,7 @@ from app.api.auth import get_current_user
 from app.models.user import User
 from app.models.forecast import ForecastVersion
 from app.models.approval import ApprovalWorkflow, ApprovalStep
-from app.services.permissions import require_permission
+from app.services.permissions import can_access_business_unit, get_accessible_forecast_version, require_permission
 from app.services.audit import record_audit
 from app.services.notifications import notify_users, users_eligible_for_approval_step
 
@@ -137,9 +137,7 @@ async def submit_for_approval(
     current_user: User = Depends(require_permission("generate")),
     db: Session = Depends(get_db),
 ):
-    version = db.query(ForecastVersion).filter(ForecastVersion.id == body.version_id).first()
-    if not version:
-        raise HTTPException(404, "Version not found")
+    version = get_accessible_forecast_version(db, current_user, body.version_id)
     if version.status not in ("draft", "in_review"):
         raise HTTPException(400, f"Cannot submit a '{version.status}' version")
 
@@ -193,9 +191,7 @@ async def approval_status(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-    if not version:
-        raise HTTPException(404, "Version not found")
+    version = get_accessible_forecast_version(db, current_user, version_id)
 
     steps = (
         db.query(ApprovalStep)
@@ -256,10 +252,15 @@ async def decide_step(
     step = db.query(ApprovalStep).filter(ApprovalStep.id == body.step_id).first()
     if not step:
         raise HTTPException(404, "Approval step not found")
+    # Check the company boundary before anything that would reveal the
+    # step's status/details to a caller who can't even see its version --
+    # same 404 as "doesn't exist" so existence in another company isn't leaked.
+    version = db.query(ForecastVersion).filter(ForecastVersion.id == step.version_id).first()
+    if version is None or not can_access_business_unit(current_user, version.business_unit_id):
+        raise HTTPException(404, "Approval step not found")
     if step.status != "pending":
         raise HTTPException(400, f"Step already {step.status}")
 
-    version = db.query(ForecastVersion).filter(ForecastVersion.id == step.version_id).first()
     wf = db.query(ApprovalWorkflow).filter(ApprovalWorkflow.id == step.workflow_id).first()
 
     can_decide, reason = _can_decide(db, step, version, wf, current_user)
