@@ -40,6 +40,7 @@ class UserResponse(BaseModel):
     username: str
     full_name: str
     business_unit: str | None
+    business_unit_id: str | None = None
     role_name: str
     is_active: bool
     can_input: bool = False
@@ -49,5 +50,6 @@ class UserResponse(BaseModel):
     can_publish: bool = False
     can_admin: bool = False
     can_manage_drivers: bool = False
+    can_view_all_bus: bool = False
 
     model_config = {"from_attributes": True}

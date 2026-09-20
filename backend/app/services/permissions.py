@@ -153,6 +153,20 @@ def user_can_view_driver(user: User | None, driver) -> bool:
     return can_access_business_unit(user, getattr(driver, "business_unit_id", None))
 
 
+def version_scope_filter(query: _Q, user: User | None, version_model) -> _Q:
+    """Restrict a ForecastVersion query to the caller's company unless they
+    can view all -- see line_item_scope_filter for the "no shared bucket" rule
+    this mirrors. A version with no business_unit_id (legacy rows predating
+    the BU boundary) is only visible to cross-BU callers.
+    """
+    if user is None or can_view_all_bus(user):
+        return query
+    bu_id = user.business_unit_id
+    if not bu_id:
+        return query.filter(false())
+    return query.filter(version_model.business_unit_id == bu_id)
+
+
 def require_permission(permission: str):
     """FastAPI dependency factory that enforces a Role.can_* flag."""
     # Lazy import to avoid circular dependency with app.api.auth

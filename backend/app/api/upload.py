@@ -5,9 +5,10 @@ from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
 from app.database import get_db
+from app.models.actuals import ActualsDataset
 from app.models.user import User
 from app.rate_limit import limiter
-from app.services.permissions import require_permission
+from app.services.permissions import can_access_business_unit, can_view_all_bus, require_permission
 from app.services.upload_safety import save_upload
 
 router = APIRouter(prefix="/upload", tags=["upload"])
@@ -113,6 +114,49 @@ async def upload_actuals(
     payload["ingest"] = result.data
     payload["message"] = result.message
     return payload
+
+
+@router.get("/datasets")
+async def list_datasets(
+    business_unit_id: str | None = Query(
+        None, description="Filter to one company's datasets (cross-company callers only)"
+    ),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List ingested actuals datasets for the caller's workspace, newest first.
+
+    A regular (single-company) caller only ever sees their own company's
+    datasets. A cross-company caller sees everything unless they narrow it
+    with `business_unit_id` -- same boundary rules as line_item_scope_filter.
+    """
+    if business_unit_id and not can_access_business_unit(current_user, business_unit_id):
+        raise HTTPException(404, "Business unit not found")
+
+    q = db.query(ActualsDataset)
+    if business_unit_id:
+        q = q.filter(ActualsDataset.business_unit_id == business_unit_id)
+    elif not can_view_all_bus(current_user):
+        if not current_user.business_unit_id:
+            return []
+        q = q.filter(ActualsDataset.business_unit_id == current_user.business_unit_id)
+
+    datasets = q.order_by(ActualsDataset.ingested_at.desc()).all()
+    return [
+        {
+            "id": d.id,
+            "source_type": d.source_type,
+            "source_name": d.source_name,
+            "row_count": d.row_count,
+            "period_start": d.period_start,
+            "period_end": d.period_end,
+            "completeness_pct": d.completeness_pct,
+            "is_pinned": d.is_pinned,
+            "ingested_at": d.ingested_at.isoformat() if d.ingested_at else None,
+            "business_unit_id": d.business_unit_id,
+        }
+        for d in datasets
+    ]
 
 
 @router.post("/drivers")

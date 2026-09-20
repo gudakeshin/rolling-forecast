@@ -29,6 +29,7 @@ class RoleUpdate(BaseModel):
     can_publish: bool | None = None
     can_admin: bool | None = None
     can_manage_drivers: bool | None = None
+    can_view_all_bus: bool | None = None
 
 
 class UserUpdate(BaseModel):
@@ -127,6 +128,7 @@ async def list_roles(
             "can_publish": r.can_publish,
             "can_admin": r.can_admin,
             "can_manage_drivers": getattr(r, "can_manage_drivers", False),
+            "can_view_all_bus": getattr(r, "can_view_all_bus", False),
         }
         for r in roles
     ]

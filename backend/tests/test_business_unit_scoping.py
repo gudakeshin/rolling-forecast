@@ -178,6 +178,59 @@ async def test_cross_company_dataset_access_refused(db_session, two_companies, t
 
 
 @pytest.mark.asyncio
+async def test_manage_versions_list_never_crosses_companies(db_session, two_companies, tmp_path):
+    """The chat `manage_versions` "list" action must respect the same company
+    boundary as line_item_scope_filter/driver_scope_filter -- previously it
+    queried ForecastVersion with no business_unit_id filter at all."""
+    from app.domain.skills.generate_baseline import GenerateBaselineSkill
+    from app.domain.skills.ingest_actuals import IngestActualsSkill
+    from app.domain.skills.manage_versions import ManageVersionsSkill
+
+    csv_a = tmp_path / "a.csv"
+    csv_b = tmp_path / "b.csv"
+    _write_csv(csv_a, base=100000.0)
+    _write_csv(csv_b, base=999000.0)
+
+    result_a = await IngestActualsSkill().execute({"file_path": str(csv_a)}, two_companies["ctx_a"])
+    result_b = await IngestActualsSkill().execute({"file_path": str(csv_b)}, two_companies["ctx_b"])
+    assert result_a.success and result_b.success
+
+    gen = GenerateBaselineSkill()
+    outcome_a = await gen.execute(
+        {"horizon_months": 3, "model_type": "linear", "random_seed": 42, "skip_plan_check": True},
+        two_companies["ctx_a"],
+    )
+    outcome_b = await gen.execute(
+        {"horizon_months": 3, "model_type": "linear", "random_seed": 42, "skip_plan_check": True},
+        two_companies["ctx_b"],
+    )
+    assert outcome_a.success and outcome_b.success
+    version_a_id = outcome_a.data["version_id"]
+    version_b_id = outcome_b.data["version_id"]
+
+    manage = ManageVersionsSkill()
+    list_for_a = await manage.execute({"action": "list"}, two_companies["ctx_a"])
+    ids_seen_by_a = {v["id"] for v in list_for_a.data["versions"]}
+    assert version_a_id in ids_seen_by_a
+    assert version_b_id not in ids_seen_by_a
+
+    list_for_b = await manage.execute({"action": "list"}, two_companies["ctx_b"])
+    ids_seen_by_b = {v["id"] for v in list_for_b.data["versions"]}
+    assert version_b_id in ids_seen_by_b
+    assert version_a_id not in ids_seen_by_b
+
+    # "get"/"set_active" must also refuse another company's version id outright.
+    get_attempt = await manage.execute(
+        {"action": "get", "version_id": version_b_id}, two_companies["ctx_a"]
+    )
+    assert not get_attempt.success
+    set_active_attempt = await manage.execute(
+        {"action": "set_active", "version_id": version_b_id}, two_companies["ctx_a"]
+    )
+    assert not set_active_attempt.success
+
+
+@pytest.mark.asyncio
 async def test_explicit_dataset_id_cannot_bypass_company_scope(db_session, two_companies, tmp_path):
     """generate_baseline's dataset_id param must still be ownership-checked --
     otherwise scoping could be defeated just by guessing/knowing another

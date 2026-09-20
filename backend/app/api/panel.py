@@ -13,7 +13,12 @@ from app.models.line_item import LineItem
 from app.models.override import Override
 from app.schemas.forecast import PanelDataResponse
 from app.services.audit import record_audit
-from app.services.permissions import require_permission, user_can_view_line_item
+from app.services.permissions import (
+    can_access_business_unit,
+    require_permission,
+    user_can_view_line_item,
+    version_scope_filter,
+)
 
 router = APIRouter(prefix="/panel", tags=["panel"])
 
@@ -85,11 +90,23 @@ def _version_payload(v: ForecastVersion) -> dict:
 async def list_versions(
     limit: int = Query(50, ge=1, le=200),
     scenario: str | None = Query(None, description="Filter by scenario label (e.g. base, upside)"),
+    business_unit_id: str | None = Query(
+        None, description="Filter to one company's versions (cross-company callers only)"
+    ),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List recent forecast versions (newest first) for the version picker."""
+    """List recent forecast versions (newest first) for the version picker.
+
+    Scoped to the caller's own company -- there is no shared bucket, matching
+    line_item_scope_filter/driver_scope_filter (app/services/permissions.py).
+    """
+    if business_unit_id and not can_access_business_unit(current_user, business_unit_id):
+        raise HTTPException(status_code=404, detail="Business unit not found")
     q = db.query(ForecastVersion).filter(ForecastVersion.status != "archived")
+    q = version_scope_filter(q, current_user, ForecastVersion)
+    if business_unit_id:
+        q = q.filter(ForecastVersion.business_unit_id == business_unit_id)
     if scenario:
         q = q.filter(ForecastVersion.scenario == scenario)
     versions = q.order_by(ForecastVersion.created_at.desc()).limit(limit).all()
@@ -104,7 +121,7 @@ async def get_version_detail(
 ):
     """Get a single forecast version by id."""
     v = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-    if not v:
+    if not v or not can_access_business_unit(current_user, v.business_unit_id):
         raise HTTPException(status_code=404, detail="Forecast version not found")
     return _version_payload(v)
 

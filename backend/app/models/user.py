@@ -91,3 +91,10 @@ class User(Base):
     @property
     def can_manage_drivers(self) -> bool:
         return bool(self.role and getattr(self.role, "can_manage_drivers", False))
+
+    @property
+    def can_view_all_bus(self) -> bool:
+        # Lazy import: app.services.permissions imports User at module level.
+        from app.services.permissions import can_view_all_bus as _can_view_all_bus
+
+        return _can_view_all_bus(self)
