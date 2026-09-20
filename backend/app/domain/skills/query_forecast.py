@@ -10,7 +10,7 @@ from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.models.forecast import ForecastVersion, ForecastLineResult
 from app.models.line_item import LineItem
 from app.models.override import Override
-from app.services.permissions import line_item_scope_filter, resolve_skill_user
+from app.services.permissions import can_access_business_unit, line_item_scope_filter, resolve_skill_user
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ class QueryForecastSkill(BaseSkill):
             return SkillResult.fail("No forecast version active. Generate or select a forecast first.")
 
         version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-        if not version:
+        if not version or not can_access_business_unit(resolve_skill_user(context), version.business_unit_id):
             return SkillResult.fail(f"Version '{version_id}' not found.")
 
         query_type = params.get("query_type", "version_summary")

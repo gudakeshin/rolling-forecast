@@ -106,7 +106,9 @@ class ApplyOverrideSkill(BaseSkill):
             return SkillResult.fail("No active forecast version. Generate a forecast first.")
 
         version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-        if not version:
+        from app.services.permissions import can_access_business_unit, resolve_skill_user
+
+        if not version or not can_access_business_unit(resolve_skill_user(context), version.business_unit_id):
             return SkillResult.fail(f"Forecast version '{version_id}' not found.")
 
         if version.status not in ("draft", "in_review"):

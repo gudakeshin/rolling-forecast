@@ -157,6 +157,7 @@ async def test_bias_analysis_uses_vintage_records(db_session, seed_users, skill_
         horizon_months=3,
         base_period="2024-01",
         created_by=seed_users["analyst"].id,
+        business_unit_id=seed_users["analyst"].business_unit_id,
     )
     db_session.add(version)
     db_session.flush()

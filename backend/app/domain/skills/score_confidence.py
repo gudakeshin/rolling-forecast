@@ -9,6 +9,7 @@ from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.models.forecast import ForecastVersion, ForecastLineResult
 from app.config import settings
 from app.services.confidence import compute_confidence_score, classify_confidence
+from app.services.permissions import can_access_business_unit, resolve_skill_user
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ class ScoreConfidenceSkill(BaseSkill):
             return SkillResult.fail("No forecast version specified or active.")
 
         version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-        if not version:
+        if not version or not can_access_business_unit(resolve_skill_user(context), version.business_unit_id):
             return SkillResult.fail(f"Forecast version '{version_id}' not found.")
 
         threshold_low = params.get("threshold_low", settings.confidence_threshold_low)

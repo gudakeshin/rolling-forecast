@@ -16,6 +16,7 @@ from app.services.audit import record_audit
 from app.services.driver_series import materialize_driver_series, upsert_driver_values
 from app.services.reconciliation import reconcile_version
 from app.services.versioning import clone_version_for_edit
+from app.services.permissions import can_access_business_unit
 
 # Normal quantile for an 80% two-sided band — the same constant the engines
 # and MinT use, kept here so scenario bands stay comparable to baseline ones.
@@ -76,7 +77,7 @@ def create_what_if_scenario(
 ) -> dict[str, Any]:
     """Create scenario version by perturbing driver-linked line items only."""
     source = db.query(ForecastVersion).filter(ForecastVersion.id == base_version_id).first()
-    if not source:
+    if not source or not can_access_business_unit(actor, source.business_unit_id):
         raise ValueError(f"Base version '{base_version_id}' not found")
     if not shocks:
         raise ValueError("At least one driver shock is required")

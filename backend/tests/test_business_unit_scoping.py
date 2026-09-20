@@ -388,3 +388,72 @@ async def test_dashboard_and_panel_endpoints_refuse_cross_company_versions(db_se
             db=db_session,
         )
     assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_review_forecast_skill_never_crosses_companies(db_session, two_companies):
+    """submit_for_review (a write) on the chat review_forecast skill must be
+    refused cross-company -- same unscoped-lookup pattern as the REST layer,
+    just reached via chat instead of HTTP."""
+    from app.domain.skills.review_forecast import ReviewForecastSkill
+
+    version_b = _make_version(db_session, two_companies["company_b"], status="draft", name="B draft")
+
+    result = await ReviewForecastSkill().execute(
+        {"action": "submit_for_review", "version_id": version_b.id},
+        two_companies["ctx_a"],
+    )
+    assert not result.success
+    assert version_b.status == "draft"  # never mutated by the refused caller
+
+    # Same action, same company, must actually work.
+    result_b = await ReviewForecastSkill().execute(
+        {"action": "submit_for_review", "version_id": version_b.id},
+        two_companies["ctx_b"],
+    )
+    assert result_b.success
+    assert version_b.status == "in_review"
+
+
+@pytest.mark.asyncio
+async def test_explain_variance_skill_never_crosses_companies(db_session, two_companies):
+    from app.domain.skills.explain_variance import ExplainVarianceSkill
+
+    version_b = _make_version(db_session, two_companies["company_b"], status="draft")
+
+    result = await ExplainVarianceSkill().execute(
+        {"version_id": version_b.id}, two_companies["ctx_a"]
+    )
+    assert not result.success
+
+
+@pytest.mark.asyncio
+async def test_branch_forecast_never_crosses_companies_and_inherits_business_unit(
+    db_session, two_companies
+):
+    """create_branch must refuse a cross-company source, and -- separately --
+    a branch created from an accessible source must inherit its
+    business_unit_id (clone_version_for_edit/the branch-create path
+    previously dropped it, silently orphaning the clone from its company)."""
+    from app.domain.skills.branch_forecast import BranchForecastSkill
+    from app.models.forecast import ForecastVersion
+
+    version_b = _make_version(db_session, two_companies["company_b"], status="draft")
+
+    refused = await BranchForecastSkill().execute(
+        {"action": "create_branch", "source_version_id": version_b.id},
+        two_companies["ctx_a"],
+    )
+    assert not refused.success
+
+    version_a = _make_version(db_session, two_companies["company_a"], status="draft")
+    ok = await BranchForecastSkill().execute(
+        {"action": "create_branch", "source_version_id": version_a.id},
+        two_companies["ctx_a"],
+    )
+    assert ok.success, ok.message
+    branch = db_session.query(ForecastVersion).filter(
+        ForecastVersion.id == ok.data["branch_version_id"]
+    ).first()
+    assert branch is not None
+    assert branch.business_unit_id == two_companies["company_a"].id

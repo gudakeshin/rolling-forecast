@@ -34,6 +34,7 @@ def clone_version_for_edit(
         status="draft",
         version_type="ad_hoc",
         parent_version_id=source.id,
+        business_unit_id=source.business_unit_id,
         actuals_dataset_id=source.actuals_dataset_id,
         actuals_hash=source.actuals_hash,
         input_hash=source.input_hash,

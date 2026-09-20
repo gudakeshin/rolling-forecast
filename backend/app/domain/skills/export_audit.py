@@ -12,6 +12,7 @@ from app.models.line_item import LineItem
 from app.models.override import Override
 from app.models.actuals import ActualsDataset
 from app.models.user import User
+from app.services.permissions import can_access_business_unit, resolve_skill_user
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ class ExportAuditSkill(BaseSkill):
             return SkillResult.fail("No active forecast version.")
 
         version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-        if not version:
+        if not version or not can_access_business_unit(resolve_skill_user(context), version.business_unit_id):
             return SkillResult.fail(f"Version '{version_id}' not found.")
 
         # Build the audit report

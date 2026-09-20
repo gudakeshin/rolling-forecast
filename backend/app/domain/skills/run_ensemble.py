@@ -14,6 +14,7 @@ from app.models.actuals import ActualsDataset, ActualsRecord
 from app.models.line_item import LineItem
 from app.services.confidence import classify_confidence, compute_confidence_score
 from app.services.period_calendar import get_calendar_config, period_to_date
+from app.services.permissions import can_access_business_unit, resolve_skill_user
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,7 @@ class RunEnsembleSkill(BaseSkill):
             return SkillResult.fail("No active forecast version.")
 
         version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-        if not version:
+        if not version or not can_access_business_unit(resolve_skill_user(context), version.business_unit_id):
             return SkillResult.fail(f"Version '{version_id}' not found.")
 
         weighting = params.get("weighting_method", "inverse_mape")
