@@ -382,11 +382,29 @@ async def driver_drilldown(
         li = li_map.get(lid)
         if li is not None and not user_can_view_line_item(current_user, li):
             continue
+        # The identity_qp and fx_only rungs both require an explicit period
+        # pair -- default to this line's full actuals history when the
+        # caller didn't specify one (the panel's period fields are optional),
+        # so a seeded driver link is reachable without the analyst having to
+        # already know the line's period boundaries.
+        line_from, line_to = period_from, period_to
+        if not line_from or not line_to:
+            line_periods = sorted(
+                {
+                    p
+                    for (p,) in db.query(ActualsRecord.period)
+                    .filter(ActualsRecord.line_item_id == lid)
+                    .distinct()
+                }
+            )
+            if len(line_periods) >= 2:
+                line_from = line_from or line_periods[0]
+                line_to = line_to or line_periods[-1]
         attr = attribute_variance(
             db,
             line_item_id=lid,
-            period_from=period_from,
-            period_to=period_to,
+            period_from=line_from,
+            period_to=line_to,
             basis=basis,
             convention=convention,
             version_id=version_id,

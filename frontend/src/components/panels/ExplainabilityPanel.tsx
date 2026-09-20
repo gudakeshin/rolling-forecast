@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, GitBranch, Loader2, RefreshCw, Sparkles } from 'lucide-react';
+import { AlertTriangle, GitBranch, Link2, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import { getBudgetBridge, getDriverDrilldown } from '../../api/scenarios';
 import { useI18n } from '../../i18n/useI18n';
 import type { MessageKey } from '../../i18n';
@@ -96,6 +96,10 @@ export function ExplainabilityPanel() {
 
   const attribution = drill?.attributions?.[0];
   const waterfall = attribution?.waterfall || bridge?.waterfall;
+  // The engine correctly refuses to fabricate a breakdown when no driver
+  // link (or override) is available -- render that as an explanatory empty
+  // state rather than a one-bucket "unattributed" bar chart.
+  const hasNoAttribution = attribution && attribution.method === 'none' && !attribution.explained_pct;
 
   const columns: DataTableColumn<Record<string, unknown>>[] = [
     {
@@ -199,13 +203,31 @@ export function ExplainabilityPanel() {
         </div>
       ) : (
         <>
-          {waterfall && (
-            <div className="bg-surface-800/50 border border-surface-700/40 rounded-xl p-2">
-              <ChartRenderer data={waterfall} />
+          {hasNoAttribution ? (
+            <div className="bg-surface-800/50 border border-surface-700/40 rounded-xl p-4 flex flex-col items-center text-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-400" />
+              <p className="text-xs font-semibold text-surface-200">
+                {t('explain.noAttribution.title')}
+              </p>
+              <p className="text-xs text-surface-400 max-w-md">{t('explain.noAttribution.body')}</p>
+              <button
+                type="button"
+                onClick={() => openPanel('drivers', { line_item_id: selectedLineId })}
+                className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 mt-1 rounded-lg border border-deloitte-green/40 text-deloitte-green hover:bg-deloitte-green/10"
+              >
+                <Link2 className="w-3.5 h-3.5" />
+                {t('explain.noAttribution.cta')}
+              </button>
             </div>
+          ) : (
+            waterfall && (
+              <div className="bg-surface-800/50 border border-surface-700/40 rounded-xl p-2">
+                <ChartRenderer data={waterfall} />
+              </div>
+            )
           )}
 
-          {attribution && (
+          {attribution && !hasNoAttribution && (
             <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl p-3 space-y-2">
               <div className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-deloitte-green" />

@@ -843,10 +843,14 @@ def attribute_bridge_row(
         if ident is not None:
             return {**ident, "line_item_id": line_item_id}
 
-    # Forecast-line residual without causal decomposition
+    # Forecast-line residual without causal decomposition -- no override to
+    # cite and no identity_qp rung reachable, so there's genuinely nothing to
+    # attribute this to (not the same case as "an override was made but its
+    # reason text isn't causally decomposed", which is what
+    # "override_reason_text" means above).
     return {
         "line_item_id": line_item_id,
-        "method": "override_reason_text",
+        "method": "none",
         "convention": convention,
         "total_delta": round(float(variance_vs_prior), 4),
         "buckets": {"unattributed": round(float(variance_vs_prior), 4)},

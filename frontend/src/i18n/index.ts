@@ -209,6 +209,10 @@ const en = {
   'explain.bucket.constant_currency': 'Constant currency',
   'explain.bucket.reconciliation': 'Reconciliation',
   'explain.bucket.unattributed': 'Unattributed',
+  'explain.noAttribution.title': 'No decomposition available for this line',
+  'explain.noAttribution.body':
+    'There is no active quantity driver linked to this line item, so volume/price/mix cannot be separated out — the variance is reported as a single unattributed amount rather than a fabricated breakdown.',
+  'explain.noAttribution.cta': 'Link a quantity driver to this line',
   // What-if panel
   'whatIf.title': 'What-if scenario',
   'whatIf.subtitle':
@@ -509,6 +513,10 @@ const es: MessageDict = {
   'explain.bucket.constant_currency': 'Moneda constante',
   'explain.bucket.reconciliation': 'Reconciliación',
   'explain.bucket.unattributed': 'Sin atribuir',
+  'explain.noAttribution.title': 'No hay descomposición disponible para esta partida',
+  'explain.noAttribution.body':
+    'No hay un driver de cantidad activo vinculado a esta partida, por lo que no se puede separar volumen/precio/mezcla — la variación se reporta como un monto único sin atribuir en lugar de un desglose fabricado.',
+  'explain.noAttribution.cta': 'Vincular un driver de cantidad a esta partida',
   'whatIf.title': 'Escenario what-if',
   'whatIf.subtitle':
     'Aplique shocks a drivers causales y clone el pronóstico activo en una versión de escenario. Las partidas vinculadas se perturban vía coeficientes; P10/P90 permanecen en la base.',
