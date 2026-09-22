@@ -635,3 +635,58 @@ async def test_budget_bridge_never_pulls_another_companys_budget(db_session, two
         db=db_session,
     )
     assert result["budget_version_id"] is None
+
+
+def test_reporting_currency_company_override_does_not_leak(db_session, two_companies):
+    """Setting company A's reporting currency must not change company B's or
+    the global default; a caller with no business_unit_id still gets today's
+    global value unchanged."""
+    from app.services.fx import get_reporting_currency, set_reporting_currency
+
+    assert get_reporting_currency(db_session) == "USD"  # untouched global default
+
+    set_reporting_currency(
+        db_session, "EUR", business_unit_id=two_companies["company_a"].id
+    )
+    assert get_reporting_currency(
+        db_session, business_unit_id=two_companies["company_a"].id
+    ) == "EUR"
+    assert get_reporting_currency(
+        db_session, business_unit_id=two_companies["company_b"].id
+    ) == "USD"  # falls back to the untouched global default
+    assert get_reporting_currency(db_session) == "USD"  # no business_unit_id -> unaffected
+
+    set_reporting_currency(db_session, "GBP")  # sets the global default
+    assert get_reporting_currency(db_session) == "GBP"
+    assert get_reporting_currency(
+        db_session, business_unit_id=two_companies["company_a"].id
+    ) == "EUR"  # company A's override still wins over the new global default
+    assert get_reporting_currency(
+        db_session, business_unit_id=two_companies["company_b"].id
+    ) == "GBP"  # B still has no override, so it follows the global default
+
+
+@pytest.mark.asyncio
+async def test_admin_fx_settings_endpoint_scopes_by_company(db_session, two_companies, seed_roles):
+    """_resolve_settings_business_unit resolves to the caller's own company
+    when they aren't cross-BU (can_view_all_bus is admin-or-explicit in this
+    codebase -- see can_view_all_bus -- so this exercises the scoping logic
+    directly against a non-cross-BU caller, independent of the separate
+    require_permission("admin") gate these routes also enforce in
+    production), and to the global default for a cross-BU admin who didn't
+    specify a company."""
+    from app.api import admin_fx
+    from app.api.admin_fx import ReportingCurrencyBody
+
+    put_result = await admin_fx.put_currency(
+        ReportingCurrencyBody(currency="EUR"), current_user=two_companies["user_a"], db=db_session
+    )
+    assert put_result["business_unit_id"] == two_companies["company_a"].id
+
+    get_for_a = await admin_fx.get_currency(current_user=two_companies["user_a"], db=db_session)
+    assert get_for_a["reporting_currency"] == "EUR"
+
+    admin = _make_admin_user(db_session, seed_roles, "cross_admin_fx")
+    get_global = await admin_fx.get_currency(current_user=admin, db=db_session)
+    assert get_global["business_unit_id"] is None
+    assert get_global["reporting_currency"] == "USD"  # company A's EUR didn't touch the global default

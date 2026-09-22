@@ -555,7 +555,7 @@ class GenerateBaselineSkill(BaseSkill):
         )
         # FX: resolve reporting currency up front
         from app.services.fx import get_reporting_currency, MissingFxRateError, convert_series_values
-        reporting_ccy = get_reporting_currency(db)
+        reporting_ccy = get_reporting_currency(db, business_unit_id=version.business_unit_id)
         version.reporting_currency = reporting_ccy
         db.add(version)
         db.flush()
@@ -569,7 +569,7 @@ class GenerateBaselineSkill(BaseSkill):
         )
         from app.services.reconciliation import reconcile_version
 
-        cal_cfg = get_calendar_config(db)
+        cal_cfg = get_calendar_config(db, business_unit_id=version.business_unit_id)
         cal_token = push_calendar(cal_cfg)
 
         # Preload all actuals for this dataset once (avoids N+1 per line item)

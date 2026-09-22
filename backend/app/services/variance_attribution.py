@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.models.actuals import ActualsRecord
 from app.models.driver import DriverLink
 from app.models.forecast import ForecastLineResult
-from app.models.line_item import LineItemDependency
+from app.models.line_item import LineItem, LineItemDependency
 from app.models.override import Override
 from app.services.driver_series import derive_price_from_volume, materialize_driver_series, qp_coherence
 from app.services.fx import MissingFxRateError, get_reporting_currency, lookup_rate
@@ -76,7 +76,11 @@ def _fx_decompose_actuals(
     Constant-currency Δ = v_to_local × r_from − v_from_local × r_from
     FX plug            = v_to_local × (r_to − r_from)
     """
-    reporting = (reporting_currency or get_reporting_currency(db)).upper()
+    if reporting_currency:
+        reporting = reporting_currency.upper()
+    else:
+        li_bu = db.query(LineItem.business_unit_id).filter(LineItem.id == line_item_id).scalar()
+        reporting = get_reporting_currency(db, business_unit_id=li_bu).upper()
     rows = (
         db.query(ActualsRecord)
         .filter(

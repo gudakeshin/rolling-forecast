@@ -47,22 +47,24 @@ def reset_calendar(token: Token) -> None:
     _active_calendar.reset(token)
 
 
-def get_calendar_config(db: Session | None = None) -> FiscalCalendarConfig:
-    """Load calendar: context override → system_settings → gregorian default."""
+def get_calendar_config(
+    db: Session | None = None, *, business_unit_id: str | None = None
+) -> FiscalCalendarConfig:
+    """Load calendar: context override → company override → global default → gregorian."""
     ctx = _active_calendar.get()
     if ctx is not None:
         return ctx
     if db is None:
         return _DEFAULT
     try:
-        from app.models.fx import SystemSetting
+        from app.services.tenant_settings import get_tenant_setting
 
-        row = db.query(SystemSetting).filter(SystemSetting.key == "fiscal_calendar").first()
-        if not row or not row.value:
+        value = get_tenant_setting(db, "fiscal_calendar", business_unit_id=business_unit_id)
+        if not value:
             return _DEFAULT
         import json
 
-        raw = json.loads(row.value) if row.value.startswith("{") else {"calendar_type": row.value}
+        raw = json.loads(value) if value.startswith("{") else {"calendar_type": value}
         ctype = CalendarType(raw.get("calendar_type", CalendarType.GREGORIAN_MONTH.value))
         return FiscalCalendarConfig(
             calendar_type=ctype,
@@ -73,10 +75,12 @@ def get_calendar_config(db: Session | None = None) -> FiscalCalendarConfig:
         return _DEFAULT
 
 
-def set_calendar_config(db: Session, config: FiscalCalendarConfig) -> None:
+def set_calendar_config(
+    db: Session, config: FiscalCalendarConfig, *, business_unit_id: str | None = None
+) -> None:
     import json
 
-    from app.models.fx import SystemSetting
+    from app.services.tenant_settings import set_tenant_setting
 
     payload = json.dumps(
         {
@@ -85,12 +89,7 @@ def set_calendar_config(db: Session, config: FiscalCalendarConfig) -> None:
             "week_start": config.week_start,
         }
     )
-    row = db.query(SystemSetting).filter(SystemSetting.key == "fiscal_calendar").first()
-    if row:
-        row.value = payload
-    else:
-        db.add(SystemSetting(key="fiscal_calendar", value=payload))
-    db.flush()
+    set_tenant_setting(db, "fiscal_calendar", payload, business_unit_id=business_unit_id)
 
 
 def _nth_weekday_on_or_after(d: date, weekday: int) -> date:

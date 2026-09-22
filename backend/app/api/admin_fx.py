@@ -35,6 +35,28 @@ class FxRateUpdate(BaseModel):
 
 class ReportingCurrencyBody(BaseModel):
     currency: str = Field(..., min_length=3, max_length=3)
+    business_unit_id: str | None = None
+
+
+def _resolve_settings_business_unit(
+    db: Session, current_user: User, business_unit_id: str | None
+) -> str | None:
+    """Which company's setting a caller is viewing/editing here.
+
+    An explicit business_unit_id wins (only a cross-BU caller may pass one
+    that isn't their own). Otherwise a company-scoped admin sees/edits their
+    own company's override; a cross-BU admin with none specified sees/edits
+    the global default, matching this endpoint's pre-scoping behavior.
+    """
+    from app.services.permissions import can_access_business_unit, can_view_all_bus
+
+    if business_unit_id:
+        if not can_access_business_unit(current_user, business_unit_id):
+            raise HTTPException(404, "Business unit not found")
+        return business_unit_id
+    if not can_view_all_bus(current_user) and current_user.business_unit_id:
+        return current_user.business_unit_id
+    return None
 
 
 def _public(row: FxRate) -> dict:
@@ -51,10 +73,15 @@ def _public(row: FxRate) -> dict:
 
 @router.get("/settings/reporting_currency")
 async def get_currency(
+    business_unit_id: str | None = None,
     current_user: User = Depends(require_permission("admin")),
     db: Session = Depends(get_db),
 ):
-    return {"reporting_currency": get_reporting_currency(db)}
+    bu_id = _resolve_settings_business_unit(db, current_user, business_unit_id)
+    return {
+        "reporting_currency": get_reporting_currency(db, business_unit_id=bu_id),
+        "business_unit_id": bu_id,
+    }
 
 
 @router.put("/settings/reporting_currency")
@@ -63,7 +90,8 @@ async def put_currency(
     current_user: User = Depends(require_permission("admin")),
     db: Session = Depends(get_db),
 ):
-    set_reporting_currency(db, body.currency)
+    bu_id = _resolve_settings_business_unit(db, current_user, body.business_unit_id)
+    set_reporting_currency(db, body.currency, business_unit_id=bu_id)
     record_audit(
         db,
         action="admin.fx_reporting_currency",
@@ -71,10 +99,10 @@ async def put_currency(
         entity_id="reporting_currency",
         actor_id=current_user.id,
         actor_username=current_user.username,
-        details={"currency": body.currency.upper()},
+        details={"currency": body.currency.upper(), "business_unit_id": bu_id},
     )
     db.commit()
-    return {"reporting_currency": body.currency.upper()}
+    return {"reporting_currency": body.currency.upper(), "business_unit_id": bu_id}
 
 
 @router.get("/rates")
@@ -281,20 +309,24 @@ class FiscalCalendarBody(BaseModel):
     calendar_type: str = Field(..., pattern="^(gregorian_month|fiscal_445)$")
     fiscal_year_start_month: int = Field(default=2, ge=1, le=12)
     week_start: int = Field(default=6, ge=0, le=6)
+    business_unit_id: str | None = None
 
 
 @router.get("/settings/fiscal_calendar")
 async def get_fiscal_calendar(
+    business_unit_id: str | None = None,
     current_user: User = Depends(require_permission("admin")),
     db: Session = Depends(get_db),
 ):
     from app.services.period_calendar import get_calendar_config
 
-    cfg = get_calendar_config(db)
+    bu_id = _resolve_settings_business_unit(db, current_user, business_unit_id)
+    cfg = get_calendar_config(db, business_unit_id=bu_id)
     return {
         "calendar_type": cfg.calendar_type.value,
         "fiscal_year_start_month": cfg.fiscal_year_start_month,
         "week_start": cfg.week_start,
+        "business_unit_id": bu_id,
     }
 
 
@@ -310,12 +342,13 @@ async def put_fiscal_calendar(
         set_calendar_config,
     )
 
+    bu_id = _resolve_settings_business_unit(db, current_user, body.business_unit_id)
     cfg = FiscalCalendarConfig(
         calendar_type=CalendarType(body.calendar_type),
         fiscal_year_start_month=body.fiscal_year_start_month,
         week_start=body.week_start,
     )
-    set_calendar_config(db, cfg)
+    set_calendar_config(db, cfg, business_unit_id=bu_id)
     record_audit(
         db,
         action="admin.fiscal_calendar",
@@ -327,6 +360,7 @@ async def put_fiscal_calendar(
             "calendar_type": cfg.calendar_type.value,
             "fiscal_year_start_month": cfg.fiscal_year_start_month,
             "week_start": cfg.week_start,
+            "business_unit_id": bu_id,
         },
     )
     db.commit()
@@ -334,4 +368,5 @@ async def put_fiscal_calendar(
         "calendar_type": cfg.calendar_type.value,
         "fiscal_year_start_month": cfg.fiscal_year_start_month,
         "week_start": cfg.week_start,
+        "business_unit_id": bu_id,
     }

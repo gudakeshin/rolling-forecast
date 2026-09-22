@@ -144,7 +144,7 @@ class RunEnsembleSkill(BaseSkill):
         if not dataset:
             return SkillResult.fail("No actuals dataset found for ensemble modeling.")
 
-        cal_cfg = get_calendar_config(db)
+        cal_cfg = get_calendar_config(db, business_unit_id=version.business_unit_id)
         results_summary = []
         ensemble_count = 0
 

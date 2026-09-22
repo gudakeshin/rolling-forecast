@@ -206,7 +206,7 @@ class PlanForecastSkill(BaseSkill):
         comparison_results: list[dict] = []
         model_win_counts: dict[str, int] = {}
         model_avg_mape: dict[str, list[float]] = {}
-        cal_cfg = get_calendar_config(db)
+        cal_cfg = get_calendar_config(db, business_unit_id=business_unit_id)
 
         # Materiality vs sample CoA (same gate generate_baseline uses)
         from app.config import settings as _settings

@@ -8,7 +8,7 @@ from typing import Iterable
 
 from sqlalchemy.orm import Session
 
-from app.models.fx import FxRate, SystemSetting
+from app.models.fx import FxRate
 
 logger = logging.getLogger(__name__)
 
@@ -20,19 +20,25 @@ class MissingFxRateError(Exception):
         super().__init__(f"Missing FX rates for: {msg}")
 
 
-def get_reporting_currency(db: Session, default: str = "USD") -> str:
-    row = db.query(SystemSetting).filter(SystemSetting.key == "reporting_currency").first()
-    return (row.value if row else default).upper()
+def get_reporting_currency(
+    db: Session, default: str = "USD", *, business_unit_id: str | None = None
+) -> str:
+    from app.services.tenant_settings import get_tenant_setting
+
+    value = get_tenant_setting(
+        db, "reporting_currency", business_unit_id=business_unit_id, default=default
+    )
+    return (value or default).upper()
 
 
-def set_reporting_currency(db: Session, currency: str) -> None:
-    currency = currency.upper()
-    row = db.query(SystemSetting).filter(SystemSetting.key == "reporting_currency").first()
-    if row:
-        row.value = currency
-    else:
-        db.add(SystemSetting(key="reporting_currency", value=currency))
-    db.flush()
+def set_reporting_currency(
+    db: Session, currency: str, *, business_unit_id: str | None = None
+) -> None:
+    from app.services.tenant_settings import set_tenant_setting
+
+    set_tenant_setting(
+        db, "reporting_currency", currency.upper(), business_unit_id=business_unit_id
+    )
 
 
 def _lookup_rate(db: Session, frm: str, to: str, period: str) -> float | None:
