@@ -45,6 +45,12 @@ class ModelPreset(Base):
     candidate_models: Mapped[list | None] = mapped_column(JSON, nullable=True)
     default_horizon_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # NULL = global, usable by every company. A company-scoped caller can
+    # only see/use/edit a preset that's global or their own -- see
+    # app/services/model_presets.py.
+    business_unit_id: Mapped[str | None] = mapped_column(
+        ForeignKey("business_units.id"), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
@@ -58,4 +64,6 @@ class ModelPreset(Base):
         onupdate=lambda: datetime.now(timezone.utc),
     )
 
-    __table_args__ = (UniqueConstraint("name", name="uq_model_presets_name"),)
+    __table_args__ = (
+        UniqueConstraint("name", "business_unit_id", name="uq_model_presets_name_bu"),
+    )

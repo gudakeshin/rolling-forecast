@@ -23,6 +23,7 @@ from app.models.anomaly_dismissal import AnomalyDismissal
 from app.models.notification import Notification
 from app.models.review_undo import ReviewUndoSnapshot
 from app.models.model_preset import ModelPreset
+from app.models.tenant_setting import BusinessUnitSetting
 
 __all__ = [
     "User",
@@ -64,4 +65,5 @@ __all__ = [
     "Notification",
     "ReviewUndoSnapshot",
     "ModelPreset",
+    "BusinessUnitSetting",
 ]

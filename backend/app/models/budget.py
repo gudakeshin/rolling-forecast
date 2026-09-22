@@ -28,6 +28,11 @@ class BudgetVersion(Base):
     )
     created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # No shared bucket -- a budget belongs to exactly one company, same rule
+    # as ForecastVersion/LineItem. See app/services/permissions.py.
+    business_unit_id: Mapped[str | None] = mapped_column(
+        ForeignKey("business_units.id"), nullable=True
+    )
 
     line_items: Mapped[list["BudgetLineItem"]] = relationship(
         back_populates="budget_version", cascade="all, delete-orphan"
