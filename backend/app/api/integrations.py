@@ -142,12 +142,47 @@ async def pull_erp(
 async def import_budget(
     fiscal_year: int,
     name: str | None = None,
+    business_unit: str | None = None,
     file: UploadFile = File(...),
     current_user: User = Depends(require_permission("generate")),
     db: Session = Depends(get_db),
 ):
-    """Import budget CSV with columns: account_code, period, value [, account_name, category]."""
+    """Import budget CSV with columns: account_code, period, value [, account_name, category].
+
+    ``business_unit`` (name or id) is required unless the uploader belongs to
+    exactly one company -- never inferred from the file, same rule
+    ingest_actuals uses, since a company boundary can't be set by file
+    content and an admin's own business_unit_id (often a generic "Default"
+    bucket) says nothing about which company THIS budget is for.
+    """
+    from app.models.business_unit import BusinessUnit
+    from app.services.permissions import can_access_business_unit, can_view_all_bus
     from app.services.upload_safety import save_upload
+
+    bu: BusinessUnit | None = None
+    if business_unit:
+        bu = (
+            db.query(BusinessUnit)
+            .filter((BusinessUnit.id == business_unit) | (BusinessUnit.name == business_unit))
+            .first()
+        )
+        if bu is None:
+            raise HTTPException(400, f"Business unit '{business_unit}' not found.")
+        if not can_access_business_unit(current_user, bu.id):
+            raise HTTPException(403, f"You don't have access to import a budget for '{bu.name}'.")
+    elif current_user.business_unit_id and not can_view_all_bus(current_user):
+        bu = db.get(BusinessUnit, current_user.business_unit_id)
+    if bu is None:
+        raise HTTPException(
+            400,
+            "Which company/business unit is this budget for? Pass `business_unit` "
+            "(name or id) -- "
+            + (
+                "your account can act across multiple companies, so it must be stated explicitly."
+                if can_view_all_bus(current_user)
+                else "your account isn't assigned to exactly one, so it can't be inferred."
+            ),
+        )
 
     saved = await save_upload(file, allowed_extensions={".csv"})
     with open(saved["stored_path"], "rb") as fh:
@@ -172,11 +207,18 @@ async def import_budget(
         status="active",
         source_name=saved["original_name"],
         created_by=current_user.id,
+        business_unit_id=bu.id,
     )
     db.add(budget)
     db.flush()
 
-    existing = {li.account_code: li for li in db.query(LineItem).all()}
+    # Scoped to this company -- otherwise two companies both using account
+    # code "REV-001" would collide onto (and attribute budget values to)
+    # whichever one's row happened to be fetched first.
+    existing = {
+        li.account_code: li
+        for li in db.query(LineItem).filter(LineItem.business_unit_id == bu.id).all()
+    }
     created = 0
     for row in rows:
         row = {k.lower(): v for k, v in row.items()}
@@ -186,6 +228,8 @@ async def import_budget(
                 account_code=code,
                 name=str(row.get("account_name", code)),
                 category=str(row.get("category", "Other")),
+                business_unit=bu.name,
+                business_unit_id=bu.id,
             )
             db.add(li)
             db.flush()
@@ -213,10 +257,26 @@ async def import_budget(
 
 @router.get("/budgets")
 async def list_budgets(
+    business_unit_id: str | None = None,
     current_user: User = Depends(require_permission("generate")),
     db: Session = Depends(get_db),
 ):
-    budgets = db.query(BudgetVersion).order_by(BudgetVersion.fiscal_year.desc()).all()
+    """List budgets, scoped to the caller's company -- there is no shared
+    bucket, same rule as line_item_scope_filter. A cross-company caller sees
+    everything unless they narrow it with `business_unit_id`."""
+    from app.services.permissions import can_access_business_unit, can_view_all_bus
+
+    query = db.query(BudgetVersion)
+    if business_unit_id:
+        if not can_access_business_unit(current_user, business_unit_id):
+            raise HTTPException(404, "Business unit not found")
+        query = query.filter(BudgetVersion.business_unit_id == business_unit_id)
+    elif not can_view_all_bus(current_user):
+        if not current_user.business_unit_id:
+            return []
+        query = query.filter(BudgetVersion.business_unit_id == current_user.business_unit_id)
+
+    budgets = query.order_by(BudgetVersion.fiscal_year.desc()).all()
     return [
         {
             "id": b.id,
@@ -224,6 +284,7 @@ async def list_budgets(
             "fiscal_year": b.fiscal_year,
             "status": b.status,
             "source_name": b.source_name,
+            "business_unit_id": b.business_unit_id,
         }
         for b in budgets
     ]

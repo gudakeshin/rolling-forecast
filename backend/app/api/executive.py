@@ -150,11 +150,18 @@ async def budget_bridge(
 
     budget = None
     if budget_version_id:
-        budget = db.query(BudgetVersion).filter(BudgetVersion.id == budget_version_id).first()
+        candidate = db.query(BudgetVersion).filter(BudgetVersion.id == budget_version_id).first()
+        if candidate is not None and candidate.business_unit_id == version.business_unit_id:
+            budget = candidate
     if not budget:
+        # Same company only -- an explicit or "active" budget belonging to a
+        # different company must never be pulled into this version's bridge.
         budget = (
             db.query(BudgetVersion)
-            .filter(BudgetVersion.status == "active")
+            .filter(
+                BudgetVersion.status == "active",
+                BudgetVersion.business_unit_id == version.business_unit_id,
+            )
             .order_by(BudgetVersion.fiscal_year.desc())
             .first()
         )

@@ -17,6 +17,7 @@ import pandas as pd
 import pytest
 from passlib.context import CryptContext
 
+from app.models.budget import BudgetVersion
 from app.models.business_unit import BusinessUnit
 from app.models.line_item import LineItem
 from app.models.user import User
@@ -541,3 +542,96 @@ async def test_model_preset_create_forces_own_company_scope(db_session, two_comp
         business_unit_id=two_companies["company_b"].id,  # requesting B's scope
     )
     assert preset2.business_unit_id == two_companies["company_a"].id  # still forced to own
+
+
+def _upload_file(filename: str, content: bytes):
+    import io
+
+    from fastapi import UploadFile
+
+    return UploadFile(filename=filename, file=io.BytesIO(content))
+
+
+@pytest.mark.asyncio
+async def test_budget_import_never_collides_line_items_across_companies(db_session, two_companies):
+    """Two companies importing budgets with the same account_code must land
+    on two distinct LineItem rows, scoped to each company -- previously the
+    line-item match/create was unscoped, matched by account_code text alone."""
+    from app.api import integrations
+
+    csv_bytes = b"account_code,period,value\nREV-001,2024-01,1000\n"
+
+    result_a = await integrations.import_budget(
+        fiscal_year=2024,
+        name="Budget A",
+        business_unit=two_companies["company_a"].id,
+        file=_upload_file("a.csv", csv_bytes),
+        current_user=two_companies["user_a"],
+        db=db_session,
+    )
+    result_b = await integrations.import_budget(
+        fiscal_year=2024,
+        name="Budget B",
+        business_unit=two_companies["company_b"].id,
+        file=_upload_file("b.csv", csv_bytes),
+        current_user=two_companies["user_b"],
+        db=db_session,
+    )
+    assert result_a["success"] and result_b["success"]
+
+    rows = db_session.query(LineItem).filter(LineItem.account_code == "REV-001").all()
+    assert len(rows) == 2
+    assert {li.business_unit_id for li in rows} == {
+        two_companies["company_a"].id,
+        two_companies["company_b"].id,
+    }
+
+    budget_a = db_session.query(BudgetVersion).filter(BudgetVersion.id == result_a["budget_version_id"]).first()
+    budget_b = db_session.query(BudgetVersion).filter(BudgetVersion.id == result_b["budget_version_id"]).first()
+    assert budget_a.business_unit_id == two_companies["company_a"].id
+    assert budget_b.business_unit_id == two_companies["company_b"].id
+
+
+@pytest.mark.asyncio
+async def test_budget_import_requires_explicit_company_for_cross_bu_caller(db_session, two_companies, seed_roles):
+    from fastapi import HTTPException
+
+    from app.api import integrations
+
+    admin = _make_admin_user(db_session, seed_roles, "cross_admin_budget")
+    with pytest.raises(HTTPException):
+        await integrations.import_budget(
+            fiscal_year=2024,
+            file=_upload_file("x.csv", b"account_code,period,value\nREV-001,2024-01,1\n"),
+            current_user=admin,
+            db=db_session,
+        )
+
+
+@pytest.mark.asyncio
+async def test_budget_bridge_never_pulls_another_companys_budget(db_session, two_companies):
+    """budget_bridge's active-budget lookup must stay inside the caller's
+    company even when another company's budget is the only 'active' one."""
+    from app.api import executive
+
+    version_a = _make_version(db_session, two_companies["company_a"], status="draft")
+    budget_b = BudgetVersion(
+        name="Budget B",
+        fiscal_year=2024,
+        status="active",
+        business_unit_id=two_companies["company_b"].id,
+    )
+    db_session.add(budget_b)
+    db_session.commit()
+
+    result = await executive.budget_bridge(
+        version_id=version_a.id,
+        materiality_pct=5.0,
+        page=1,
+        page_size=50,
+        attribute=False,
+        convention="volume_first",
+        current_user=two_companies["user_a"],
+        db=db_session,
+    )
+    assert result["budget_version_id"] is None
