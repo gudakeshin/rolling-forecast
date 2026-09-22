@@ -1,5 +1,5 @@
 export interface ContentBlock {
-  type: 'text' | 'table' | 'chart' | 'status' | 'action' | 'panel_trigger';
+  type: 'text' | 'table' | 'chart' | 'status' | 'action' | 'panel_trigger' | 'citations';
   data: Record<string, any>;
 }
 
@@ -55,6 +55,16 @@ export interface StatusData {
 
 export interface ActionData {
   actions: { id: string; label: string; variant?: string }[];
+}
+
+export interface CitationsData {
+  citations: {
+    id?: string | number;
+    label: string;
+    document_id?: string;
+    snippet?: string;
+    score?: number;
+  }[];
 }
 
 export interface PanelTriggerData {

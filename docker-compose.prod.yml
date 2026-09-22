@@ -2,24 +2,73 @@
 # Rolling Forecast — Production Overrides
 # ──────────────────────────────────────────────────────────
 #
-# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile postgres --profile redis up -d
 #
 # ──────────────────────────────────────────────────────────
 
 services:
+  db:
+    profiles: []  # enable postgres in prod
+    restart: unless-stopped
+
+  redis:
+    profiles: []  # enable redis in prod
+    restart: unless-stopped
+
   backend:
+    # Not published: nginx is the only ingress. This is what makes
+    # FORWARDED_ALLOW_IPS=* safe below — nothing else can reach :8000 to
+    # spoof X-Forwarded-For and poison the rate-limit key.
+    ports: []
     command: >
+      sh -c "alembic upgrade head &&
       uvicorn app.main:app
       --host 0.0.0.0
       --port 8000
       --workers 2
+      --proxy-headers"
     volumes:
-      # No source mount in production
-      - forecast-db:/app/data
+      # No forecast-db volume — production is Postgres, not SQLite.
       - forecast-uploads:/app/uploads
+      - forecast-exports:/app/exports
+    environment:
+      - APP_ENV=production
+      # Trust nginx's X-Forwarded-For so rate limiting keys on the real
+      # client IP instead of collapsing every user into the proxy's bucket.
+      - FORWARDED_ALLOW_IPS=*
+      - LOG_LEVEL=WARNING
+      - SEED_DEMO_USERS=false
+      - ALLOW_OPEN_REGISTRATION=false
+      - DATABASE_URL=${DATABASE_URL:?Set DATABASE_URL}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?Set JWT_SECRET_KEY}
+      - CORS_ORIGINS=${CORS_ORIGINS:?Set CORS_ORIGINS}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - REQUIRE_ASYNC_JOBS=true
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    profiles: []
+    volumes:
+      # Drop the dev bind-mounts of host source — production runs the image.
+      # Uploads stay shared with the backend so queued jobs can read them.
+      - forecast-uploads:/app/uploads
+      - forecast-exports:/app/exports
     environment:
       - APP_ENV=production
       - LOG_LEVEL=WARNING
+      - DATABASE_URL=${DATABASE_URL:?Set DATABASE_URL}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?Set JWT_SECRET_KEY}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
   frontend:
     build:
@@ -28,5 +77,11 @@ services:
       target: production
     command: ["nginx", "-g", "daemon off;"]
     ports:
-      - "80:80"
-    volumes: []  # No source mount in production
+      - "80:8080"
+    volumes: []
+    depends_on:
+      - backend
+
+volumes:
+  forecast-exports:
+    driver: local

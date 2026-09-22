@@ -4,15 +4,21 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, ReferenceLine, Cell,
 } from 'recharts';
-import { Target, TrendingDown, BarChart3, AlertCircle, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { Target, TrendingDown, BarChart3, AlertCircle, ArrowUpRight, ArrowDownRight, RefreshCw, Loader2, ExternalLink } from 'lucide-react';
+import { Tabs } from '../ui/Tabs';
+import { DataTable, type DataTableColumn } from '../ui/DataTable';
+import { rescoreForecasts } from '../../api/dashboard';
+import { usePanelStore } from '../../store/panelStore';
+import { toast } from '../../store/toastStore';
+import { chartTheme } from '../../theme/chartTheme';
 
 const COLORS = {
-  green: '#86BC25',
-  teal: '#0076A8',
-  tealLight: '#00A3E0',
-  red: '#E84855',
-  amber: '#FFB547',
-  coolGray: '#97999B',
+  green: chartTheme.colors.primary,
+  teal: chartTheme.colors.secondary,
+  tealLight: '#5B8AA6',
+  red: chartTheme.colors.danger,
+  amber: chartTheme.colors.warning,
+  coolGray: chartTheme.colors.tertiary,
 };
 
 interface Props {
@@ -28,6 +34,12 @@ interface Props {
         bias_direction?: string;
         hit_rate: number;
         total_comparisons: number;
+        published_wape?: number | null;
+        model_wape?: number | null;
+        naive_wape?: number | null;
+        seasonal_naive_wape?: number | null;
+        fva_vs_naive?: number | null;
+        fva_vs_seasonal_naive?: number | null;
       };
       model_performance: any[];
       category_accuracy: any[];
@@ -35,8 +47,10 @@ interface Props {
       top_deviations: any[];
       bias_trend?: any[];
       items: any[];
+      version?: { id: string; name: string };
     };
   };
+  onRefresh?: () => void;
 }
 
 function formatPct(val: number): string {
@@ -63,12 +77,103 @@ const ChartTooltip = ({ active, payload, label }: any) => {
   );
 };
 
-export function AccuracyTrackingPanel({ data }: Props) {
-  const { overall, model_performance, category_accuracy, mape_trend, top_deviations, bias_trend } = data.data;
+export function AccuracyTrackingPanel({ data, onRefresh }: Props) {
+  const { overall, model_performance, category_accuracy, mape_trend, top_deviations, bias_trend, items } = data.data;
   const [activeTab, setActiveTab] = useState<'overview' | 'models' | 'deviations'>('overview');
+  const [rescoring, setRescoring] = useState(false);
+  const openPanel = usePanelStore((s) => s.openPanel);
+  const panelVersionId = usePanelStore((s) => s.panelParams.version_id);
+  const versionId = (data.data as any).version?.id || panelVersionId;
+
+  const handleRescore = async () => {
+    if (!versionId) {
+      toast.error('No version id for rescore');
+      return;
+    }
+    setRescoring(true);
+    try {
+      await rescoreForecasts(versionId);
+      toast.success('Rescore complete');
+      onRefresh?.();
+    } catch (e: any) {
+      toast.error(e.message || 'Rescore failed');
+    } finally {
+      setRescoring(false);
+    }
+  };
+
+  const deviationRows = (top_deviations?.length ? top_deviations : (items || [])) as Record<string, unknown>[];
+  const deviationColumns: DataTableColumn<Record<string, unknown>>[] = [
+    {
+      key: 'line_item_name',
+      label: 'Item',
+      render: (_v, row) => (
+        <div>
+          <div className="text-surface-300 truncate max-w-[140px]">{String(row.line_item_name ?? '')}</div>
+          <div className="text-surface-500 text-xs">
+            {String(row.period ?? '')} • {String(row.model_type ?? '')}
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'forecast',
+      label: 'Forecast',
+      align: 'right',
+      render: (v) => formatCurrency(Number(v) || 0),
+    },
+    {
+      key: 'actual',
+      label: 'Actual',
+      align: 'right',
+      render: (v) => formatCurrency(Number(v) || 0),
+    },
+    {
+      key: 'mape',
+      label: 'MAPE',
+      align: 'right',
+      render: (v) => {
+        const mape = Number(v) || 0;
+        return (
+          <span
+            className={`font-mono font-medium ${
+              mape > 20 ? 'text-red-400' : mape > 10 ? 'text-amber-400' : 'text-deloitte-green'
+            }`}
+          >
+            {formatPct(mape)}
+          </span>
+        );
+      },
+    },
+    {
+      key: 'bias',
+      label: 'Bias',
+      align: 'right',
+      render: (v) => {
+        const bias = Number(v) || 0;
+        return (
+          <span className={`font-mono ${bias > 0 ? 'text-amber-400' : 'text-blue-400'}`}>
+            {bias > 0 ? '+' : ''}
+            {formatPct(bias)}
+          </span>
+        );
+      },
+    },
+  ];
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-end gap-1.5">
+        <button
+          type="button"
+          onClick={handleRescore}
+          disabled={rescoring || !versionId}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-800 border border-surface-600 text-surface-300 text-xs rounded-lg hover:text-white disabled:opacity-50"
+        >
+          {rescoring ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+          Rescore this version
+        </button>
+      </div>
       {/* KPI cards */}
       <div className="grid grid-cols-4 gap-2">
         <KPI
@@ -88,11 +193,11 @@ export function AccuracyTrackingPanel({ data }: Props) {
           <div className={`text-sm font-bold ${overall.bias_direction === 'over' ? 'text-amber-400' : overall.bias_direction === 'under' ? 'text-blue-400' : 'text-deloitte-green'}`}>
             {overall.avg_bias > 0 ? '+' : ''}{formatPct(overall.avg_bias)}
           </div>
-          <div className="text-[8px] text-surface-500 uppercase tracking-wider font-semibold">
+          <div className="text-xs text-surface-500 uppercase tracking-wider font-semibold">
             Bias ({overall.bias_direction === 'over' ? 'Over' : overall.bias_direction === 'under' ? 'Under' : 'Neutral'})
           </div>
           {overall.bias_dollar !== undefined && (
-            <div className="text-[8px] text-surface-600 mt-0.5">
+            <div className="text-xs text-surface-600 mt-0.5">
               {formatCurrency(overall.bias_dollar)} net
             </div>
           )}
@@ -105,22 +210,55 @@ export function AccuracyTrackingPanel({ data }: Props) {
         />
       </div>
 
+      {(overall.published_wape != null || overall.fva_vs_naive != null) && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <KPI
+            label="Published WAPE"
+            value={overall.published_wape != null ? formatPct(overall.published_wape) : '—'}
+            color="text-white"
+            icon={Target}
+          />
+          <KPI
+            label="Model WAPE"
+            value={overall.model_wape != null ? formatPct(overall.model_wape) : '—'}
+            color="text-deloitte-teal-light"
+            icon={BarChart3}
+          />
+          <KPI
+            label="Naive WAPE"
+            value={overall.naive_wape != null ? formatPct(overall.naive_wape) : '—'}
+            color="text-surface-300"
+            icon={AlertCircle}
+          />
+          <KPI
+            label="FVA vs Naive"
+            value={
+              overall.fva_vs_naive != null
+                ? `${overall.fva_vs_naive > 0 ? '+' : ''}${formatPct(overall.fva_vs_naive)}`
+                : '—'
+            }
+            color={
+              overall.fva_vs_naive == null
+                ? 'text-surface-400'
+                : overall.fva_vs_naive > 0
+                  ? 'text-deloitte-green'
+                  : 'text-red-400'
+            }
+            icon={overall.fva_vs_naive != null && overall.fva_vs_naive < 0 ? ArrowDownRight : ArrowUpRight}
+          />
+        </div>
+      )}
+
       {/* Tabs */}
-      <div className="flex gap-1 bg-surface-800/50 rounded-lg p-1">
-        {(['overview', 'models', 'deviations'] as const).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-              activeTab === tab
-                ? 'bg-deloitte-green/20 text-deloitte-green border border-deloitte-green/30'
-                : 'text-surface-400 hover:text-white hover:bg-surface-700/50'
-            }`}
-          >
-            {tab === 'overview' ? 'Trend & Categories' : tab === 'models' ? 'Model Compare' : 'Top Deviations'}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        tabs={[
+          { id: 'overview', label: 'Trend & Categories' },
+          { id: 'models', label: 'Model Compare' },
+          { id: 'deviations', label: 'Top Deviations' },
+        ]}
+        value={activeTab}
+        onChange={setActiveTab}
+      />
 
       {activeTab === 'overview' && (
         <div className="space-y-3">
@@ -130,11 +268,11 @@ export function AccuracyTrackingPanel({ data }: Props) {
             {mape_trend.length > 1 ? (
               <ResponsiveContainer width="100%" height={180}>
                 <LineChart data={mape_trend} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-                  <XAxis dataKey="version" tick={{ fill: '#97999B', fontSize: 10 }} />
-                  <YAxis tick={{ fill: '#97999B', fontSize: 10 }} unit="%" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+                  <XAxis dataKey="version" tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} />
+                  <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} unit="%" />
                   <Tooltip content={<ChartTooltip />} />
-                  <ReferenceLine y={5} stroke={COLORS.green} strokeDasharray="5 5" label={{ value: 'Target 5%', fill: COLORS.green, fontSize: 9 }} />
+                  <ReferenceLine y={5} stroke={COLORS.green} strokeDasharray="5 5" label={{ value: 'Target 5%', fill: COLORS.green, fontSize: 12 }} />
                   <Line type="monotone" dataKey="avg_mape" name="Avg MAPE" stroke={COLORS.teal} strokeWidth={2.5} dot={{ r: 4, fill: COLORS.teal }} />
                 </LineChart>
               </ResponsiveContainer>
@@ -148,13 +286,13 @@ export function AccuracyTrackingPanel({ data }: Props) {
             <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl p-4">
               <h4 className="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-3">
                 Bias Detection Trend
-                <span className="ml-2 text-[9px] font-normal text-surface-500">(positive = over-forecast, negative = under-forecast)</span>
+                <span className="ml-2 text-xs font-normal text-surface-500">(positive = over-forecast, negative = under-forecast)</span>
               </h4>
               <ResponsiveContainer width="100%" height={150}>
                 <ComposedChart data={bias_trend} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-                  <XAxis dataKey="version" tick={{ fill: '#97999B', fontSize: 10 }} />
-                  <YAxis tick={{ fill: '#97999B', fontSize: 10 }} unit="%" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+                  <XAxis dataKey="version" tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} />
+                  <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} unit="%" />
                   <Tooltip content={<ChartTooltip />} />
                   <ReferenceLine y={0} stroke={COLORS.coolGray} strokeDasharray="3 3" />
                   <Bar dataKey="avg_bias" name="Avg Bias" radius={[3, 3, 0, 0]}>
@@ -173,11 +311,11 @@ export function AccuracyTrackingPanel({ data }: Props) {
             {category_accuracy.length > 0 ? (
               <ResponsiveContainer width="100%" height={180}>
                 <BarChart data={category_accuracy} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-                  <XAxis dataKey="category" tick={{ fill: '#97999B', fontSize: 10 }} />
-                  <YAxis tick={{ fill: '#97999B', fontSize: 10 }} unit="%" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+                  <XAxis dataKey="category" tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} />
+                  <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} unit="%" />
                   <Tooltip content={<ChartTooltip />} />
-                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
                   <Bar dataKey="avg_mape" name="MAPE" radius={[3, 3, 0, 0]}>
                     {category_accuracy.map((entry: any, i: number) => (
                       <Cell key={i} fill={entry.avg_mape > 15 ? COLORS.red : entry.avg_mape > 8 ? COLORS.amber : COLORS.green} />
@@ -200,30 +338,58 @@ export function AccuracyTrackingPanel({ data }: Props) {
             <>
               <ResponsiveContainer width="100%" height={200}>
                 <BarChart data={model_performance} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2a2d32" />
-                  <XAxis dataKey="model" tick={{ fill: '#97999B', fontSize: 10 }} />
-                  <YAxis tick={{ fill: '#97999B', fontSize: 10 }} unit="%" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chartTheme.grid} />
+                  <XAxis dataKey="model" tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} />
+                  <YAxis tick={{ fill: chartTheme.axis.fill, fontSize: 12 }} unit="%" />
                   <Tooltip content={<ChartTooltip />} />
-                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
                   <Bar dataKey="avg_mape" name="Avg MAPE" fill={COLORS.green} radius={[3, 3, 0, 0]} />
                   <Bar dataKey="best_mape" name="Best MAPE" fill={COLORS.teal} radius={[3, 3, 0, 0]} />
                   <Bar dataKey="worst_mape" name="Worst MAPE" fill={COLORS.red} radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
 
-              <div className="mt-3 space-y-1.5">
-                {model_performance.map((m: any, i: number) => (
-                  <div key={i} className="flex items-center justify-between text-xs px-2 py-1.5 bg-surface-800/40 rounded">
-                    <span className="text-white font-medium">{m.model}</span>
-                    <div className="flex items-center gap-3 text-surface-400">
-                      <span>{m.count} forecasts</span>
-                      <span className={m.avg_mape > 10 ? 'text-red-400' : 'text-deloitte-green'}>
-                        {formatPct(m.avg_mape)} MAPE
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <DataTable
+                title="Model metrics"
+                columns={[
+                  { key: 'model', label: 'Model' },
+                  {
+                    key: 'count',
+                    label: 'Forecasts',
+                    align: 'right',
+                    render: (v) => String(v ?? 0),
+                  },
+                  {
+                    key: 'avg_mape',
+                    label: 'Avg MAPE',
+                    align: 'right',
+                    render: (v) => {
+                      const mape = Number(v) || 0;
+                      return (
+                        <span className={mape > 10 ? 'text-red-400' : 'text-deloitte-green'}>
+                          {formatPct(mape)}
+                        </span>
+                      );
+                    },
+                  },
+                  {
+                    key: 'best_mape',
+                    label: 'Best',
+                    align: 'right',
+                    render: (v) => formatPct(Number(v) || 0),
+                  },
+                  {
+                    key: 'worst_mape',
+                    label: 'Worst',
+                    align: 'right',
+                    render: (v) => formatPct(Number(v) || 0),
+                  },
+                ]}
+                rows={model_performance as Record<string, unknown>[]}
+                maxHeight={220}
+                exportFilename={`model_performance_${versionId || 'export'}`}
+                getRowId={(row) => String(row.model ?? '')}
+              />
             </>
           ) : (
             <p className="text-surface-500 text-xs text-center py-6">No model performance data</p>
@@ -232,53 +398,41 @@ export function AccuracyTrackingPanel({ data }: Props) {
       )}
 
       {activeTab === 'deviations' && (
-        <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-surface-700/50">
-            <h4 className="text-xs font-semibold text-white flex items-center gap-1.5">
-              <AlertCircle className="w-3.5 h-3.5 text-red-400" />
-              Top {top_deviations.length} Largest Deviations
-            </h4>
-          </div>
-          <div className="max-h-[300px] overflow-y-auto">
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-surface-800 z-10">
-                <tr className="border-b border-surface-700">
-                  <th className="px-3 py-2 text-left text-surface-400 font-semibold text-[10px] uppercase">Item</th>
-                  <th className="px-3 py-2 text-right text-surface-400 font-semibold text-[10px] uppercase">Forecast</th>
-                  <th className="px-3 py-2 text-right text-surface-400 font-semibold text-[10px] uppercase">Actual</th>
-                  <th className="px-3 py-2 text-right text-surface-400 font-semibold text-[10px] uppercase">MAPE</th>
-                  <th className="px-3 py-2 text-right text-surface-400 font-semibold text-[10px] uppercase">Bias</th>
-                </tr>
-              </thead>
-              <tbody>
-                {top_deviations.map((item: any, i: number) => (
-                  <tr key={i} className="border-b border-surface-700/20 hover:bg-red-500/5 transition-colors">
-                    <td className="px-3 py-1.5">
-                      <div className="text-surface-300 truncate max-w-[120px]">{item.line_item_name}</div>
-                      <div className="text-surface-500 text-[10px]">{item.period} • {item.model_type}</div>
-                    </td>
-                    <td className="px-3 py-1.5 text-right text-surface-200 font-mono">{formatCurrency(item.forecast)}</td>
-                    <td className="px-3 py-1.5 text-right text-surface-200 font-mono">{formatCurrency(item.actual)}</td>
-                    <td className="px-3 py-1.5 text-right">
-                      <span className={`font-mono font-medium ${item.mape > 20 ? 'text-red-400' : item.mape > 10 ? 'text-amber-400' : 'text-deloitte-green'}`}>
-                        {formatPct(item.mape)}
-                      </span>
-                    </td>
-                    <td className="px-3 py-1.5 text-right">
-                      <span className={`font-mono ${item.bias > 0 ? 'text-amber-400' : 'text-blue-400'}`}>
-                        {item.bias > 0 ? '+' : ''}{formatPct(item.bias)}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl overflow-hidden p-2">
+          <h4 className="text-xs font-semibold text-white flex items-center gap-1.5 px-2 py-1.5 mb-1">
+            <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+            Top {top_deviations.length} Largest Deviations
+          </h4>
+          <DataTable
+            columns={deviationColumns}
+            rows={deviationRows}
+            maxHeight={300}
+            exportFilename={`accuracy_${versionId || 'export'}`}
+            getRowClassName={() => 'hover:bg-red-500/5'}
+            rowActions={(row) =>
+              versionId && row.line_item_id != null ? (
+                <button
+                  type="button"
+                  title="Review item"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openPanel('review_dashboard', {
+                      version_id: versionId,
+                      focus_line_item_id: row.line_item_id as number,
+                    });
+                  }}
+                  className="text-surface-400 hover:text-deloitte-green"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                </button>
+              ) : null
+            }
+          />
         </div>
       )}
 
       {/* Footer */}
-      <p className="text-[10px] text-surface-500 text-center">
+      <p className="text-xs text-surface-500 text-center">
         Based on {overall.total_comparisons} forecast-vs-actual comparisons
       </p>
     </div>
@@ -290,7 +444,7 @@ function KPI({ label, value, color, icon: Icon, trend }: { label: string; value:
     <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl p-2.5 text-center relative">
       <Icon className={`w-3.5 h-3.5 mx-auto mb-1 ${color}`} />
       <div className={`text-sm font-bold ${color}`}>{value}</div>
-      <div className="text-[8px] text-surface-500 uppercase tracking-wider font-semibold">{label}</div>
+      <div className="text-xs text-surface-500 uppercase tracking-wider font-semibold">{label}</div>
       {trend && (
         <div className="absolute top-1.5 right-1.5">
           {trend === 'up' ? (

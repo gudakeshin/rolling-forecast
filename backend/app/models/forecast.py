@@ -1,8 +1,21 @@
+from __future__ import annotations
+
 """Forecast version, line results, and model metadata models."""
 
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, Float, Integer, Boolean, ForeignKey, Text, JSON
+from sqlalchemy import (
+    String,
+    DateTime,
+    Float,
+    Integer,
+    Boolean,
+    ForeignKey,
+    Text,
+    JSON,
+    UniqueConstraint,
+    Index,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -27,6 +40,8 @@ class ForecastVersion(Base):
     version_type: Mapped[str] = mapped_column(
         String(50), default="scheduled"
     )  # scheduled, ad_hoc, branch
+    # Named scenario label (base / upside / downside / …) — not a what-if engine
+    scenario: Mapped[str] = mapped_column(String(64), default="base", index=True)
     parent_version_id: Mapped[str | None] = mapped_column(
         ForeignKey("forecast_versions.id"), nullable=True
     )  # For branches
@@ -43,10 +58,22 @@ class ForecastVersion(Base):
     # Forecast parameters
     horizon_months: Mapped[int] = mapped_column(Integer, default=12)
     base_period: Mapped[str | None] = mapped_column(
-        String(7), nullable=True
-    )  # Last actuals period
+        String(16), nullable=True
+    )  # Last actuals period (YYYY-MM or FY2026-P01)
     model_versions: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     random_seed: Mapped[int] = mapped_column(Integer, default=42)
+    # Selection rule pinned at version creation (mape | mase_pinball_complexity)
+    selection_rule: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Saved model preset used to generate this version, if any (see ModelPreset)
+    model_preset_id: Mapped[str | None] = mapped_column(
+        ForeignKey("model_presets.id"), nullable=True
+    )
+    # The company this version was generated for — denormalized from the
+    # actuals dataset at generation time so version queries don't need a
+    # join. See app/services/permissions.py.
+    business_unit_id: Mapped[str | None] = mapped_column(
+        ForeignKey("business_units.id"), nullable=True
+    )
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(
@@ -69,6 +96,8 @@ class ForecastVersion(Base):
         Float, nullable=True
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reporting_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    fx_rate_set_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # Relationships
     actuals_dataset: Mapped["ActualsDataset"] = relationship(
@@ -83,12 +112,37 @@ class ForecastVersion(Base):
     driver_inputs: Mapped[list["DriverInput"]] = relationship(
         back_populates="version", cascade="all, delete-orphan"
     )
+    # One-way cascades (no back_populates needed) so a hard delete of a draft
+    # version (see app/api/panel.py delete_version) is correct by
+    # construction instead of relying on ad hoc per-table deletes.
+    approval_steps: Mapped[list["ApprovalStep"]] = relationship(
+        cascade="all, delete-orphan", passive_deletes=False
+    )
+    anomaly_dismissals: Mapped[list["AnomalyDismissal"]] = relationship(
+        cascade="all, delete-orphan", passive_deletes=False
+    )
+    accuracy_records: Mapped[list["ForecastAccuracyRecord"]] = relationship(
+        cascade="all, delete-orphan", passive_deletes=False
+    )
+    review_undo_snapshots: Mapped[list["ReviewUndoSnapshot"]] = relationship(
+        cascade="all, delete-orphan", passive_deletes=False
+    )
 
 
 class ForecastLineResult(Base):
     """Forecast output for a single line item in a single period."""
 
     __tablename__ = "forecast_line_results"
+    __table_args__ = (
+        UniqueConstraint(
+            "version_id",
+            "line_item_id",
+            "period",
+            name="uq_flr_version_line_period",
+        ),
+        Index("ix_flr_version_id", "version_id"),
+        Index("ix_flr_line_item_period", "line_item_id", "period"),
+    )
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())
@@ -99,12 +153,19 @@ class ForecastLineResult(Base):
     line_item_id: Mapped[int] = mapped_column(
         ForeignKey("line_items.id"), nullable=False
     )
-    period: Mapped[str] = mapped_column(String(7), nullable=False)  # "2026-03"
+    period: Mapped[str] = mapped_column(String(16), nullable=False)  # YYYY-MM or FY2026-P01
 
     # Forecast values
     p10: Mapped[float | None] = mapped_column(Float, nullable=True)  # 10th percentile
-    p50: Mapped[float] = mapped_column(Float, nullable=False)  # Point forecast (median)
+    p50: Mapped[float] = mapped_column(Float, nullable=False)  # Point forecast (median / published)
     p90: Mapped[float | None] = mapped_column(Float, nullable=True)  # 90th percentile
+    # Immutable model point at generation time (survives overrides; p50 is published)
+    model_p50: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Point forecast immediately before the latest full MinT write (attribution)
+    pre_reconcile_p50: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # How interval bounds were produced (model | linear_aggregation | mint_diagonal | mint_full)
+    bounds_method: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
     # Confidence
     confidence_score: Mapped[float] = mapped_column(
@@ -116,9 +177,11 @@ class ForecastLineResult(Base):
 
     # Model info
     model_type: Mapped[str | None] = mapped_column(
-        String(50), nullable=True
-    )  # "arima", "prophet", "ets", "linear", "ensemble"
+        String(120), nullable=True
+    )  # arima / prophet / ets / linear / naive / seasonal_naive / …
     model_mape: Mapped[float | None] = mapped_column(Float, nullable=True)
+    model_mase: Mapped[float | None] = mapped_column(Float, nullable=True)
+    model_pinball: Mapped[float | None] = mapped_column(Float, nullable=True)
     model_r_squared: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # Override tracking
@@ -148,8 +211,12 @@ class ForecastLineResult(Base):
     # Relationships
     version: Mapped["ForecastVersion"] = relationship(back_populates="line_results")
     line_item: Mapped["LineItem"] = relationship(back_populates="forecast_results")
+    # cascade="all, delete-orphan" -- ModelMetadata.line_result_id is NOT
+    # NULL, so without this SQLAlchemy's default "null the FK out" orphan
+    # handling fails a hard-delete of the version this line result belongs
+    # to (see app/api/panel.py delete_version) with an IntegrityError.
     model_metadata: Mapped["ModelMetadata | None"] = relationship(
-        back_populates="line_result", uselist=False
+        back_populates="line_result", uselist=False, cascade="all, delete-orphan"
     )
 
 
@@ -163,7 +230,7 @@ class ModelMetadata(Base):
         ForeignKey("forecast_line_results.id"), nullable=False
     )
 
-    model_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    model_type: Mapped[str] = mapped_column(String(120), nullable=False)
     parameters: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     training_window_start: Mapped[str | None] = mapped_column(
         String(7), nullable=True
@@ -186,6 +253,9 @@ class ModelMetadata(Base):
     structural_break_period: Mapped[str | None] = mapped_column(
         String(7), nullable=True
     )
+    # Periods winsorized by pre-fit outlier cleaning (YYYY-MM labels)
+    cleaned_periods: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    outliers_cleaned: Mapped[int] = mapped_column(Integer, default=0)
     random_seed: Mapped[int] = mapped_column(Integer, default=42)
 
     # Relationships

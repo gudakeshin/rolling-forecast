@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Conversation and message models for the chat interface."""
 
 import uuid

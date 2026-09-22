@@ -2,8 +2,11 @@
 
 from typing import Any
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 from app.models.conversation import Conversation, Message
+from app.models.memory import MemoryBlock
 from app.models.user import User
+from app.config import settings
 
 
 class ContextManager:
@@ -60,28 +63,96 @@ class ContextManager:
         """Set the active forecast version."""
         self.set_memory("active_version_id", version_id)
 
+    # ---------- Token budget (per conversation) ----------
+
+    def get_token_usage(self) -> int:
+        """Approximate cumulative tokens consumed in this conversation."""
+        return int(self.get_memory("token_usage") or 0)
+
+    def record_token_usage(self, tokens: int) -> int:
+        """Add estimated tokens to the conversation budget; return new total."""
+        total = self.get_token_usage() + max(0, int(tokens))
+        self.set_memory("token_usage", total)
+        return total
+
+    def estimate_message_tokens(self, *texts: str) -> int:
+        """Rough token estimate (~4 chars/token)."""
+        return sum(max(1, len(t or "") // 4) for t in texts)
+
+    def check_token_budget(self, upcoming: int = 0) -> tuple[bool, int, int]:
+        """Return (allowed, used, budget). Soft-fail when used+upcoming exceeds budget."""
+        from app.config import settings
+
+        budget = int(getattr(settings, "conversation_token_budget", 200_000) or 200_000)
+        used = self.get_token_usage()
+        return (used + upcoming) < budget, used, budget
+
     # ---------- Conversation History ----------
 
-    def get_chat_history(self, max_messages: int = 50) -> list[dict[str, str]]:
+    def get_chat_history(self, max_messages: int = 50, max_tokens: int = 8000) -> list[dict[str, str]]:
         """
-        Get conversation history formatted for the LLM context window.
-        Returns list of {role, content} dicts.
+        Get conversation history for the LLM context window.
+
+        Uses a token budget (approx 4 chars/token): keep recent turns, and
+        replace evicted older turns with a compact extractive summary so the
+        model retains continuity without blowing the context window.
         """
         messages = (
             self.db.query(Message)
             .filter(Message.conversation_id == self.conversation_id)
             .order_by(Message.created_at.desc())
-            .limit(max_messages)
+            .limit(max(max_messages * 2, 100))
             .all()
         )
-        # Reverse to chronological order
         messages.reverse()
 
-        history = []
+        history: list[dict[str, str]] = []
         for msg in messages:
             if msg.role in ("user", "assistant"):
-                history.append({"role": msg.role, "content": msg.content})
-        return history
+                history.append({"role": msg.role, "content": msg.content or ""})
+
+        budget = max_tokens
+        kept: list[dict[str, str]] = []
+        # NB: distinct name from the ORM `msg` above — these are plain dicts.
+        for entry in reversed(history):
+            cost = max(1, len(entry["content"]) // 4)
+            if budget - cost < 0 and kept:
+                break
+            kept.append(entry)
+            budget -= cost
+        kept.reverse()
+        kept = kept[-max_messages:]
+
+        # Summarize anything that fell outside the kept window
+        if len(kept) < len(history):
+            dropped = history[: len(history) - len(kept)]
+            summary = self._summarize_evicted(dropped, max_chars=min(budget * 4, 2000))
+            if summary:
+                return [{"role": "assistant", "content": summary}, *kept]
+        return kept
+
+    @staticmethod
+    def _summarize_evicted(messages: list[dict[str, str]], max_chars: int = 2000) -> str:
+        """Extractive summary of dropped turns (no LLM call — deterministic)."""
+        if not messages:
+            return ""
+        snippets: list[str] = []
+        for msg in messages:
+            role = "User" if msg["role"] == "user" else "Assistant"
+            text = " ".join((msg.get("content") or "").split())
+            if not text:
+                continue
+            if len(text) > 180:
+                text = text[:177] + "..."
+            snippets.append(f"{role}: {text}")
+        body = " | ".join(snippets)
+        header = (
+            f"[Earlier conversation summary — {len(messages)} turn(s) condensed] "
+        )
+        room = max(max_chars - len(header), 80)
+        if len(body) > room:
+            body = body[: room - 3] + "..."
+        return header + body
 
     def get_system_context(self) -> str:
         """Build the system prompt with user context and working memory."""
@@ -99,7 +170,48 @@ class ContextManager:
         if last_dataset:
             context_parts.append(f"Last Loaded Dataset: {last_dataset}")
 
+        blocks = self._get_core_memory_blocks()
+        if blocks:
+            rendered = "\n".join(
+                f"- [{b.scope}] {b.label}: {b.content}" for b in blocks if (b.content or "").strip()
+            )
+            if rendered:
+                context_parts.append("Core Memory:\n" + rendered)
+
         return "\n".join(context_parts)
+
+    def _get_core_memory_blocks(self) -> list[MemoryBlock]:
+        """Return core-memory blocks visible to this user."""
+        q = self.db.query(MemoryBlock)
+        clauses = [
+            (MemoryBlock.scope == "persona") & (MemoryBlock.owner_id.is_(None)),
+            (MemoryBlock.scope == "organization") & (MemoryBlock.owner_id.is_(None)),
+            (MemoryBlock.scope == "user") & (MemoryBlock.owner_id == self.user.id),
+        ]
+        if self.user.business_unit:
+            clauses.append(
+                (MemoryBlock.scope == "business_unit")
+                & (MemoryBlock.owner_id == self.user.business_unit)
+            )
+        rows = (
+            q.filter(or_(*clauses))
+            .order_by(MemoryBlock.scope.asc(), MemoryBlock.label.asc())
+            .all()
+        )
+        # Keep prompt growth bounded even if stored blocks are larger.
+        budget = max(0, int(settings.core_memory_prompt_char_budget))
+        if budget <= 0:
+            return []
+        kept: list[MemoryBlock] = []
+        used = 0
+        for b in rows:
+            text = (b.content or "").strip()
+            cost = len(text) + len(b.scope) + len(b.label) + 8
+            if used + cost > budget and kept:
+                break
+            kept.append(b)
+            used += cost
+        return kept
 
     # ---------- Document Context (RAG) ----------
 
@@ -130,5 +242,6 @@ class ContextManager:
             "review": role.can_review,
             "publish": role.can_publish,
             "admin": role.can_admin,
+            "manage_drivers": getattr(role, "can_manage_drivers", False),
         }
         return permission_map.get(permission, False)

@@ -5,7 +5,7 @@ import pandas as pd
 from typing import Any
 from sklearn.linear_model import LinearRegression
 
-from app.domain.engines.base_model import IForecastModel, ForecastOutput
+from app.domain.engines.base_model import IForecastModel, ForecastOutput, ModelCapabilities
 
 
 class LinearTrendModel(IForecastModel):
@@ -19,29 +19,48 @@ class LinearTrendModel(IForecastModel):
     def min_data_points(self) -> int:
         return 6  # Needs very little data
 
+    @property
+    def capabilities(self) -> ModelCapabilities:
+        return ModelCapabilities(
+            complexity_rank=10,
+            min_data_points=6,
+            base_confidence=40.0,
+            is_benchmark=False,
+            cost_class="cheap",
+            display_label="Linear trend",
+        )
+
     def fit(self, series: pd.Series, dates: pd.DatetimeIndex) -> dict[str, Any]:
-        X = np.arange(len(series)).reshape(-1, 1)
-        y = series.values
+        X = np.arange(len(series), dtype=float)
+        y = series.values.astype(float)
 
         model = LinearRegression()
-        model.fit(X, y)
+        model.fit(X.reshape(-1, 1), y)
 
-        # Compute residual std for confidence intervals
-        predictions = model.predict(X)
+        predictions = model.predict(X.reshape(-1, 1))
         residuals = y - predictions
-        residual_std = float(np.std(residuals))
+        n = len(series)
+        # Unbiased residual std (ddof=2 for intercept+slope)
+        dof = max(n - 2, 1)
+        residual_std = float(np.sqrt(np.sum(residuals ** 2) / dof))
 
-        # R-squared
-        ss_res = np.sum(residuals ** 2)
-        ss_tot = np.sum((y - np.mean(y)) ** 2)
-        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+        ss_res = float(np.sum(residuals ** 2))
+        ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+        in_sample_mape = float(np.mean(np.abs(residuals / (np.abs(y) + 1e-10)))) * 100
+
+        x_bar = float(np.mean(X))
+        sxx = float(np.sum((X - x_bar) ** 2))
 
         return {
             "slope": float(model.coef_[0]),
             "intercept": float(model.intercept_),
             "residual_std": residual_std,
             "r_squared": float(r_squared),
-            "n_points": len(series),
+            "in_sample_mape": in_sample_mape,
+            "n_points": n,
+            "x_bar": x_bar,
+            "sxx": sxx,
         }
 
     def predict(
@@ -54,27 +73,37 @@ class LinearTrendModel(IForecastModel):
         slope = params["slope"]
         intercept = params["intercept"]
         residual_std = params["residual_std"]
-        n_points = params["n_points"]
+        n_points = int(params["n_points"])
+        x_bar = float(params.get("x_bar", (n_points - 1) / 2.0))
+        sxx = float(params.get("sxx", 0.0))
+        if sxx <= 0:
+            sxx = float(np.sum((np.arange(n_points) - x_bar) ** 2)) + 1e-12
 
-        # Generate future indices
-        future_indices = np.arange(n_points, n_points + horizon)
+        future_indices = np.arange(n_points, n_points + horizon, dtype=float)
         point_forecast = slope * future_indices + intercept
 
-        # Confidence intervals (widen with distance from training data)
-        z = 1.28  # ~P10/P90 for 80% CI
-        interval_widths = z * residual_std * np.sqrt(1 + (future_indices - n_points / 2) ** 2 / (n_points * np.var(np.arange(n_points)) + 1e-10))
-        # Simplified: use constant width
-        interval_widths = z * residual_std * (1 + 0.1 * np.arange(horizon))
+        # OLS prediction interval: ŷ ± t·s·sqrt(1 + 1/n + (x−x̄)²/Sxx)
+        alpha = 1.0 - confidence_level
+        dof = max(n_points - 2, 1)
+        try:
+            from scipy import stats as scipy_stats
+
+            t_crit = float(scipy_stats.t.ppf(1.0 - alpha / 2.0, dof))
+        except Exception:
+            # Fallback ~N(0,1) quantile for 80% → 1.28
+            t_crit = 1.2815515655446004 if abs(confidence_level - 0.80) < 1e-6 else 1.96
+
+        se = residual_std * np.sqrt(
+            1.0 + 1.0 / n_points + (future_indices - x_bar) ** 2 / sxx
+        )
+        interval_widths = t_crit * se
 
         lower = point_forecast - interval_widths
         upper = point_forecast + interval_widths
 
-        # Generate period labels
-        periods = []
-        current = last_date
-        for _ in range(horizon):
-            current = current + pd.offsets.MonthBegin(1)
-            periods.append(current.strftime("%Y-%m"))
+        from app.domain.engines.base_model import make_period_labels
+
+        periods = make_period_labels(last_date, horizon)
 
         return ForecastOutput(
             point_forecast=point_forecast,
@@ -83,6 +112,9 @@ class LinearTrendModel(IForecastModel):
             periods=periods,
             model_type="linear",
             parameters=params,
-            fit_metrics={"r_squared": params["r_squared"]},
-            diagnostics={"seasonality_detected": False},
+            fit_metrics={
+                "r_squared": params["r_squared"],
+                "in_sample_mape": params.get("in_sample_mape", 0.0),
+            },
+            diagnostics={"seasonality_detected": False, "pi_method": "ols_prediction"},
         )

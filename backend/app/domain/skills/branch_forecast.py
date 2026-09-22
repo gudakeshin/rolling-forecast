@@ -1,9 +1,7 @@
 """BranchForecast skill -- scenario branching, comparison, and merge."""
 
 import logging
-import uuid
 from typing import Any
-from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -11,6 +9,7 @@ from sqlalchemy import func
 from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.models.forecast import ForecastVersion, ForecastLineResult
 from app.models.line_item import LineItem
+from app.services.permissions import can_access_business_unit, resolve_skill_user
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +59,10 @@ class BranchForecastSkill(BaseSkill):
                     "type": "string",
                     "description": "Description of the scenario",
                 },
+                "scenario": {
+                    "type": "string",
+                    "description": "Scenario label for the branch (default: inherits source, or 'upside' if unnamed)",
+                },
             },
             "required": ["action"],
         }
@@ -92,7 +95,7 @@ class BranchForecastSkill(BaseSkill):
             return SkillResult.fail("No source version specified or active.")
 
         source = db.query(ForecastVersion).filter(ForecastVersion.id == source_id).first()
-        if not source:
+        if not source or not can_access_business_unit(resolve_skill_user(context), source.business_unit_id):
             return SkillResult.fail(f"Source version '{source_id}' not found.")
 
         branch_name = params.get("branch_name") or f"{source.name}-scenario"
@@ -100,11 +103,14 @@ class BranchForecastSkill(BaseSkill):
         adjustments = params.get("adjustments", {})
 
         # Create the branch version
+        scenario = (params.get("scenario") or "").strip() or getattr(source, "scenario", None) or "upside"
         branch = ForecastVersion(
             name=branch_name,
             status="draft",
             version_type="scenario",
+            scenario=scenario,
             parent_version_id=source.id,
+            business_unit_id=source.business_unit_id,
             actuals_dataset_id=source.actuals_dataset_id,
             actuals_hash=source.actuals_hash,
             horizon_months=source.horizon_months,
@@ -144,12 +150,12 @@ class BranchForecastSkill(BaseSkill):
                 override_value=r.override_value,
             )
 
-            # Apply bulk adjustments by category
+            # Apply bulk adjustments by category — leaf (non-calculated) items only
             if adjustments:
                 li = db.query(LineItem).filter(LineItem.id == r.line_item_id).first()
-                if li:
+                if li and not li.is_calculated:
                     for cat_pattern, pct_change in adjustments.items():
-                        if cat_pattern.lower() in li.category.lower():
+                        if cat_pattern.lower() in (li.category or "").lower():
                             factor = 1 + (pct_change / 100.0)
                             new_r.p50 = r.p50 * factor
                             if new_r.p10 is not None:
@@ -162,6 +168,11 @@ class BranchForecastSkill(BaseSkill):
 
             db.add(new_r)
 
+        db.flush()
+
+        # Recompute calculated lines + full MinT interval bounds
+        from app.services.reconciliation import reconcile_version
+        reconcile_version(db, branch.id)
         db.commit()
 
         # Build response
@@ -272,8 +283,9 @@ class BranchForecastSkill(BaseSkill):
         if not branch_id:
             return SkillResult.fail("Branch version ID is required for comparison.")
 
+        actor = resolve_skill_user(context)
         branch = db.query(ForecastVersion).filter(ForecastVersion.id == branch_id).first()
-        if not branch:
+        if not branch or not can_access_business_unit(actor, branch.business_unit_id):
             return SkillResult.fail(f"Branch '{branch_id}' not found.")
 
         base_id = branch.parent_version_id
@@ -281,7 +293,7 @@ class BranchForecastSkill(BaseSkill):
             return SkillResult.fail("Branch has no parent version to compare against.")
 
         base = db.query(ForecastVersion).filter(ForecastVersion.id == base_id).first()
-        if not base:
+        if not base or not can_access_business_unit(actor, base.business_unit_id):
             return SkillResult.fail(f"Base version '{base_id}' not found.")
 
         # Aggregate by line item for both versions
@@ -376,7 +388,7 @@ class BranchForecastSkill(BaseSkill):
             return SkillResult.fail("Branch version ID is required for merge.")
 
         branch = db.query(ForecastVersion).filter(ForecastVersion.id == branch_id).first()
-        if not branch:
+        if not branch or not can_access_business_unit(resolve_skill_user(context), branch.business_unit_id):
             return SkillResult.fail(f"Branch '{branch_id}' not found.")
 
         # Create a new merged version
@@ -384,6 +396,7 @@ class BranchForecastSkill(BaseSkill):
             name=f"{branch.name}-merged",
             status="draft",
             version_type="scheduled",
+            business_unit_id=branch.business_unit_id,
             actuals_dataset_id=branch.actuals_dataset_id,
             actuals_hash=branch.actuals_hash,
             horizon_months=branch.horizon_months,

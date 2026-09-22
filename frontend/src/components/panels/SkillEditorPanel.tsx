@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { apiGet, apiPost, fetchApi } from '../../api/client';
 
 interface SkillInfo {
   name: string;
@@ -23,6 +24,10 @@ interface SkillDetail {
   md_file: string;
 }
 
+interface SkillsListResponse {
+  skills: SkillInfo[];
+}
+
 export function SkillEditorPanel() {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
@@ -33,12 +38,9 @@ export function SkillEditorPanel() {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const apiBase = 'http://localhost:8000';
-
   const fetchSkills = useCallback(async () => {
     try {
-      const res = await fetch(`${apiBase}/api/skills/`);
-      const data = await res.json();
+      const data = await apiGet<SkillsListResponse>('/skills/');
       setSkills(data.skills || []);
     } catch (e) {
       console.error('Failed to fetch skills:', e);
@@ -53,8 +55,7 @@ export function SkillEditorPanel() {
 
   const fetchDetail = async (name: string) => {
     try {
-      const res = await fetch(`${apiBase}/api/skills/${name}`);
-      const data = await res.json();
+      const data = await apiGet<SkillDetail>(`/skills/${name}`);
       setDetail(data);
       setEditContent(data.md_content || '');
       setSelectedSkill(name);
@@ -70,9 +71,8 @@ export function SkillEditorPanel() {
     setMessage(null);
 
     try {
-      const res = await fetch(`${apiBase}/api/skills/${selectedSkill}`, {
+      const res = await fetchApi(`/skills/${selectedSkill}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: editContent }),
       });
 
@@ -82,7 +82,7 @@ export function SkillEditorPanel() {
         fetchDetail(selectedSkill);
         fetchSkills();
       } else {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({ detail: 'Failed to save' }));
         setMessage({ type: 'error', text: err.detail || 'Failed to save' });
       }
     } catch (e) {
@@ -94,7 +94,7 @@ export function SkillEditorPanel() {
 
   const handleReload = async () => {
     try {
-      await fetch(`${apiBase}/api/skills/reload`, { method: 'POST' });
+      await apiPost('/skills/reload');
       fetchSkills();
       setMessage({ type: 'success', text: 'All skill definitions reloaded from disk' });
     } catch (e) {
@@ -173,7 +173,7 @@ export function SkillEditorPanel() {
                 {skill.tags.slice(0, 3).map((tag) => (
                   <span
                     key={tag}
-                    className="px-1.5 py-0.5 text-[10px] bg-surface-700 text-surface-400 rounded"
+                    className="px-1.5 py-0.5 text-xs bg-surface-700 text-surface-400 rounded"
                   >
                     {tag}
                   </span>
@@ -206,7 +206,7 @@ export function SkillEditorPanel() {
                   <button
                     onClick={handleSave}
                     disabled={saving}
-                    className="px-3 py-1 text-xs bg-deloitte-green text-black font-semibold rounded hover:bg-deloitte-green/90 disabled:opacity-50"
+                    className="px-3 py-1 text-xs bg-deloitte-green text-white font-semibold rounded hover:bg-deloitte-green/90 disabled:opacity-50"
                   >
                     {saving ? 'Saving...' : 'Save'}
                   </button>
@@ -306,11 +306,11 @@ export function SkillEditorPanel() {
                       >
                         <div className="flex items-center gap-2">
                           <code className="text-xs font-mono text-deloitte-green">{p.name}</code>
-                          <span className="text-[10px] px-1.5 py-0.5 bg-surface-700 text-surface-400 rounded">
+                          <span className="text-xs px-1.5 py-0.5 bg-surface-700 text-surface-400 rounded">
                             {p.type}
                           </span>
                           {p.required && (
-                            <span className="text-[10px] px-1.5 py-0.5 bg-red-500/10 text-red-400 rounded">
+                            <span className="text-xs px-1.5 py-0.5 bg-red-500/10 text-red-400 rounded">
                               required
                             </span>
                           )}
@@ -321,7 +321,7 @@ export function SkillEditorPanel() {
                             {p.enum.map((v: string) => (
                               <span
                                 key={v}
-                                className="text-[10px] px-1 py-0.5 bg-surface-700 text-surface-300 rounded font-mono"
+                                className="text-xs px-1 py-0.5 bg-surface-700 text-surface-300 rounded font-mono"
                               >
                                 {v}
                               </span>
@@ -349,7 +349,7 @@ export function SkillEditorPanel() {
 function MetaCard({ label, value }: { label: string; value: string }) {
   return (
     <div className="px-3 py-2 bg-surface-800 rounded border border-surface-700">
-      <p className="text-[10px] text-surface-400 uppercase tracking-wider">{label}</p>
+      <p className="text-xs text-surface-400 uppercase tracking-wider">{label}</p>
       <p className="text-sm font-semibold text-white mt-0.5">{value}</p>
     </div>
   );
