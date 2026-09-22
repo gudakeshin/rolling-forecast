@@ -29,6 +29,15 @@ class ModelPresetCreate(BaseModel):
     model_type: str = "auto"
     candidate_models: list[str] | None = None
     default_horizon_months: int | None = Field(None, ge=1, le=60)
+    business_unit_id: str | None = Field(
+        None,
+        description=(
+            "Company to scope this preset to, or omit/null for a global preset "
+            "usable by every company. Only meaningful for a cross-company caller "
+            "-- a single-company caller's presets are always scoped to their own "
+            "company regardless of this field."
+        ),
+    )
 
 
 class ModelPresetUpdate(BaseModel):
@@ -59,6 +68,8 @@ def _serialize(preset: ModelPreset) -> dict:
         "created_at": preset.created_at.isoformat() if preset.created_at else None,
         "created_by": preset.created_by,
         "updated_at": preset.updated_at.isoformat() if preset.updated_at else None,
+        "business_unit_id": preset.business_unit_id,
+        "is_global": preset.business_unit_id is None,
     }
 
 
@@ -102,6 +113,7 @@ async def create_model_preset(
             candidate_models=body.candidate_models,
             default_horizon_months=body.default_horizon_months,
             actor=current_user,
+            business_unit_id=body.business_unit_id,
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
@@ -114,7 +126,7 @@ async def list_model_presets(
     current_user: User = Depends(require_permission("generate")),
     db: Session = Depends(get_db),
 ):
-    rows = list_presets(db, include_inactive=include_inactive)
+    rows = list_presets(db, include_inactive=include_inactive, actor=current_user)
     return {"presets": [_serialize(r) for r in rows], "count": len(rows)}
 
 
@@ -124,7 +136,7 @@ async def get_model_preset(
     current_user: User = Depends(require_permission("generate")),
     db: Session = Depends(get_db),
 ):
-    preset = get_preset(db, preset_id)
+    preset = get_preset(db, preset_id, actor=current_user)
     if preset is None:
         raise HTTPException(404, "Model preset not found")
     return _serialize(preset)

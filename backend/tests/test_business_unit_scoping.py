@@ -39,6 +39,22 @@ def _make_user(db_session, seed_roles, business_unit: BusinessUnit, username: st
     return u
 
 
+def _make_admin_user(db_session, seed_roles, username: str, business_unit: BusinessUnit | None = None) -> User:
+    """A cross-BU (can_view_all_bus) user -- optionally still assigned to one
+    company (own_bu), for testing the "cross-BU actor with a home BU" case."""
+    u = User(
+        email=f"{username}@test.local",
+        username=username,
+        hashed_password=_pwd.hash(username),
+        full_name=username,
+        business_unit_id=business_unit.id if business_unit else None,
+        role_id=seed_roles["admin"].id,
+    )
+    db_session.add(u)
+    db_session.commit()
+    return u
+
+
 def _skill_context(db_session, user: User) -> Any:
     from app.domain.base_skill import SkillContext
     from tests.conftest import MockContextManager
@@ -457,3 +473,71 @@ async def test_branch_forecast_never_crosses_companies_and_inherits_business_uni
     ).first()
     assert branch is not None
     assert branch.business_unit_id == two_companies["company_a"].id
+
+
+@pytest.mark.asyncio
+async def test_model_presets_scoped_global_vs_company(db_session, two_companies, seed_roles):
+    """A company-scoped caller sees global + their own presets, never another
+    company's; can't edit a global preset; a cross-BU caller can do both."""
+    from app.services.model_presets import create_preset, get_preset, list_presets, update_preset
+
+    admin = _make_admin_user(db_session, seed_roles, "cross_admin")
+
+    global_preset = create_preset(
+        db_session, name="Conservative", description=None, actor=admin
+    )
+    assert global_preset.business_unit_id is None
+
+    preset_a = create_preset(
+        db_session, name="Aggressive", description=None, actor=two_companies["user_a"]
+    )
+    assert preset_a.business_unit_id == two_companies["company_a"].id
+
+    # Company B can reuse the same name company A used -- different scope.
+    preset_b = create_preset(
+        db_session, name="Aggressive", description=None, actor=two_companies["user_b"]
+    )
+    assert preset_b.business_unit_id == two_companies["company_b"].id
+
+    names_for_a = {p.name for p in list_presets(db_session, actor=two_companies["user_a"])}
+    assert names_for_a == {"Conservative", "Aggressive"}  # global + own, not B's
+
+    # A can't even see B's preset by id.
+    assert get_preset(db_session, preset_b.id, actor=two_companies["user_a"]) is None
+
+    # A can't edit the global preset (shared with every company).
+    with pytest.raises(ValueError):
+        update_preset(
+            db_session, global_preset.id, actor=two_companies["user_a"], description="hijacked"
+        )
+
+    # The cross-BU admin sees all three rows (global + both companies' same-named ones).
+    ids_for_admin = {p.id for p in list_presets(db_session, actor=admin)}
+    assert ids_for_admin == {global_preset.id, preset_a.id, preset_b.id}
+    updated = update_preset(db_session, global_preset.id, actor=admin, description="curated")
+    assert updated.description == "curated"
+
+
+@pytest.mark.asyncio
+async def test_model_preset_create_forces_own_company_scope(db_session, two_companies):
+    """A company-scoped caller can't request a global preset or another
+    company's scope by passing business_unit_id explicitly -- it's ignored."""
+    from app.services.model_presets import create_preset
+
+    preset = create_preset(
+        db_session,
+        name="Sneaky Global",
+        description=None,
+        actor=two_companies["user_a"],
+        business_unit_id=None,  # requesting global
+    )
+    assert preset.business_unit_id == two_companies["company_a"].id  # forced to own company
+
+    preset2 = create_preset(
+        db_session,
+        name="Sneaky Cross",
+        description=None,
+        actor=two_companies["user_a"],
+        business_unit_id=two_companies["company_b"].id,  # requesting B's scope
+    )
+    assert preset2.business_unit_id == two_companies["company_a"].id  # still forced to own

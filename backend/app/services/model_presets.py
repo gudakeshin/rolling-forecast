@@ -6,23 +6,80 @@ model registry only at *resolution* time (when a run actually uses it), not
 at create/update time, since registry membership is env-flag-dependent
 (e.g. ``global_gbm`` only exists when ``settings.enable_global_gbm_model``
 is on).
+
+Company scoping: ``business_unit_id`` is nullable. ``NULL`` means "global,
+usable by every company" (the admin-curated catalog every preset predating
+this column stays in). A caller who isn't cross-BU (``can_view_all_bus``)
+can see and use both global presets and their own company's, but can only
+create/edit/deactivate their own company's -- global presets are shared,
+editable only by a cross-BU/admin caller so one company can't silently
+change what every other company sees. ``actor=None`` preserves the
+pre-scoping behavior (see everything, unrestricted) for the rare internal
+caller with no user context.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.domain.engines.model_registry import get_model_registry, reset_model_registry
 from app.models.model_preset import ModelPreset
 from app.models.user import User
 from app.services.audit import record_audit
+from app.services.permissions import can_view_all_bus
 
 
-def _find_by_name(db: Session, name: str, *, exclude_id: str | None = None) -> ModelPreset | None:
+def _visibility_filter(query, actor: User | None):
+    """Restrict a ModelPreset query to what `actor` may see: global presets
+    plus their own company's, unless they can view all."""
+    if actor is None or can_view_all_bus(actor):
+        return query
+    bu_id = actor.business_unit_id
+    if bu_id is None:
+        return query.filter(ModelPreset.business_unit_id.is_(None))
+    return query.filter(
+        or_(ModelPreset.business_unit_id.is_(None), ModelPreset.business_unit_id == bu_id)
+    )
+
+
+def _can_modify(actor: User | None, preset: ModelPreset) -> bool:
+    """True if `actor` may create/update/deactivate this preset's scope.
+
+    Global presets (business_unit_id is None) are only modifiable by a
+    cross-BU/admin caller -- a single company must not be able to silently
+    change a preset every other company also uses.
+    """
+    if actor is None or can_view_all_bus(actor):
+        return True
+    return preset.business_unit_id is not None and preset.business_unit_id == actor.business_unit_id
+
+
+def _resolve_create_business_unit_id(
+    actor: User | None, requested: str | None
+) -> str | None:
+    """Decide the business_unit_id a NEW preset actually gets.
+
+    A non-cross-BU actor always gets their own company, regardless of what
+    was requested -- they can't create a global preset or one scoped to a
+    different company. A cross-BU/admin actor (or no actor at all, e.g. an
+    internal/system caller) gets exactly what was requested (None = global).
+    """
+    if actor is None or can_view_all_bus(actor):
+        return requested
+    return actor.business_unit_id
+
+
+def _find_by_name(
+    db: Session, name: str, *, business_unit_id: str | None, exclude_id: str | None = None
+):
     query = db.query(ModelPreset).filter(func.lower(ModelPreset.name) == name.strip().lower())
+    if business_unit_id is None:
+        query = query.filter(ModelPreset.business_unit_id.is_(None))
+    else:
+        query = query.filter(ModelPreset.business_unit_id == business_unit_id)
     if exclude_id is not None:
         query = query.filter(ModelPreset.id != exclude_id)
     return query.first()
@@ -37,6 +94,7 @@ def create_preset(
     candidate_models: list[str] | None = None,
     default_horizon_months: int | None = None,
     actor: User | None = None,
+    business_unit_id: str | None = None,
 ) -> ModelPreset:
     name = (name or "").strip()
     if not name:
@@ -46,7 +104,8 @@ def create_preset(
             "candidate_models only applies when model_type is 'auto' "
             "(it restricts the auto-selection pool; a pinned model_type ignores it)"
         )
-    if _find_by_name(db, name) is not None:
+    effective_bu = _resolve_create_business_unit_id(actor, business_unit_id)
+    if _find_by_name(db, name, business_unit_id=effective_bu) is not None:
         raise ValueError(f"A model preset named '{name}' already exists")
 
     preset = ModelPreset(
@@ -56,6 +115,7 @@ def create_preset(
         candidate_models=candidate_models or None,
         default_horizon_months=default_horizon_months,
         created_by=actor.id if actor else None,
+        business_unit_id=effective_bu,
     )
     db.add(preset)
     db.flush()
@@ -74,26 +134,41 @@ def create_preset(
     return preset
 
 
-def list_presets(db: Session, *, include_inactive: bool = False) -> list[ModelPreset]:
+def list_presets(
+    db: Session, *, include_inactive: bool = False, actor: User | None = None
+) -> list[ModelPreset]:
     query = db.query(ModelPreset)
     if not include_inactive:
         query = query.filter(ModelPreset.is_active.is_(True))
+    query = _visibility_filter(query, actor)
     return query.order_by(ModelPreset.name).all()
 
 
-def get_preset(db: Session, preset_id: str) -> ModelPreset | None:
-    return db.query(ModelPreset).filter(ModelPreset.id == preset_id).first()
+def get_preset(db: Session, preset_id: str, *, actor: User | None = None) -> ModelPreset | None:
+    preset = db.query(ModelPreset).filter(ModelPreset.id == preset_id).first()
+    if preset is None:
+        return None
+    if actor is not None and not can_view_all_bus(actor):
+        if preset.business_unit_id is not None and preset.business_unit_id != actor.business_unit_id:
+            return None
+    return preset
 
 
-def find_preset(db: Session, preset_id_or_name: str) -> ModelPreset | None:
+def find_preset(
+    db: Session, preset_id_or_name: str, *, actor: User | None = None
+) -> ModelPreset | None:
     """Look up a preset by id first, falling back to a case-insensitive name match.
 
     Chat callers naturally refer to presets by name; REST/UI callers pass the id.
     """
-    preset = get_preset(db, preset_id_or_name)
+    preset = get_preset(db, preset_id_or_name, actor=actor)
     if preset is not None:
         return preset
-    return _find_by_name(db, preset_id_or_name)
+    query = db.query(ModelPreset).filter(
+        func.lower(ModelPreset.name) == preset_id_or_name.strip().lower()
+    )
+    query = _visibility_filter(query, actor)
+    return query.first()
 
 
 def update_preset(
@@ -103,15 +178,21 @@ def update_preset(
     actor: User | None = None,
     **fields: Any,
 ) -> ModelPreset:
-    preset = get_preset(db, preset_id)
+    preset = get_preset(db, preset_id, actor=actor)
     if preset is None:
+        raise ValueError(f"Model preset '{preset_id}' not found")
+    if not _can_modify(actor, preset):
+        # Same message as "not found" -- don't reveal a global preset's
+        # existence with a different error than an inaccessible one.
         raise ValueError(f"Model preset '{preset_id}' not found")
 
     if "name" in fields and fields["name"] is not None:
         new_name = fields["name"].strip()
         if not new_name:
             raise ValueError("Preset name cannot be empty")
-        if _find_by_name(db, new_name, exclude_id=preset.id) is not None:
+        if _find_by_name(
+            db, new_name, business_unit_id=preset.business_unit_id, exclude_id=preset.id
+        ) is not None:
             raise ValueError(f"A model preset named '{new_name}' already exists")
         preset.name = new_name
 
@@ -150,9 +231,13 @@ def update_preset(
     return preset
 
 
-def deactivate_preset(db: Session, preset_id: str, actor: User | None = None) -> ModelPreset:
-    preset = get_preset(db, preset_id)
+def deactivate_preset(
+    db: Session, preset_id: str, actor: User | None = None
+) -> ModelPreset:
+    preset = get_preset(db, preset_id, actor=actor)
     if preset is None:
+        raise ValueError(f"Model preset '{preset_id}' not found")
+    if not _can_modify(actor, preset):
         raise ValueError(f"Model preset '{preset_id}' not found")
     if not preset.is_active:
         return preset
@@ -179,6 +264,7 @@ def resolve_preset(
     preset_id_or_name: str,
     *,
     override_horizon: int | None = None,
+    actor: User | None = None,
 ) -> dict[str, Any]:
     """Resolve a saved preset into generate_baseline kwargs.
 
@@ -187,7 +273,7 @@ def resolve_preset(
     since registry membership depends on settings flags that can change
     independently of when a preset was saved.
     """
-    preset = find_preset(db, preset_id_or_name)
+    preset = find_preset(db, preset_id_or_name, actor=actor)
     if preset is None:
         raise ValueError(f"Model preset '{preset_id_or_name}' not found")
     if not preset.is_active:
@@ -277,7 +363,10 @@ async def run_forecast_with_preset(
     from app.domain.base_skill import SkillContext
     from app.domain.skills.generate_baseline import GenerateBaselineSkill
 
-    resolved = resolve_preset(db, preset_id_or_name, override_horizon=horizon_months)
+    actor = db.query(User).filter(User.id == user_id).first() if user_id else None
+    resolved = resolve_preset(
+        db, preset_id_or_name, override_horizon=horizon_months, actor=actor
+    )
     params: dict[str, Any] = {
         "model_type": resolved["model_type"],
         "models_to_test": resolved["models_to_test"],

@@ -401,10 +401,14 @@ class GenerateBaselineSkill(BaseSkill):
         model_preset_ref = params.get("model_preset")
         if model_preset_ref:
             from app.services.model_presets import resolve_preset as resolve_model_preset
+            from app.services.permissions import resolve_skill_user as _resolve_skill_user
 
             try:
                 resolved_preset = resolve_model_preset(
-                    db, model_preset_ref, override_horizon=params.get("horizon_months")
+                    db,
+                    model_preset_ref,
+                    override_horizon=params.get("horizon_months"),
+                    actor=_resolve_skill_user(context),
                 )
             except ValueError as e:
                 return SkillResult.fail(str(e))

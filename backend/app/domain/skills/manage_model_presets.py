@@ -77,10 +77,11 @@ class ListModelPresetsSkill(BaseSkill):
 
     async def execute(self, params: dict[str, Any], context: SkillContext) -> SkillResult:
         db = context.db
+        actor = resolve_skill_user(context)
         preset_ref = params.get("preset")
 
         if preset_ref:
-            preset = find_preset(db, preset_ref)
+            preset = find_preset(db, preset_ref, actor=actor)
             if preset is None:
                 return SkillResult.fail(f"Model preset '{preset_ref}' not found.")
             return SkillResult.ok(
@@ -114,7 +115,7 @@ class ListModelPresetsSkill(BaseSkill):
                 ],
             )
 
-        rows = list_presets(db, include_inactive=bool(params.get("include_inactive")))
+        rows = list_presets(db, include_inactive=bool(params.get("include_inactive")), actor=actor)
         if not rows:
             return SkillResult.ok(
                 message="No model presets saved yet. Create one with manage_model_presets.",
