@@ -14,7 +14,7 @@ from app.models.heuristic import (
     LearnedHeuristic,
 )
 from app.models.user import User
-from app.services.permissions import user_has_permission
+from app.services.permissions import can_access_business_unit, can_view_all_bus, user_has_permission
 from app.services.reflection import (
     MAX_CANDIDATES,
     MIN_CYCLES,
@@ -43,6 +43,27 @@ class ReflectionRunRequest(BaseModel):
     min_cycles: int = Field(default=MIN_CYCLES, ge=2, le=24)
     max_candidates: int = Field(default=MAX_CANDIDATES, ge=1, le=25)
     kinds: list[str] | None = None
+    # Only a cross-BU (can_view_all_bus) caller may set this to a company
+    # other than their own; see _resolve_run_business_unit below.
+    business_unit_id: str | None = None
+
+
+def _resolve_run_business_unit(current_user: User, requested: str | None) -> str | None:
+    """Which company a reflection pass runs for.
+
+    Mirrors app/api/admin_fx.py's `_resolve_settings_business_unit`: an
+    explicit id wins only for a cross-BU caller; otherwise a company-scoped
+    caller always runs their own company, and a cross-BU caller with none
+    specified runs unscoped (every company at once) -- matching this route's
+    pre-scoping behavior for admins who want a global sweep.
+    """
+    if requested:
+        if not can_access_business_unit(current_user, requested):
+            raise HTTPException(404, "Business unit not found")
+        return requested
+    if not can_view_all_bus(current_user) and current_user.business_unit_id:
+        return current_user.business_unit_id
+    return None
 
 
 def _serialize(row: LearnedHeuristic) -> dict:
@@ -50,6 +71,7 @@ def _serialize(row: LearnedHeuristic) -> dict:
         "id": row.id,
         "scope": row.scope,
         "line_item_id": row.line_item_id,
+        "business_unit_id": row.business_unit_id,
         "category": row.category,
         "model_type": row.model_type,
         "horizon_bucket": row.horizon_bucket,
@@ -82,6 +104,8 @@ async def list_heuristics(
         raise HTTPException(400, f"Invalid kind '{kind}'")
 
     q = db.query(LearnedHeuristic)
+    if not can_view_all_bus(current_user):
+        q = q.filter(LearnedHeuristic.business_unit_id == current_user.business_unit_id)
     if status_filter:
         q = q.filter(LearnedHeuristic.status == status_filter)
     if kind:
@@ -102,9 +126,11 @@ async def run_reflection(
         invalid = [k for k in kinds if k not in HEURISTIC_KINDS]
         if invalid:
             raise HTTPException(400, f"Invalid kinds: {invalid}")
+    business_unit_id = _resolve_run_business_unit(current_user, payload.business_unit_id)
     summary = run_reflection_pass(
         db,
         actor=current_user,
+        business_unit_id=business_unit_id,
         min_cycles=payload.min_cycles,
         max_candidates=payload.max_candidates,
         kinds=kinds,

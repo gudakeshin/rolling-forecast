@@ -238,7 +238,7 @@ def _same_sign(a: Any, b: Any) -> bool:
 
 
 def _find_existing(
-    db: Session, candidate: dict[str, Any]
+    db: Session, candidate: dict[str, Any], *, business_unit_id: str | None
 ) -> tuple[LearnedHeuristic | None, LearnedHeuristic | None]:
     """Return (open candidate row, active row) matching this candidate's signature."""
     rows = (
@@ -248,6 +248,7 @@ def _find_existing(
             LearnedHeuristic.line_item_id == candidate["line_item_id"],
             LearnedHeuristic.model_type == candidate["model_type"],
             LearnedHeuristic.horizon_bucket == candidate["horizon_bucket"],
+            LearnedHeuristic.business_unit_id == business_unit_id,
             LearnedHeuristic.status.in_(("candidate", "active")),
         )
         .all()
@@ -268,37 +269,46 @@ def run_reflection_pass(
     db: Session,
     *,
     actor: User | None = None,
+    business_unit_id: str | None = None,
     min_cycles: int = MIN_CYCLES,
     max_candidates: int = MAX_CANDIDATES,
     kinds: Sequence[str] | None = None,
 ) -> dict[str, Any]:
-    """Detect heuristics from closed cycles and persist them as candidates."""
+    """Detect heuristics from closed cycles and persist them as candidates.
+
+    `business_unit_id` scopes both the accuracy-record/override scan and the
+    company stamped onto every candidate it creates -- a caller must resolve
+    which company they're running for (see app/api/heuristics.py's
+    `run_reflection` route) rather than scanning every tenant's data together.
+    """
     selected = set(kinds or ("error_bias", "override_pattern"))
 
     detected: list[dict[str, Any]] = []
     if "error_bias" in selected:
-        records = (
+        records_q = (
             db.query(ForecastAccuracyRecord)
             .join(LineItem, LineItem.id == ForecastAccuracyRecord.line_item_id)
             .filter(LineItem.is_target_bearing.isnot(False))
-            .all()
         )
+        if business_unit_id is not None:
+            records_q = records_q.filter(LineItem.business_unit_id == business_unit_id)
         detected.extend(
             detect_error_bias(
-                records, min_cycles=min_cycles, max_candidates=max_candidates
+                records_q.all(), min_cycles=min_cycles, max_candidates=max_candidates
             )
         )
     if "override_pattern" in selected:
-        overrides = (
+        overrides_q = (
             db.query(Override)
             .join(LineItem, LineItem.id == Override.line_item_id)
             .filter(Override.status == "active")
             .filter(LineItem.is_target_bearing.isnot(False))
-            .all()
         )
+        if business_unit_id is not None:
+            overrides_q = overrides_q.filter(LineItem.business_unit_id == business_unit_id)
         detected.extend(
             detect_override_patterns(
-                overrides, min_cycles=min_cycles, max_candidates=max_candidates
+                overrides_q.all(), min_cycles=min_cycles, max_candidates=max_candidates
             )
         )
 
@@ -308,7 +318,7 @@ def run_reflection_pass(
     updated = 0
     skipped_active = 0
     for candidate in detected:
-        open_candidate, active = _find_existing(db, candidate)
+        open_candidate, active = _find_existing(db, candidate, business_unit_id=business_unit_id)
         if active is not None:
             skipped_active += 1
             continue
@@ -325,6 +335,7 @@ def run_reflection_pass(
             LearnedHeuristic(
                 scope=candidate["scope"],
                 line_item_id=candidate["line_item_id"],
+                business_unit_id=business_unit_id,
                 model_type=candidate["model_type"],
                 horizon_bucket=candidate["horizon_bucket"],
                 kind=candidate["kind"],
@@ -385,7 +396,9 @@ def heuristic_summary(row: LearnedHeuristic) -> dict[str, Any]:
     }
 
 
-def _get_heuristic(db: Session, heuristic_id: int) -> LearnedHeuristic:
+def _get_heuristic(
+    db: Session, heuristic_id: int, *, actor: User | None = None
+) -> LearnedHeuristic:
     row = (
         db.query(LearnedHeuristic)
         .filter(LearnedHeuristic.id == heuristic_id)
@@ -393,6 +406,13 @@ def _get_heuristic(db: Session, heuristic_id: int) -> LearnedHeuristic:
     )
     if row is None:
         raise ValueError(f"Heuristic {heuristic_id} not found")
+    if actor is not None:
+        from app.services.permissions import can_access_business_unit
+
+        if not can_access_business_unit(actor, row.business_unit_id):
+            # Same "not found" a missing row gets -- don't confirm another
+            # company's heuristic exists to a caller who can't see it.
+            raise ValueError(f"Heuristic {heuristic_id} not found")
     return row
 
 
@@ -411,6 +431,7 @@ def _supersede_siblings(db: Session, row: LearnedHeuristic) -> list[int]:
             LearnedHeuristic.kind == row.kind,
             LearnedHeuristic.scope == row.scope,
             LearnedHeuristic.line_item_id == row.line_item_id,
+            LearnedHeuristic.business_unit_id == row.business_unit_id,
             LearnedHeuristic.category == row.category,
             LearnedHeuristic.model_type == row.model_type,
             LearnedHeuristic.horizon_bucket == row.horizon_bucket,
@@ -430,7 +451,7 @@ def promote_heuristic(
     Sets the transient ``influences_selection`` attribute on the returned row so
     callers can tell a consumable heuristic from a merely-visible one.
     """
-    row = _get_heuristic(db, heuristic_id)
+    row = _get_heuristic(db, heuristic_id, actor=actor)
     if row.status not in ("candidate", "active"):
         raise ValueError(
             f"Heuristic {heuristic_id} is '{row.status}' — only candidate or "
@@ -472,7 +493,7 @@ def reject_heuristic(
     db: Session, heuristic_id: int, actor: User | None = None
 ) -> LearnedHeuristic:
     """Mark a candidate or active heuristic ``rejected``."""
-    row = _get_heuristic(db, heuristic_id)
+    row = _get_heuristic(db, heuristic_id, actor=actor)
     if row.status not in ("candidate", "active"):
         raise ValueError(
             f"Heuristic {heuristic_id} is '{row.status}' — only candidate or "
@@ -509,16 +530,21 @@ def active_heuristics_for_line(
     *,
     kind: str = "error_bias",
     consumable_only: bool = True,
+    business_unit_id: str | None = None,
 ) -> list[LearnedHeuristic]:
     """Active heuristics attached to one line item, newest proposal first.
 
     With ``consumable_only`` (the default) override-derived rows are filtered
-    out, so the result is safe to feed into selection logic.
+    out, so the result is safe to feed into selection logic. `business_unit_id`
+    is defense-in-depth (the line_item_id join already scopes this in
+    practice) -- pass the line item's own business_unit_id when known.
     """
     q = db.query(LearnedHeuristic).filter(
         LearnedHeuristic.line_item_id == line_item_id,
         LearnedHeuristic.status == "active",
     )
+    if business_unit_id is not None:
+        q = q.filter(LearnedHeuristic.business_unit_id == business_unit_id)
     if kind:
         q = q.filter(LearnedHeuristic.kind == kind)
     if consumable_only:

@@ -188,10 +188,10 @@ class ContextManager:
             (MemoryBlock.scope == "organization") & (MemoryBlock.owner_id.is_(None)),
             (MemoryBlock.scope == "user") & (MemoryBlock.owner_id == self.user.id),
         ]
-        if self.user.business_unit:
+        if self.user.business_unit_id:
             clauses.append(
                 (MemoryBlock.scope == "business_unit")
-                & (MemoryBlock.owner_id == self.user.business_unit)
+                & (MemoryBlock.owner_id == self.user.business_unit_id)
             )
         rows = (
             q.filter(or_(*clauses))

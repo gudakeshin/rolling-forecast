@@ -42,6 +42,13 @@ class LearnedHeuristic(Base):
     line_item_id: Mapped[int | None] = mapped_column(
         ForeignKey("line_items.id"), nullable=True, index=True
     )
+    # NULL means "no company could be determined" -- a fail-closed deny, not
+    # a global-visible row like ModelPreset.business_unit_id (a heuristic is
+    # never legitimately visible across companies). See migration
+    # 029_heuristic_and_memory_scoping.
+    business_unit_id: Mapped[str | None] = mapped_column(
+        ForeignKey("business_units.id"), nullable=True, index=True
+    )
     category: Mapped[str | None] = mapped_column(String(100), nullable=True)
     model_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     horizon_bucket: Mapped[str | None] = mapped_column(String(20), nullable=True)

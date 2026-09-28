@@ -63,12 +63,14 @@ def _inverse_mase_weights(mase_a: float, mase_b: float) -> tuple[float, float]:
     return inv_a / total, inv_b / total
 
 
-def _active_heuristics(db: Session | None, line_item_id: int) -> list[Any]:
+def _active_heuristics(
+    db: Session | None, line_item_id: int, business_unit_id: str | None = None
+) -> list[Any]:
     """Consumable active heuristics for a line — never fatal to a forecast."""
     if db is None:
         return []
     try:
-        return active_heuristics_for_line(db, line_item_id)
+        return active_heuristics_for_line(db, line_item_id, business_unit_id=business_unit_id)
     except Exception as e:  # pragma: no cover — legacy schemas without the table
         logger.debug("active heuristic lookup failed for line %s: %s", line_item_id, e)
         return []
@@ -793,7 +795,7 @@ def forecast_line_item(
         # rules move target-bearing lines teaches the system to hit targets
         # rather than to forecast. Override-derived heuristics are excluded
         # upstream, so nothing here can feed reviewer habit back into a model.
-        active_heuristics = _active_heuristics(db, li.id)
+        active_heuristics = _active_heuristics(db, li.id, li.business_unit_id)
         heuristic_meta = [heuristic_summary(h) for h in active_heuristics]
         heuristic_nudge: dict[str, Any] | None = None
         if active_heuristics and selection_result is not None:

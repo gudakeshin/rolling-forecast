@@ -44,10 +44,10 @@ async def list_core_memory(
         (MemoryBlock.scope == "organization") & (MemoryBlock.owner_id.is_(None)),
         (MemoryBlock.scope == "user") & (MemoryBlock.owner_id == current_user.id),
     ]
-    if current_user.business_unit:
+    if current_user.business_unit_id:
         clauses.append(
             (MemoryBlock.scope == "business_unit")
-            & (MemoryBlock.owner_id == current_user.business_unit)
+            & (MemoryBlock.owner_id == current_user.business_unit_id)
         )
     rows = (
         db.query(MemoryBlock)

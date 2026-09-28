@@ -38,9 +38,9 @@ def resolve_memory_target(user: User, scope: str) -> MemoryTarget:
         return MemoryTarget(scope=scope, owner_id=None)
     if scope == "user":
         return MemoryTarget(scope=scope, owner_id=user.id)
-    if not user.business_unit:
+    if not user.business_unit_id:
         raise ValueError("User has no business_unit; cannot write business_unit memory")
-    return MemoryTarget(scope=scope, owner_id=user.business_unit)
+    return MemoryTarget(scope=scope, owner_id=user.business_unit_id)
 
 
 def _get_block(
@@ -135,9 +135,9 @@ def list_core_memory_for_user(db: Session, user: User) -> list[MemoryBlock]:
         (MemoryBlock.scope == "organization") & (MemoryBlock.owner_id.is_(None)),
         (MemoryBlock.scope == "user") & (MemoryBlock.owner_id == user.id),
     ]
-    if user.business_unit:
+    if user.business_unit_id:
         clauses.append(
-            (MemoryBlock.scope == "business_unit") & (MemoryBlock.owner_id == user.business_unit)
+            (MemoryBlock.scope == "business_unit") & (MemoryBlock.owner_id == user.business_unit_id)
         )
     return (
         db.query(MemoryBlock)

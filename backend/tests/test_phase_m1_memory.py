@@ -151,3 +151,59 @@ def test_core_memory_prompt_budget_is_bounded(db_session, seed_users):
     sys_ctx = cm.get_system_context()
     assert len(sys_ctx) <= int(settings.core_memory_prompt_char_budget) + 1500
     assert "Core Memory:" in sys_ctx
+
+
+def test_business_unit_memory_is_keyed_by_id_not_name(db_session, seed_users, seed_roles):
+    """A business_unit-scope memory block must be keyed by the real FK
+    (User.business_unit_id), not the legacy free-text name -- see migration
+    029_heuristic_and_memory_scoping. Also confirms a second company's user
+    never sees the first company's organization memory."""
+    from app.models.business_unit import BusinessUnit
+    from app.models.user import User
+
+    analyst = seed_users["analyst"]
+    ctx = _ctx(db_session, analyst)
+    append = CoreMemoryAppendSkill()
+
+    res = asyncio.run(
+        append.execute(
+            {
+                "scope": "business_unit",
+                "label": "close_calendar",
+                "content": "WD+4 close for this company.",
+                "char_limit": 500,
+            },
+            ctx,
+        )
+    )
+    assert res.success is True
+
+    block = (
+        db_session.query(MemoryBlock)
+        .filter(MemoryBlock.scope == "business_unit", MemoryBlock.label == "close_calendar")
+        .one()
+    )
+    assert block.owner_id == analyst.business_unit_id
+    assert block.owner_id != analyst.business_unit  # the legacy name, not the FK
+
+    other_bu = BusinessUnit(name="Other Co (memory scoping test)")
+    db_session.add(other_bu)
+    db_session.flush()
+    other_user = User(
+        email="other-co@test.local",
+        username="other_co_analyst",
+        hashed_password=analyst.hashed_password,
+        full_name="Other Co Analyst",
+        business_unit_id=other_bu.id,
+        role_id=analyst.role_id,
+    )
+    db_session.add(other_user)
+    db_session.commit()
+
+    from app.services.memory_blocks import list_core_memory_for_user
+
+    own_blocks = list_core_memory_for_user(db_session, analyst)
+    assert any(b.label == "close_calendar" for b in own_blocks)
+
+    other_blocks = list_core_memory_for_user(db_session, other_user)
+    assert not any(b.label == "close_calendar" for b in other_blocks)
