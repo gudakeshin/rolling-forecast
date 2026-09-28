@@ -84,9 +84,17 @@ async def _execute_baseline(
     from app.database import SessionLocal
     from app.domain.skills.generate_baseline import GenerateBaselineSkill
     from app.domain.base_skill import SkillContext
+    from app.models.user import User
     from app.services.job_queue import update_job
+    from app.services.tenant_scope import UNRESTRICTED, push_tenant_scope, reset_tenant_scope, scope_for_user
 
     db = SessionLocal()
+    # A real triggering user's own company scope; system-triggered runs
+    # (user_id is None, e.g. nightly scheduled-sync regeneration) or a
+    # cross-BU actor stay unrestricted -- the skill resolves which
+    # company it's generating for from its own params either way.
+    actor = db.query(User).filter(User.id == user_id).first() if user_id else None
+    scope_token = push_tenant_scope(scope_for_user(actor) if actor else UNRESTRICTED)
     try:
         uid = user_id or "system"
         skill = GenerateBaselineSkill()
@@ -131,6 +139,7 @@ async def _execute_baseline(
             db.commit()
         return payload
     finally:
+        reset_tenant_scope(scope_token)
         db.close()
 
 
@@ -213,8 +222,13 @@ async def scheduled_integration_sync(ctx: dict) -> dict:
     from app.services.notifications import notify_users, users_with_permission
     from app.services.permissions import can_view_all_bus
     from app.services.scheduled_ingestion import sync_all_enabled_connections
+    from app.services.tenant_scope import UNRESTRICTED, push_tenant_scope, reset_tenant_scope
 
     db = SessionLocal()
+    # Genuinely system-wide: iterates every company's connections/datasets
+    # in one pass (see docstring) -- each per-company step already scopes
+    # its own query explicitly via business_unit_id.
+    scope_token = push_tenant_scope(UNRESTRICTED)
     try:
         summary = await sync_all_enabled_connections(db)
         logger.info(
@@ -292,6 +306,7 @@ async def scheduled_integration_sync(ctx: dict) -> dict:
                     )
         return summary
     finally:
+        reset_tenant_scope(scope_token)
         db.close()
 
 
@@ -300,8 +315,10 @@ async def scheduled_driver_freshness_sweep(ctx: dict) -> dict:
     from app.database import SessionLocal
     from app.models.driver import Driver
     from app.services.driver_ingest import drivers_freshness_batch
+    from app.services.tenant_scope import UNRESTRICTED, push_tenant_scope, reset_tenant_scope
 
     db = SessionLocal()
+    scope_token = push_tenant_scope(UNRESTRICTED)  # system-wide: every company's drivers
     try:
         driver_ids = [d.id for d in db.query(Driver).all()]
         if not driver_ids:
@@ -321,6 +338,7 @@ async def scheduled_driver_freshness_sweep(ctx: dict) -> dict:
             )
         return {"drivers_checked": len(driver_ids), "stale": stale}
     finally:
+        reset_tenant_scope(scope_token)
         db.close()
 
 
@@ -330,8 +348,10 @@ async def scheduled_accuracy_report(ctx: dict) -> dict:
     from app.domain.base_skill import SkillContext
     from app.domain.skills.auto_accuracy_report import AutoAccuracyReportSkill
     from app.models.forecast import ForecastVersion
+    from app.services.tenant_scope import UNRESTRICTED, push_tenant_scope, reset_tenant_scope
 
     db = SessionLocal()
+    scope_token = push_tenant_scope(UNRESTRICTED)  # every company's published versions
     try:
         versions = (
             db.query(ForecastVersion).filter(ForecastVersion.status == "published").all()
@@ -359,6 +379,7 @@ async def scheduled_accuracy_report(ctx: dict) -> dict:
             log("scheduled_accuracy_report[%s]: %s", v.name, result.message)
         return {"versions_checked": len(versions), "results": results}
     finally:
+        reset_tenant_scope(scope_token)
         db.close()
 
 
@@ -371,8 +392,10 @@ async def scheduled_driver_overdue_sweep(ctx: dict) -> dict:
     from app.models.forecast import ForecastVersion
     from app.services.error_handlers import check_driver_deadline
     from app.services.notifications import notify_users, users_in_business_unit_with_permission
+    from app.services.tenant_scope import UNRESTRICTED, push_tenant_scope, reset_tenant_scope
 
     db = SessionLocal()
+    scope_token = push_tenant_scope(UNRESTRICTED)  # every company's draft/in_review versions
     try:
         versions = (
             db.query(ForecastVersion)
@@ -417,6 +440,7 @@ async def scheduled_driver_overdue_sweep(ctx: dict) -> dict:
         )
         return {"versions_checked": len(versions), "notifications_created": overdue_count}
     finally:
+        reset_tenant_scope(scope_token)
         db.close()
 
 
@@ -432,8 +456,10 @@ async def scheduled_anomaly_sweep(ctx: dict) -> dict:
     from app.models.forecast import ForecastVersion
     from app.models.user import Role, User
     from app.services.notifications import notify_users, users_with_permission
+    from app.services.tenant_scope import UNRESTRICTED, push_tenant_scope, reset_tenant_scope
 
     db = SessionLocal()
+    scope_token = push_tenant_scope(UNRESTRICTED)  # deliberately every company, see docstring
     try:
         admin = (
             db.query(User)
@@ -478,6 +504,7 @@ async def scheduled_anomaly_sweep(ctx: dict) -> dict:
         )
         return {"versions_checked": len(versions), "notifications_created": notified}
     finally:
+        reset_tenant_scope(scope_token)
         db.close()
 
 

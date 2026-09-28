@@ -188,7 +188,14 @@ def test_revert_override_happy_path(client):
     assert r.json()["success"] is True
     assert r.json()["status"] == "reverted"
 
+    # Raw verification query, outside any request -- push UNRESTRICTED the
+    # same way a background job would, since nothing else ever sets a scope
+    # for this bare SessionLocal() session (see app/services/tenant_scope.py:
+    # unset means deny, not allow, for the models it covers).
+    from app.services.tenant_scope import UNRESTRICTED, push_tenant_scope, reset_tenant_scope
+
     db = SessionLocal()
+    scope_token = push_tenant_scope(UNRESTRICTED)
     try:
         ov = db.query(Override).filter(Override.id == override_id).one()
         assert ov.status == "reverted"
@@ -199,6 +206,7 @@ def test_revert_override_happy_path(client):
         ver = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).one()
         assert ver.override_count == 0
     finally:
+        reset_tenant_scope(scope_token)
         db.close()
 
 

@@ -73,6 +73,14 @@ def init_db():
     # Import models so metadata is populated
     import app.models  # noqa: F401
 
+    # Fail-closed session-level tenant scoping -- see app/services/tenant_scope.py.
+    # Registered once, against this module's own SessionLocal only (unit
+    # tests use a separate sessionmaker bound to an in-memory DB and are
+    # untouched by this).
+    from app.services.tenant_scope import register as _register_tenant_scope
+
+    _register_tenant_scope(SessionLocal)
+
     if settings.app_env.lower() == "test":
         Base.metadata.create_all(bind=engine)
         return

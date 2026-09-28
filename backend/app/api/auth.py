@@ -25,6 +25,7 @@ from app.schemas.auth import (
 from app.services.audit import record_audit
 from app.services.company_membership import ensure_active_membership, list_memberships, switch_active_company
 from app.services.permissions import require_permission
+from app.services.tenant_scope import push_tenant_scope, scope_for_user
 from app.services.token_store import (
     create_access_token as _mint_access,
     issue_refresh_token,
@@ -61,11 +62,19 @@ def _token_pair(db: Session, user: User) -> TokenResponse:
     )
 
 
-def get_current_user(
+async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db),
 ) -> User:
-    """FastAPI dependency to extract and validate the current user from JWT."""
+    """FastAPI dependency to extract and validate the current user from JWT.
+
+    Deliberately async (not sync): a sync dependency runs in a worker thread
+    via anyio.to_thread, which gets a COPY of the calling context -- a
+    contextvar set inside it (push_tenant_scope, below) never propagates
+    back to the route handler that runs after it. Being async keeps this in
+    the same task/context as everything downstream. The body is otherwise
+    synchronous DB access, same as the rest of this module.
+    """
     token = credentials.credentials
     try:
         payload = jwt.decode(
@@ -83,6 +92,11 @@ def get_current_user(
     user = db.query(User).filter(User.id == user_id).first()
     if user is None or not user.is_active:
         raise HTTPException(status_code=401, detail="User not found or inactive")
+    # Fail-closed session-level tenant scoping for the rest of this request
+    # (chat included -- it resolves through this same dependency). See
+    # app/services/tenant_scope.py. Each request runs in its own asyncio
+    # Task, so this never leaks into another request.
+    push_tenant_scope(scope_for_user(user))
     return user
 
 
