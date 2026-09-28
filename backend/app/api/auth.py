@@ -17,11 +17,13 @@ from app.schemas.auth import (
     LoginRequest,
     LogoutRequest,
     RefreshRequest,
+    SwitchCompanyRequest,
     TokenResponse,
     UserCreate,
     UserResponse,
 )
 from app.services.audit import record_audit
+from app.services.company_membership import ensure_active_membership, list_memberships, switch_active_company
 from app.services.permissions import require_permission
 from app.services.token_store import (
     create_access_token as _mint_access,
@@ -204,6 +206,8 @@ async def register(
         role_id=role.id,
     )
     db.add(user)
+    db.flush()
+    ensure_active_membership(db, user)
     db.commit()
     db.refresh(user)
 
@@ -250,6 +254,8 @@ async def admin_create_user(
         role_id=role.id,
     )
     db.add(user)
+    db.flush()
+    ensure_active_membership(db, user)
     db.commit()
     db.refresh(user)
 
@@ -268,8 +274,29 @@ async def admin_create_user(
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_me(current_user: User = Depends(get_current_user)):
-    return UserResponse.model_validate(current_user)
+async def get_me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    resp = UserResponse.model_validate(current_user)
+    resp.companies = list_memberships(db, current_user)
+    return resp
+
+
+@router.post("/switch-company", response_model=UserResponse)
+async def switch_company(
+    body: SwitchCompanyRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Switch the caller's active company/role to one they hold a membership
+    for. A plain DB write -- every permission check reads business_unit_id/
+    role live off the User row, so this takes effect on the very next
+    request with no re-login needed."""
+    try:
+        updated = switch_active_company(db, current_user, body.company_id)
+    except ValueError:
+        raise HTTPException(404, "Company not found")
+    resp = UserResponse.model_validate(updated)
+    resp.companies = list_memberships(db, updated)
+    return resp
 
 
 @router.get("/oidc/login")
@@ -435,6 +462,8 @@ async def oidc_callback(
             is_active=True,
         )
         db.add(user)
+        db.flush()
+        ensure_active_membership(db, user)
         db.commit()
         db.refresh(user)
 

@@ -25,6 +25,7 @@ from app.models.notification import Notification
 from app.models.review_undo import ReviewUndoSnapshot
 from app.models.model_preset import ModelPreset
 from app.models.tenant_setting import BusinessUnitSetting
+from app.models.company_membership import CompanyMembership
 
 __all__ = [
     "User",
@@ -68,4 +69,5 @@ __all__ = [
     "ReviewUndoSnapshot",
     "ModelPreset",
     "BusinessUnitSetting",
+    "CompanyMembership",
 ]

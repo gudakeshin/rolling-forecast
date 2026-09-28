@@ -24,6 +24,9 @@ export function Header() {
   const workspaceName = useWorkspaceStore((s) => s.currentBusinessUnitName);
   const workspaceOptions = useWorkspaceStore((s) => s.businessUnits);
   const setWorkspace = useWorkspaceStore((s) => s.setCurrent);
+  const memberships = useWorkspaceStore((s) => s.companies);
+  const switchCompany = useWorkspaceStore((s) => s.switchCompany);
+  const hasMembershipSwitcher = !canViewAllBus && memberships.length > 1;
   const sidebarExpanded = useChatStore((s) => s.sidebarExpanded);
   const toggleSidebar = useChatStore((s) => s.toggleSidebar);
   const openCommandPalette = useCommandPaletteStore((s) => s.open);
@@ -36,6 +39,10 @@ export function Header() {
     const bu = workspaceOptions.find((b) => b.id === id);
     setWorkspace(id, bu?.name ?? null);
     void refreshVersions();
+  };
+
+  const handleMembershipChange = (companyId: string) => {
+    void switchCompany(companyId).then(() => refreshVersions());
   };
 
   const cycleLocale = () => {
@@ -71,7 +78,7 @@ export function Header() {
           </div>
         </div>
 
-        {(canViewAllBus || workspaceName) && (
+        {(canViewAllBus || hasMembershipSwitcher || workspaceName) && (
           <div className="hidden md:flex items-center gap-1.5 pl-1">
             <div className="w-px h-5 bg-surface-700 mx-1" />
             <Building2 className="w-3.5 h-3.5 text-surface-500 shrink-0" aria-hidden="true" />
@@ -85,6 +92,18 @@ export function Header() {
               >
                 {workspaceOptions.map((bu) => (
                   <option key={bu.id} value={bu.id}>{bu.name}</option>
+                ))}
+              </select>
+            ) : hasMembershipSwitcher ? (
+              <select
+                value={memberships.find((m) => m.business_unit_id === workspaceId)?.company_id || ''}
+                onChange={(e) => handleMembershipChange(e.target.value)}
+                className="max-w-[9rem] text-[11.5px] font-medium bg-surface-900 border border-surface-700 rounded-lg px-2 py-1.5 text-surface-300 focus:outline-none focus:border-deloitte-green/50"
+                aria-label={t('nav.workspace')}
+                title={t('nav.workspace')}
+              >
+                {memberships.map((m) => (
+                  <option key={m.company_id} value={m.company_id}>{m.name}</option>
                 ))}
               </select>
             ) : (

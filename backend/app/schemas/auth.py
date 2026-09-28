@@ -34,6 +34,13 @@ class UserCreate(BaseModel):
     role_name: str = "analyst"
 
 
+class CompanyMembershipInfo(BaseModel):
+    company_id: str
+    business_unit_id: str | None
+    name: str
+    role_name: str
+
+
 class UserResponse(BaseModel):
     id: str
     email: str
@@ -51,5 +58,15 @@ class UserResponse(BaseModel):
     can_admin: bool = False
     can_manage_drivers: bool = False
     can_view_all_bus: bool = False
+    companies: list[CompanyMembershipInfo] = []
 
     model_config = {"from_attributes": True}
+
+
+class SwitchCompanyRequest(BaseModel):
+    company_id: str
+
+
+class GrantMembershipRequest(BaseModel):
+    company_id: str
+    role_name: str

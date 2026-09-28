@@ -1,3 +1,10 @@
+export interface CompanyMembership {
+  company_id: string;
+  business_unit_id: string | null;
+  name: string;
+  role_name: string;
+}
+
 export interface User {
   id: string;
   email: string;
@@ -15,6 +22,7 @@ export interface User {
   can_admin?: boolean;
   can_manage_drivers?: boolean;
   can_view_all_bus?: boolean;
+  companies?: CompanyMembership[];
 }
 
 export interface LoginRequest {

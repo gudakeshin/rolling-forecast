@@ -20,7 +20,7 @@ from passlib.context import CryptContext
 from app.models.budget import BudgetVersion
 from app.models.business_unit import BusinessUnit
 from app.models.line_item import LineItem
-from app.models.user import User
+from app.models.user import Role, User
 from app.services.actuals_resolution import resolve_current_dataset
 
 _pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -90,15 +90,26 @@ def _write_csv(path, base: float) -> None:
 
 @pytest.fixture
 def two_companies(db_session, seed_roles):
+    from app.models.company import Company
+
     company_a = BusinessUnit(name="Company A")
     company_b = BusinessUnit(name="Company B")
     db_session.add_all([company_a, company_b])
+    db_session.flush()
+    company_a_entity = Company(name="Company A")
+    company_b_entity = Company(name="Company B")
+    db_session.add_all([company_a_entity, company_b_entity])
+    db_session.flush()
+    company_a.company_id = company_a_entity.id
+    company_b.company_id = company_b_entity.id
     db_session.commit()
     user_a = _make_user(db_session, seed_roles, company_a, "user_a")
     user_b = _make_user(db_session, seed_roles, company_b, "user_b")
     return {
         "company_a": company_a,
         "company_b": company_b,
+        "company_a_id": company_a_entity.id,
+        "company_b_id": company_b_entity.id,
         "user_a": user_a,
         "user_b": user_b,
         "ctx_a": _skill_context(db_session, user_a),
@@ -690,3 +701,101 @@ async def test_admin_fx_settings_endpoint_scopes_by_company(db_session, two_comp
     get_global = await admin_fx.get_currency(current_user=admin, db=db_session)
     assert get_global["business_unit_id"] is None
     assert get_global["reporting_currency"] == "USD"  # company A's EUR didn't touch the global default
+
+
+def test_ensure_active_membership_creates_and_updates(db_session, two_companies):
+    from app.models.company_membership import CompanyMembership
+    from app.services.company_membership import ensure_active_membership
+
+    user_a = two_companies["user_a"]
+    assert (
+        db_session.query(CompanyMembership).filter(CompanyMembership.user_id == user_a.id).count()
+        == 0
+    )
+
+    ensure_active_membership(db_session, user_a)
+    membership = (
+        db_session.query(CompanyMembership).filter(CompanyMembership.user_id == user_a.id).first()
+    )
+    assert membership is not None
+    assert membership.company_id == two_companies["company_a_id"]
+    assert membership.role_id == user_a.role_id
+
+    # Idempotent, and reflects a role change on the active company.
+    original_role_id = user_a.role_id
+    other_role = db_session.query(Role).filter(Role.name == "admin").first()
+    user_a.role_id = other_role.id
+    ensure_active_membership(db_session, user_a)
+    assert (
+        db_session.query(CompanyMembership).filter(CompanyMembership.user_id == user_a.id).count()
+        == 1
+    )
+    db_session.refresh(membership)
+    assert membership.role_id == other_role.id
+    user_a.role_id = original_role_id  # restore for other assertions in this test module
+
+
+def test_switch_active_company_requires_membership(db_session, two_companies):
+    from app.services.company_membership import switch_active_company
+
+    user_a = two_companies["user_a"]
+    with pytest.raises(ValueError):
+        switch_active_company(db_session, user_a, two_companies["company_b_id"])
+    # Refused switch must not have mutated anything.
+    assert user_a.business_unit_id == two_companies["company_a"].id
+
+
+def test_switch_active_company_takes_effect_immediately(db_session, two_companies, seed_roles):
+    """No re-login needed -- the very next scoped check reflects the switch,
+    since permission checks read business_unit_id/role live off the User row.
+
+    Granted as "analyst" (not "admin") deliberately -- can_view_all_bus is
+    admin-or-explicit in this codebase, so granting an admin role would make
+    every company visible regardless of the switch, defeating this test.
+    """
+    from app.services.company_membership import grant_membership, switch_active_company
+    from app.services.permissions import can_access_business_unit
+
+    user_a = two_companies["user_a"]
+    admin = _make_admin_user(db_session, seed_roles, "membership_admin")
+
+    grant_membership(
+        db_session,
+        user_id=user_a.id,
+        company_id=two_companies["company_b_id"],
+        role_id=seed_roles["analyst"].id,
+        actor=admin,
+    )
+    assert not can_access_business_unit(user_a, two_companies["company_b"].id)
+
+    switch_active_company(db_session, user_a, two_companies["company_b_id"])
+    assert user_a.business_unit_id == two_companies["company_b"].id
+    assert user_a.role_id == seed_roles["analyst"].id
+    assert can_access_business_unit(user_a, two_companies["company_b"].id)
+    assert not can_access_business_unit(user_a, two_companies["company_a"].id)
+
+
+def test_grant_membership_and_list(db_session, two_companies, seed_roles):
+    from app.services.company_membership import (
+        ensure_active_membership,
+        grant_membership,
+        list_memberships,
+    )
+
+    user_a = two_companies["user_a"]
+    ensure_active_membership(db_session, user_a)  # company A, analyst
+    admin = _make_admin_user(db_session, seed_roles, "membership_admin2")
+    grant_membership(
+        db_session,
+        user_id=user_a.id,
+        company_id=two_companies["company_b_id"],
+        role_id=seed_roles["admin"].id,
+        actor=admin,
+    )
+
+    memberships = {m["name"]: m for m in list_memberships(db_session, user_a)}
+    assert set(memberships) == {"Company A", "Company B"}
+    assert memberships["Company A"]["role_name"] == "analyst"
+    assert memberships["Company B"]["role_name"] == "admin"
+    assert memberships["Company A"]["business_unit_id"] == two_companies["company_a"].id
+    assert memberships["Company B"]["business_unit_id"] == two_companies["company_b"].id

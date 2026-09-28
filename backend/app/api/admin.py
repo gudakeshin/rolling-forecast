@@ -12,10 +12,11 @@ from app.models.business_unit import BusinessUnit
 from app.models.company import Company
 from app.models.line_item import LineItem, LineItemDependency
 from app.models.audit import AuditEvent
-from app.schemas.auth import UserResponse
-from app.services.permissions import require_permission
+from app.schemas.auth import GrantMembershipRequest, UserResponse
+from app.services.permissions import require_admin_or_view_all_bus, require_permission
 from app.services.coa_dependencies import ensure_standard_dependencies
 from app.services.audit import record_audit
+from app.services.company_membership import ensure_active_membership, grant_membership, list_memberships
 from passlib.context import CryptContext
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -98,6 +99,8 @@ async def update_user(
         if not role:
             raise HTTPException(400, f"Role '{body.role_name}' not found")
         user.role_id = role.id
+    db.flush()
+    ensure_active_membership(db, user)
     record_audit(
         db,
         action="admin.update_user",
@@ -108,7 +111,48 @@ async def update_user(
     )
     db.commit()
     db.refresh(user)
-    return UserResponse.model_validate(user)
+    resp = UserResponse.model_validate(user)
+    resp.companies = list_memberships(db, user)
+    return resp
+
+
+@router.get("/users/{user_id}/memberships")
+async def get_user_memberships(
+    user_id: str,
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+):
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(404, "User not found")
+    return list_memberships(db, target)
+
+
+@router.post("/users/{user_id}/memberships")
+async def grant_user_membership(
+    user_id: str,
+    body: GrantMembershipRequest,
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+):
+    """Grant `user_id` a role in a company -- doesn't change their currently
+    active company, just adds it to their switchable set (see
+    POST /auth/switch-company)."""
+    role = db.query(Role).filter(Role.name == body.role_name).first()
+    if not role:
+        raise HTTPException(400, f"Role '{body.role_name}' not found")
+    try:
+        grant_membership(
+            db,
+            user_id=user_id,
+            company_id=body.company_id,
+            role_id=role.id,
+            actor=current_user,
+        )
+    except ValueError as e:
+        raise HTTPException(404, str(e)) from e
+    target = db.query(User).filter(User.id == user_id).first()
+    return list_memberships(db, target)
 
 
 @router.get("/roles")
@@ -153,7 +197,7 @@ async def update_role(
 
 @router.get("/business-units")
 async def list_business_units(
-    current_user: User = Depends(require_permission("admin")),
+    current_user: User = Depends(require_admin_or_view_all_bus()),
     db: Session = Depends(get_db),
 ):
     units = db.query(BusinessUnit).order_by(BusinessUnit.name).all()

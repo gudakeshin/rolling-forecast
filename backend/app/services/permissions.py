@@ -225,6 +225,25 @@ def require_any_role(*role_names: str):
     return _dependency
 
 
+def require_admin_or_view_all_bus():
+    """FastAPI dependency: can_admin OR can_view_all_bus (e.g. reviewer/
+    publisher). For read-only endpoints a cross-BU-but-not-admin caller
+    still needs -- e.g. listing companies for the workspace switcher
+    (app/api/admin.py's GET /business-units) -- can_view_all_bus alone
+    shouldn't require full admin just to read that list."""
+    from app.api.auth import get_current_user
+
+    def _dependency(current_user: User = Depends(get_current_user)) -> User:
+        if not (current_user.can_admin or can_view_all_bus(current_user)):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin or cross-company access required",
+            )
+        return current_user
+
+    return _dependency
+
+
 def can_approve_forecast(user: User) -> bool:
     return bool(user.role) and (
         user.role.name in APPROVER_ROLES or user.role.can_review
