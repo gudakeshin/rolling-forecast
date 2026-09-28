@@ -88,6 +88,7 @@ def register(session_factory) -> None:
     from app.models.integration import IntegrationConnection
     from app.models.line_item import LineItem
     from app.models.model_preset import ModelPreset
+    from app.models.saved_view import SavedView
 
     plain_scoped_models = (
         LineItem,
@@ -98,6 +99,7 @@ def register(session_factory) -> None:
         DriverInput,
         DriverFormConfig,
         IntegrationConnection,
+        SavedView,
     )
 
     @event.listens_for(session_factory, "do_orm_execute")

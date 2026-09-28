@@ -78,12 +78,21 @@ export function Sidebar() {
 }
 
 /** Named panel+filter presets saved from any panel's header ("Save as view").
- * localStorage-only today — see store/savedViewsStore.ts. */
+ * Server-backed — see store/savedViewsStore.ts. */
 function SavedViews() {
   const { t } = useI18n();
   const views = useSavedViewsStore((s) => s.views);
+  const fetchViews = useSavedViewsStore((s) => s.fetchViews);
   const deleteView = useSavedViewsStore((s) => s.deleteView);
   const openPanel = usePanelStore((s) => s.openPanel);
+
+  useEffect(() => {
+    fetchViews();
+  }, [fetchViews]);
+
+  const handleDelete = (id: string, name: string) => {
+    deleteView(id).catch(() => toast.error(`Failed to delete view "${name}"`));
+  };
 
   if (!views.length) return null;
 
@@ -109,7 +118,7 @@ function SavedViews() {
             </button>
             <button
               type="button"
-              onClick={() => deleteView(v.id)}
+              onClick={() => handleDelete(v.id, v.name)}
               className="opacity-0 group-hover:opacity-100 focus:opacity-100 self-center mr-1 p-1 rounded-md text-surface-500 hover:text-red-400 transition-opacity"
               aria-label={`${t('sidebar.deleteView')} ${v.name}`}
             >

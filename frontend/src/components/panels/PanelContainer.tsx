@@ -167,12 +167,16 @@ function PanelContainerBody({ variant }: { variant: PanelSlot }) {
   const saveView = useSavedViewsStore((s) => s.saveView);
   const requestComposerFocus = useComposerStore((s) => s.requestFocus);
 
-  const handleSaveView = () => {
+  const handleSaveView = async () => {
     if (!panelType) return;
     const name = window.prompt('Name this view:');
     if (!name || !name.trim()) return;
-    saveView(name.trim(), panelType, panelParams);
-    toast.success(`Saved view "${name.trim()}"`);
+    try {
+      await saveView(name.trim(), panelType, panelParams);
+      toast.success(`Saved view "${name.trim()}"`);
+    } catch (error: any) {
+      toast.error(error?.message || `Failed to save view "${name.trim()}"`);
+    }
   };
 
   // Only these fields actually change what gets fetched. Depending on the

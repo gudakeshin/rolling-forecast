@@ -1,5 +1,10 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import {
+  createSavedView,
+  deleteSavedView,
+  listSavedViews,
+  type SavedView as ApiSavedView,
+} from '../api/savedViews';
 import { shareablePanelParams } from '../utils/panelParams';
 
 export interface SavedView {
@@ -10,37 +15,54 @@ export interface SavedView {
   createdAt: string;
 }
 
+function fromApi(v: ApiSavedView): SavedView {
+  return {
+    id: v.id,
+    name: v.name,
+    panelType: v.panel_type,
+    panelParams: v.panel_params,
+    createdAt: v.created_at ?? '',
+  };
+}
+
 interface SavedViewsState {
   views: SavedView[];
-  saveView: (name: string, panelType: string, panelParams: Record<string, any>) => void;
-  deleteView: (id: string) => void;
+  isLoading: boolean;
+  error: string | null;
+  fetchViews: () => Promise<void>;
+  saveView: (name: string, panelType: string, panelParams: Record<string, any>) => Promise<void>;
+  deleteView: (id: string) => Promise<void>;
 }
 
 /** Named panel+filter combinations an analyst can reopen in one click.
- * localStorage-only for now, per-browser (see Phase 4.2) — a shared,
- * server-backed SavedView table is the natural next step if this sticks. */
-export const useSavedViewsStore = create<SavedViewsState>()(
-  persist(
-    (set) => ({
-      views: [],
+ * Server-backed (SavedView table, scoped by business_unit_id) so views
+ * sync across a user's devices/browsers instead of being per-browser. */
+export const useSavedViewsStore = create<SavedViewsState>()((set) => ({
+  views: [],
+  isLoading: false,
+  error: null,
 
-      saveView: (name, panelType, panelParams) =>
-        set((state) => ({
-          views: [
-            ...state.views,
-            {
-              id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-              name,
-              panelType,
-              panelParams: shareablePanelParams(panelParams),
-              createdAt: new Date().toISOString(),
-            },
-          ],
-        })),
+  fetchViews: async () => {
+    set({ isLoading: true, error: null });
+    try {
+      const views = (await listSavedViews()).map(fromApi);
+      set({ views, isLoading: false });
+    } catch (error: any) {
+      set({ error: error.message, isLoading: false });
+    }
+  },
 
-      deleteView: (id) =>
-        set((state) => ({ views: state.views.filter((v) => v.id !== id) })),
-    }),
-    { name: 'rf_saved_views' },
-  ),
-);
+  saveView: async (name, panelType, panelParams) => {
+    const created = await createSavedView({
+      name,
+      panel_type: panelType,
+      panel_params: shareablePanelParams(panelParams),
+    });
+    set((state) => ({ views: [fromApi(created), ...state.views] }));
+  },
+
+  deleteView: async (id) => {
+    await deleteSavedView(id);
+    set((state) => ({ views: state.views.filter((v) => v.id !== id) }));
+  },
+}));
