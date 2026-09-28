@@ -7,7 +7,6 @@ from sqlalchemy.orm import Session
 
 from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.models.forecast import ForecastVersion, ForecastLineResult
-from app.config import settings
 from app.services.confidence import compute_confidence_score, classify_confidence
 from app.services.permissions import can_access_business_unit, resolve_skill_user
 
@@ -64,8 +63,11 @@ class ScoreConfidenceSkill(BaseSkill):
         if not version or not can_access_business_unit(resolve_skill_user(context), version.business_unit_id):
             return SkillResult.fail(f"Forecast version '{version_id}' not found.")
 
-        threshold_low = params.get("threshold_low", settings.confidence_threshold_low)
-        threshold_medium = params.get("threshold_medium", settings.confidence_threshold_medium)
+        from app.services.analysis_profile import resolve_analysis_settings
+
+        analysis = resolve_analysis_settings(db, business_unit_id=version.business_unit_id)
+        threshold_low = params.get("threshold_low", analysis.confidence_threshold_low)
+        threshold_medium = params.get("threshold_medium", analysis.confidence_threshold_medium)
 
         # Get all line results (unique by line_item_id, take first period as representative)
         line_results = (

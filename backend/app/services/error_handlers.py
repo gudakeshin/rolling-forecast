@@ -38,13 +38,23 @@ logger = logging.getLogger(__name__)
 class HistoryAnalysis:
     """Analyze historical data for a line item and determine appropriate model strategy."""
 
-    def __init__(self, values: pd.Series, dates: pd.DatetimeIndex, line_item_name: str = ""):
+    def __init__(
+        self,
+        values: pd.Series,
+        dates: pd.DatetimeIndex,
+        line_item_name: str = "",
+        *,
+        min_history_months: int | None = None,
+    ):
         self.values = values
         self.dates = dates
         self.line_item_name = line_item_name
         self.n_points = len(values)
         self.warnings: list[str] = []
         self.flags: list[str] = []
+        self.min_history_months = (
+            min_history_months if min_history_months is not None else settings.min_history_months
+        )
         # Memoised (detected, period, index) from the structural-break scan.
         self._break_cache: tuple[bool, str | None, int | None] | None = None
 
@@ -56,7 +66,7 @@ class HistoryAnalysis:
     @property
     def is_sparse(self) -> bool:
         """Edge Case 1: Less than min_history_months of data."""
-        return self.n_points < settings.min_history_months
+        return self.n_points < self.min_history_months
 
     @property
     def is_very_sparse(self) -> bool:
@@ -194,7 +204,7 @@ class HistoryAnalysis:
         elif self.is_sparse:
             result["warnings"].append(
                 f"Only {self.n_points} months of history for '{self.line_item_name}' "
-                f"(minimum recommended: {settings.min_history_months}). "
+                f"(minimum recommended: {self.min_history_months}). "
                 "Using simpler model. Confidence set to Low."
             )
             result["flags"].append("sparse_data")

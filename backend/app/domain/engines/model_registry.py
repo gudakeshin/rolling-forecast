@@ -144,10 +144,14 @@ class ModelSelectionResult:
         }
 
 
-def effective_selection_rule() -> str:
-    from app.config import settings
+def effective_selection_rule(metric: str | None = None) -> str:
+    """`metric` lets a caller pass a per-company AnalysisProfile override
+    (see app.services.analysis_profile) instead of the global default."""
+    if metric is None:
+        from app.config import settings
 
-    metric = (settings.selection_metric or "mape").lower()
+        metric = settings.selection_metric
+    metric = (metric or "mape").lower()
     return "mase_pinball_complexity" if metric == "multi" else "mape"
 
 

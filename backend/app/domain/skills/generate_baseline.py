@@ -437,7 +437,9 @@ class GenerateBaselineSkill(BaseSkill):
                 return SkillResult.fail(
                     f"Unknown models_to_test {unknown}. Registered: {sorted(registered)}"
                 )
-        selection_rule = effective_selection_rule()
+        # selection_rule is resolved further down, once business_unit_id is
+        # known, so it can reflect that company's AnalysisProfile override of
+        # selection_metric rather than always the global default.
 
         # Soft gate: prefer plan_forecast before baseline (warn, do not hard-block)
         plan_done = context.context_manager.get_memory("last_plan_id") or context.context_manager.get_memory("plan_forecast_complete")
@@ -510,6 +512,11 @@ class GenerateBaselineSkill(BaseSkill):
             return SkillResult.fail(f"Dataset '{dataset.id}' not found.")
         dataset_id = dataset.id
         business_unit_id = dataset.business_unit_id
+
+        from app.services.analysis_profile import resolve_analysis_settings
+
+        analysis = resolve_analysis_settings(db, business_unit_id=business_unit_id)
+        selection_rule = effective_selection_rule(analysis.selection_metric)
 
         # Get non-calculated line items in the caller's BU scope
         line_items = scoped_line_items(
@@ -611,20 +618,20 @@ class GenerateBaselineSkill(BaseSkill):
             for li_id, recs in actuals_by_li.items()
         }
         grand_abs = sum(trailing_abs.values()) or 1.0
-        materiality_share = float(settings.materiality_share)
+        materiality_share = float(analysis.materiality_share)
 
         # Realized P10—P90 coverage per line, from vintages whose actuals have
         # since arrived. Fetched once for the whole run — calling this per line
         # would be an N+1 across the entire chart of accounts.
         realized_coverage: dict[int, float] = {}
-        if settings.conformal_calibration_enabled:
+        if analysis.conformal_calibration_enabled:
             try:
                 from app.services.accuracy_snapshot import realized_coverage_by_line
 
                 realized_coverage = realized_coverage_by_line(
                     db,
                     [li.id for li in line_items],
-                    min_cycles=settings.conformal_realized_min_cycles,
+                    min_cycles=analysis.conformal_realized_min_cycles,
                 )
             except Exception as e:  # never fail a forecast over a calibration hint
                 logger.warning("realized coverage lookup failed: %s", e)
@@ -633,7 +640,7 @@ class GenerateBaselineSkill(BaseSkill):
         n_line_items = len(line_items)
 
         # Phase 8 stage 0: materialize forecasted driver paths for this version.
-        if settings.enable_driver_forecasting:
+        if analysis.enable_driver_forecasting:
             driver_stage = forecast_linked_drivers(
                 db,
                 version_id=version.id,
@@ -679,7 +686,7 @@ class GenerateBaselineSkill(BaseSkill):
                     )
                     periods_by_line[pli.id] = p_periods
                     effective_series_by_line[pli.id] = compute_effective_series(
-                        pli, p_values, p_dates
+                        pli, p_values, p_dates, analysis
                     )
 
                 panel = build_global_panel_context(
@@ -777,7 +784,7 @@ class GenerateBaselineSkill(BaseSkill):
                         is_material=is_material,
                         cal_cfg=cal_cfg,
                         model_registry=model_registry,
-                        enable_driver_forecasting=settings.enable_driver_forecasting,
+                        analysis=analysis,
                         realized_coverage=realized_coverage,
                         panel=panel,
                     ),

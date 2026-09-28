@@ -495,7 +495,11 @@ def _line_qp_points(
             p = materialize_driver_series(db, driver_id=price_link.driver_id, value_type="actual")
         if p.empty or period_from not in p.index or period_to not in p.index:
             return None
-        coherence = qp_coherence(q, p, line)
+        from app.services.analysis_profile import resolve_analysis_settings
+
+        li_bu = db.query(LineItem.business_unit_id).filter(LineItem.id == line_item_id).scalar()
+        tolerance = resolve_analysis_settings(db, business_unit_id=li_bu).qp_coherence_tolerance
+        coherence = qp_coherence(q, p, line, tolerance=tolerance)
         if not coherence["coherent"]:
             return None
         price_meta: dict[str, Any] = {"price_source": "stored_driver"}

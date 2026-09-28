@@ -13,7 +13,17 @@ from app.models.company import Company
 from app.models.line_item import LineItem, LineItemDependency
 from app.models.audit import AuditEvent
 from app.schemas.auth import GrantMembershipRequest, UserResponse
-from app.services.permissions import require_admin_or_view_all_bus, require_permission
+from app.services.permissions import (
+    can_access_business_unit,
+    require_admin_or_view_all_bus,
+    require_permission,
+)
+from app.services.analysis_profile import (
+    ANALYSIS_PROFILE_FIELDS,
+    get_analysis_profile_overrides,
+    resolve_analysis_settings,
+    update_analysis_profile,
+)
 from app.services.coa_dependencies import ensure_standard_dependencies
 from app.services.audit import record_audit
 from app.services.company_membership import ensure_active_membership, grant_membership, list_memberships
@@ -236,6 +246,55 @@ async def create_business_unit(
     db.commit()
     db.refresh(bu)
     return {"id": bu.id, "name": bu.name}
+
+
+@router.get("/business-units/{bu_id}/analysis-profile")
+async def get_business_unit_analysis_profile(
+    bu_id: str,
+    current_user: User = Depends(require_admin_or_view_all_bus()),
+    db: Session = Depends(get_db),
+):
+    if not db.query(BusinessUnit).filter(BusinessUnit.id == bu_id).first():
+        raise HTTPException(404, "Business unit not found")
+    if not can_access_business_unit(current_user, bu_id):
+        raise HTTPException(404, "Business unit not found")
+    settings_view = resolve_analysis_settings(db, business_unit_id=bu_id)
+    overrides = get_analysis_profile_overrides(db, business_unit_id=bu_id)
+    return {
+        "business_unit_id": bu_id,
+        "settings": settings_view.__dict__,
+        "overridden_fields": sorted(overrides.keys()),
+        "field_types": {name: t.__name__ for name, t in ANALYSIS_PROFILE_FIELDS.items()},
+    }
+
+
+class AnalysisProfileUpdate(BaseModel):
+    patch: dict[str, bool | int | float | str]
+
+
+@router.put("/business-units/{bu_id}/analysis-profile")
+async def put_business_unit_analysis_profile(
+    bu_id: str,
+    body: AnalysisProfileUpdate,
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+):
+    if not db.query(BusinessUnit).filter(BusinessUnit.id == bu_id).first():
+        raise HTTPException(404, "Business unit not found")
+    try:
+        settings_view = update_analysis_profile(
+            db, business_unit_id=bu_id, patch=body.patch, actor=current_user
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    db.commit()
+    overrides = get_analysis_profile_overrides(db, business_unit_id=bu_id)
+    return {
+        "business_unit_id": bu_id,
+        "settings": settings_view.__dict__,
+        "overridden_fields": sorted(overrides.keys()),
+        "field_types": {name: t.__name__ for name, t in ANALYSIS_PROFILE_FIELDS.items()},
+    }
 
 
 @router.get("/coa")

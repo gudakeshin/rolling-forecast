@@ -343,10 +343,13 @@ async def get_forecast_table(
         )
     }
     all_line_ids = {r.line_item_id for r in all_filtered}
+    from app.services.analysis_profile import resolve_analysis_settings
+
+    analysis = resolve_analysis_settings(db, business_unit_id=version.business_unit_id)
     realized = realized_coverage_by_line(
         db,
         list(all_line_ids),
-        min_cycles=settings.conformal_realized_min_cycles,
+        min_cycles=analysis.conformal_realized_min_cycles,
     )
     calibration_summary = {
         "calibrated_lines": len(calibrated_line_ids),

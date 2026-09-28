@@ -209,7 +209,7 @@ class PlanForecastSkill(BaseSkill):
         cal_cfg = get_calendar_config(db, business_unit_id=business_unit_id)
 
         # Materiality vs sample CoA (same gate generate_baseline uses)
-        from app.config import settings as _settings
+        from app.services.analysis_profile import resolve_analysis_settings
 
         trailing = {item["name"]: abs(float(item.get("mean", 0) or 0)) * max(int(item["n_points"]), 1)
                     for item in sample_items}
@@ -218,7 +218,9 @@ class PlanForecastSkill(BaseSkill):
             if d["name"] in trailing and trailing[d["name"]] == 0:
                 trailing[d["name"]] = float(d.get("n_points") or 0)
         grand = sum(trailing.values()) or 1.0
-        materiality_share = float(_settings.materiality_share)
+        materiality_share = float(
+            resolve_analysis_settings(db, business_unit_id=business_unit_id).materiality_share
+        )
 
         for item in sample_items:
             # Get the data for this line item

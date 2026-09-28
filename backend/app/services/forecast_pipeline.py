@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
     from app.domain.engines.global_gbm import GlobalPanelContext
+    from app.services.analysis_profile import AnalysisSettings
 
 from app.config import settings
 from app.domain.engines.base_model import (
@@ -492,14 +493,25 @@ class EffectiveSeriesResult:
 
 
 def compute_effective_series(
-    li: LineItem, values: pd.Series, dates: pd.DatetimeIndex
+    li: LineItem,
+    values: pd.Series,
+    dates: pd.DatetimeIndex,
+    analysis_settings: "AnalysisSettings | None" = None,
 ) -> EffectiveSeriesResult:
     """EC1/EC2 forcing + structural-break truncation + outlier winsorizing.
 
     Extracted from forecast_line_item so panel_forecast can build training
     rows on the exact same "effective" series every other engine fits on.
+    `analysis_settings` is the caller's resolved per-company AnalysisProfile
+    (see app.services.analysis_profile); None falls back to the global
+    app.config.settings defaults, identical to this function's old behavior.
     """
-    analysis = HistoryAnalysis(values, dates, li.name)
+    min_history = (
+        analysis_settings.min_history_months
+        if analysis_settings is not None
+        else settings.min_history_months
+    )
+    analysis = HistoryAnalysis(values, dates, li.name, min_history_months=min_history)
     analysis_result = analysis.analyze()
     warnings = list(analysis_result.get("warnings") or [])
     flags = list(analysis_result.get("flags") or [])
@@ -517,7 +529,11 @@ def compute_effective_series(
     effective_values = values
     effective_dates = dates
     had_structural_break = False
-    min_post = settings.structural_break_min_post_points
+    min_post = (
+        analysis_settings.structural_break_min_post_points
+        if analysis_settings is not None
+        else settings.structural_break_min_post_points
+    )
     if analysis.has_structural_break and forced is None:
         had_structural_break = True
         break_idx = analysis.structural_break_index
@@ -538,8 +554,17 @@ def compute_effective_series(
     cleaning = clean_series_for_fit(
         effective_values,
         effective_dates,
-        enabled=settings.outlier_cleaning_enabled and forced is None,
-        mad_z=settings.outlier_mad_z,
+        enabled=(
+            analysis_settings.outlier_cleaning_enabled
+            if analysis_settings is not None
+            else settings.outlier_cleaning_enabled
+        )
+        and forced is None,
+        mad_z=(
+            analysis_settings.outlier_mad_z
+            if analysis_settings is not None
+            else settings.outlier_mad_z
+        ),
     )
     effective_values = cleaning.cleaned
     if cleaning.n_cleaned:
@@ -579,6 +604,9 @@ class LineForecastContext:
     cal_cfg: FiscalCalendarConfig | None = None
     model_registry: ModelRegistry | None = None
     enable_driver_forecasting: bool | None = None
+    # Resolved per-company forecast knobs (see app.services.analysis_profile).
+    # None falls back to global app.config.settings defaults everywhere below.
+    analysis: "AnalysisSettings | None" = None
     # line_item_id -> realized P10—P90 coverage, computed once per run by the
     # caller via accuracy_snapshot.realized_coverage_by_line. Absent key means
     # "not enough closed cycles to have an opinion".
@@ -640,7 +668,7 @@ def forecast_line_item(
     model_type = ctx.model_type
     selection_rule = ctx.selection_rule
 
-    effective = compute_effective_series(li, values, dates)
+    effective = compute_effective_series(li, values, dates, ctx.analysis)
     out.warnings.extend(effective.warnings)
     out.flags = list(effective.flags)
     out.was_zero = effective.was_zero
@@ -670,6 +698,9 @@ def forecast_line_item(
                 random_seed=random_seed,
                 models_to_test=ctx.models_to_test,
                 selection_rule=selection_rule,
+                wall_clock_budget_seconds=(
+                    ctx.analysis.selection_wall_clock_seconds if ctx.analysis is not None else None
+                ),
                 is_material=ctx.is_material,
                 panel=ctx.panel,
                 line_item_id=li.id,
@@ -827,7 +858,7 @@ def forecast_line_item(
         use_exog = False
         exog_spec: dict[str, Any] | None = None
         exog_enabled = (
-            settings.enable_driver_forecasting
+            (ctx.analysis.enable_driver_forecasting if ctx.analysis is not None else settings.enable_driver_forecasting)
             if ctx.enable_driver_forecasting is None
             else bool(ctx.enable_driver_forecasting)
         )
@@ -850,7 +881,11 @@ def forecast_line_item(
             if exog_bundle is not None:
                 min_train = len(effective_values) - 9  # 3 folds × horizon 3
                 k = int(exog_bundle.exog_train.shape[1])
-                needed = int(settings.exog_min_points_per_regressor) * max(k, 1)
+                needed = int(
+                    ctx.analysis.exog_min_points_per_regressor
+                    if ctx.analysis is not None
+                    else settings.exog_min_points_per_regressor
+                ) * max(k, 1)
                 if min_train >= needed:
                     decision = _evaluate_plain_vs_exog(
                         registry,
@@ -935,7 +970,7 @@ def forecast_line_item(
         # an applied heuristic nudge (a human-taught preference should win
         # outright, not get diluted into an average).
         if (
-            settings.enable_ensemble_blending
+            (ctx.analysis.enable_ensemble_blending if ctx.analysis is not None else settings.enable_ensemble_blending)
             and selection_result is not None
             and not use_exog
             and not (heuristic_nudge is not None and heuristic_nudge.get("applied"))
@@ -1073,11 +1108,24 @@ def forecast_line_item(
         # uncertainty compounds on top of the calibrated band instead of being
         # overwritten by it — the CV never saw that source of error.
         bounds_method = BOUNDS_METHOD_MODEL
-        if settings.conformal_calibration_enabled and cv_residuals:
+        conformal_enabled = (
+            ctx.analysis.conformal_calibration_enabled
+            if ctx.analysis is not None
+            else settings.conformal_calibration_enabled
+        )
+        if conformal_enabled and cv_residuals:
             bands = conformal_bands(
                 cv_residuals,
-                min_per_horizon=settings.conformal_min_residuals_per_horizon,
-                min_total=settings.conformal_min_residuals_total,
+                min_per_horizon=(
+                    ctx.analysis.conformal_min_residuals_per_horizon
+                    if ctx.analysis is not None
+                    else settings.conformal_min_residuals_per_horizon
+                ),
+                min_total=(
+                    ctx.analysis.conformal_min_residuals_total
+                    if ctx.analysis is not None
+                    else settings.conformal_min_residuals_total
+                ),
             )
             if bands is not None:
                 # Once enough cycles have closed, what actually happened beats
