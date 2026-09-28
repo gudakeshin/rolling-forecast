@@ -1,6 +1,7 @@
 """SQLAlchemy ORM models."""
 
 from app.models.user import User, Role
+from app.models.company import Company
 from app.models.business_unit import BusinessUnit
 from app.models.actuals import ActualsDataset, ActualsRecord
 from app.models.line_item import LineItem, LineItemDependency
@@ -28,6 +29,7 @@ from app.models.tenant_setting import BusinessUnitSetting
 __all__ = [
     "User",
     "Role",
+    "Company",
     "BusinessUnit",
     "ActualsDataset",
     "ActualsRecord",

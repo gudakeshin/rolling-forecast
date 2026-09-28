@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.user import User, Role
 from app.models.business_unit import BusinessUnit
+from app.models.company import Company
 from app.models.line_item import LineItem, LineItemDependency
 from app.models.audit import AuditEvent
 from app.schemas.auth import UserResponse
@@ -170,7 +171,14 @@ async def create_business_unit(
         raise HTTPException(400, "name is required")
     if db.query(BusinessUnit).filter(BusinessUnit.name == name).first():
         raise HTTPException(409, "A business unit with this name already exists")
-    bu = BusinessUnit(name=name)
+    # Every BusinessUnit is still its own Company 1:1 for now (see
+    # migration 027_company) -- keep that invariant for new rows too.
+    company = db.query(Company).filter(Company.name == name).first()
+    if company is None:
+        company = Company(name=name)
+        db.add(company)
+        db.flush()
+    bu = BusinessUnit(name=name, company_id=company.id)
     db.add(bu)
     record_audit(
         db,
