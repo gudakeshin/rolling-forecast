@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 """Driver input models -- BU head assumption submissions."""
 
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, Float, Integer, ForeignKey, Text, JSON, Boolean
+from sqlalchemy import String, DateTime, Integer, ForeignKey, Text, JSON, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -13,7 +15,11 @@ class DriverFormConfig(Base):
     __tablename__ = "driver_form_configs"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    # Legacy free-text BU, kept during the expand→contract migration.
     business_unit: Mapped[str] = mapped_column(String(100), nullable=False)
+    business_unit_id: Mapped[str | None] = mapped_column(
+        ForeignKey("business_units.id"), nullable=True
+    )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -44,7 +50,11 @@ class DriverInput(Base):
         ForeignKey("driver_form_configs.id"), nullable=False
     )
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    # Legacy free-text BU, kept during the expand→contract migration.
     business_unit: Mapped[str] = mapped_column(String(100), nullable=False)
+    business_unit_id: Mapped[str | None] = mapped_column(
+        ForeignKey("business_units.id"), nullable=True
+    )
 
     # Submitted values as JSON: {field_name: {value, prior_value, model_suggested, reason}}
     values: Mapped[dict] = mapped_column(JSON, nullable=False)

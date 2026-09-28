@@ -1,0 +1,185 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+
+jobs:
+  backend-lint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install lint tools
+        run: pip install ruff mypy
+      - name: Ruff
+        run: ruff check app tests alembic
+      - name: Mypy
+        run: mypy app alembic --config-file pyproject.toml --no-error-summary
+
+  backend-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install --require-hashes -r requirements.lock
+      - name: Run pytest with coverage
+        env:
+          APP_ENV: test
+          JWT_SECRET_KEY: test-secret-key-for-ci-at-least-32-chars
+          DATABASE_URL: sqlite:///./test_ci.db
+          SEED_DEMO_USERS: "true"
+          ALLOW_OPEN_REGISTRATION: "true"
+        run: |
+          pip install pytest-cov
+          pytest -q --tb=short --cov=app --cov-report=term-missing:skip-covered --cov-fail-under=60
+      - name: Security scans
+        run: |
+          pip install pip-audit bandit
+          # Fail on new vulns; ignore known unfixed transitive issues
+          # (starlette awaiting FastAPI pin bump; chromadb has no fix release yet)
+          pip-audit -r requirements.lock \
+            --ignore-vuln GHSA-wj6h-64fc-37mp \
+            --ignore-vuln PYSEC-2026-311 \
+            --ignore-vuln PYSEC-2026-161 \
+            --ignore-vuln PYSEC-2026-249 \
+            --ignore-vuln PYSEC-2026-248 \
+            --ignore-vuln CVE-2026-48818 \
+            --ignore-vuln CVE-2026-48817
+          bandit -q -r app -x tests -ll
+
+  migrations:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: forecast
+          POSTGRES_PASSWORD: forecast
+          POSTGRES_DB: rolling_forecast
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U forecast -d rolling_forecast"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          pip install --require-hashes -r requirements.lock
+      - name: Alembic upgrade head (clean Postgres)
+        env:
+          APP_ENV: test
+          DATABASE_URL: postgresql://forecast:forecast@localhost:5432/rolling_forecast
+          JWT_SECRET_KEY: test-secret-key-for-ci-at-least-32-chars
+        run: |
+          alembic heads | tee /tmp/heads.txt
+          # Must be a single head after merge revision
+          test "$(alembic heads | wc -l)" -eq 1
+          alembic upgrade head
+          alembic current | tee /tmp/current.txt
+          # Assert the DB is stamped at whatever the script head is, rather than
+          # hard-coding a revision id that goes stale on every new migration.
+          HEAD_REV="$(alembic heads | head -1 | awk '{print $1}')"
+          echo "script head: $HEAD_REV"
+          grep -q "$HEAD_REV" /tmp/current.txt
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci || npm install
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: ESLint
+        run: npx eslint "src/**/*.{ts,tsx}" --max-warnings 200
+      - name: Unit tests
+        run: npx vitest run
+      - name: Playwright smoke
+        # Self-skips when E2E_BASE_URL is unset (no browser install needed)
+        run: npx playwright test
+      - name: npm audit
+        run: npm audit --audit-level=high
+      - name: Build
+        run: npm run build
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [backend-test, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install backend
+        working-directory: backend
+        run: pip install --require-hashes -r requirements.lock
+      - name: Start backend
+        working-directory: backend
+        env:
+          APP_ENV: test
+          JWT_SECRET_KEY: test-secret-key-for-ci-at-least-32-chars
+          DATABASE_URL: sqlite:///./e2e_ci.db
+          SEED_DEMO_USERS: "true"
+          ALLOW_OPEN_REGISTRATION: "true"
+        run: |
+          uvicorn app.main:app --host 127.0.0.1 --port 8000 &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8000/livez && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8000/livez
+      - name: Install & build frontend
+        working-directory: frontend
+        run: |
+          npm ci || npm install
+          npm run build
+          npx playwright install --with-deps chromium
+      - name: Start frontend preview
+        working-directory: frontend
+        run: |
+          npm run preview -- --host 127.0.0.1 --port 4173 &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:4173/ && break
+            sleep 1
+          done
+      - name: Playwright smoke (live stack)
+        working-directory: frontend
+        env:
+          E2E_BASE_URL: http://127.0.0.1:4173
+          E2E_USER: analyst
+          E2E_PASSWORD: analyst
+        run: npx playwright test

@@ -51,12 +51,35 @@ export async function submitReviewAction(action: ReviewAction): Promise<any> {
   return apiPost('/panel/review-item', action);
 }
 
+export async function batchReview(
+  versionId: string,
+  itemIds: string[],
+  action: 'approve' | 'reject',
+  comment?: string,
+): Promise<any> {
+  return apiPost('/panel/batch-review', {
+    version_id: versionId,
+    item_ids: itemIds,
+    action,
+    comment: comment || null,
+  });
+}
+
+/** @deprecated Use batchReview(versionId, itemIds, action, comment) */
 export async function batchReviewActions(actions: ReviewAction[]): Promise<any> {
-  return apiPost('/panel/batch-review', { actions });
+  if (!actions.length) return { success: true, items_reviewed: 0 };
+  const action = actions[0].action;
+  const comment = actions[0].comment;
+  return batchReview('', actions.map((a) => a.item_id), action, comment);
 }
 
 export async function acceptAiRecommendations(versionId: string): Promise<any> {
   return apiPost('/panel/accept-ai-recommendations', { version_id: versionId });
+}
+
+/** Reverse a review_item / batchReview / acceptAiRecommendations call within its undo window. */
+export async function undoReview(undoToken: string): Promise<any> {
+  return apiPost('/panel/undo-review', { undo_token: undoToken });
 }
 
 export async function rescoreForecasts(versionId: string): Promise<any> {
@@ -81,4 +104,19 @@ export async function getDriverInputsSummary(versionId: string): Promise<any> {
 
 export async function submitDriverInputs(submission: DriverSubmission): Promise<any> {
   return apiPost('/panel/driver-inputs/submit', submission);
+}
+
+// ─── Line item search (⌘K command palette) ───────────────
+
+export interface LineItemSearchResult {
+  id: number;
+  name: string;
+  account_code: string;
+  category: string;
+  business_unit: string | null;
+}
+
+export async function searchLineItems(q: string, limit = 10): Promise<{ items: LineItemSearchResult[] }> {
+  const qs = new URLSearchParams({ q, limit: String(limit) });
+  return apiGet(`/panel/line-items/search?${qs.toString()}`);
 }

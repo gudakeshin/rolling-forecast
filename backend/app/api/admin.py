@@ -1,0 +1,414 @@
+"""Admin API — users, roles, CoA, audit log."""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.models.user import User, Role
+from app.models.business_unit import BusinessUnit
+from app.models.company import Company
+from app.models.line_item import LineItem, LineItemDependency
+from app.models.audit import AuditEvent
+from app.schemas.auth import GrantMembershipRequest, UserResponse
+from app.services.permissions import (
+    can_access_business_unit,
+    require_admin_or_view_all_bus,
+    require_permission,
+)
+from app.services.analysis_profile import (
+    ANALYSIS_PROFILE_FIELDS,
+    get_analysis_profile_overrides,
+    resolve_analysis_settings,
+    update_analysis_profile,
+)
+from app.services.coa_dependencies import ensure_standard_dependencies
+from app.services.audit import record_audit
+from app.services.company_membership import ensure_active_membership, grant_membership, list_memberships
+from passlib.context import CryptContext
+
+router = APIRouter(prefix="/admin", tags=["admin"])
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+class RoleUpdate(BaseModel):
+    can_input: bool | None = None
+    can_generate: bool | None = None
+    can_override: bool | None = None
+    can_review: bool | None = None
+    can_publish: bool | None = None
+    can_admin: bool | None = None
+    can_manage_drivers: bool | None = None
+    can_view_all_bus: bool | None = None
+
+
+class UserUpdate(BaseModel):
+    full_name: str | None = None
+    business_unit: str | None = None
+    role_name: str | None = None
+    is_active: bool | None = None
+    password: str | None = None
+
+
+class BusinessUnitCreate(BaseModel):
+    name: str
+
+
+class LineItemCreate(BaseModel):
+    account_code: str
+    name: str
+    category: str
+    is_calculated: bool = False
+    formula: str | None = None
+    business_unit: str | None = None
+    display_order: int = 0
+
+
+class DependencyCreate(BaseModel):
+    dependent_item_id: int
+    source_item_id: int
+    relationship_type: str = "sum"
+    weight: float = 1.0
+
+
+@router.get("/users", response_model=list[UserResponse])
+async def list_users(
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+):
+    users = db.query(User).order_by(User.username).all()
+    return [UserResponse.model_validate(u) for u in users]
+
+
+@router.patch("/users/{user_id}", response_model=UserResponse)
+async def update_user(
+    user_id: str,
+    body: UserUpdate,
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    if body.full_name is not None:
+        user.full_name = body.full_name
+    if body.business_unit is not None:
+        from app.services.business_units import get_or_create_business_unit
+
+        bu = get_or_create_business_unit(db, body.business_unit)
+        user.business_unit = body.business_unit
+        user.business_unit_id = bu.id if bu else None
+    if body.is_active is not None:
+        user.is_active = body.is_active
+    if body.password:
+        user.hashed_password = pwd_context.hash(body.password)
+    if body.role_name:
+        role = db.query(Role).filter(Role.name == body.role_name).first()
+        if not role:
+            raise HTTPException(400, f"Role '{body.role_name}' not found")
+        user.role_id = role.id
+    db.flush()
+    ensure_active_membership(db, user)
+    record_audit(
+        db,
+        action="admin.update_user",
+        entity_type="user",
+        entity_id=user.id,
+        actor_id=current_user.id,
+        actor_username=current_user.username,
+    )
+    db.commit()
+    db.refresh(user)
+    resp = UserResponse.model_validate(user)
+    resp.companies = list_memberships(db, user)
+    return resp
+
+
+@router.get("/users/{user_id}/memberships")
+async def get_user_memberships(
+    user_id: str,
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+):
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(404, "User not found")
+    return list_memberships(db, target)
+
+
+@router.post("/users/{user_id}/memberships")
+async def grant_user_membership(
+    user_id: str,
+    body: GrantMembershipRequest,
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+):
+    """Grant `user_id` a role in a company -- doesn't change their currently
+    active company, just adds it to their switchable set (see
+    POST /auth/switch-company)."""
+    role = db.query(Role).filter(Role.name == body.role_name).first()
+    if not role:
+        raise HTTPException(400, f"Role '{body.role_name}' not found")
+    try:
+        grant_membership(
+            db,
+            user_id=user_id,
+            company_id=body.company_id,
+            role_id=role.id,
+            actor=current_user,
+        )
+    except ValueError as e:
+        raise HTTPException(404, str(e)) from e
+    target = db.query(User).filter(User.id == user_id).first()
+    return list_memberships(db, target)
+
+
+@router.get("/roles")
+async def list_roles(
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+):
+    roles = db.query(Role).all()
+    return [
+        {
+            "id": r.id,
+            "name": r.name,
+            "description": r.description,
+            "can_input": r.can_input,
+            "can_generate": r.can_generate,
+            "can_override": r.can_override,
+            "can_review": r.can_review,
+            "can_publish": r.can_publish,
+            "can_admin": r.can_admin,
+            "can_manage_drivers": getattr(r, "can_manage_drivers", False),
+            "can_view_all_bus": getattr(r, "can_view_all_bus", False),
+        }
+        for r in roles
+    ]
+
+
+@router.patch("/roles/{role_name}")
+async def update_role(
+    role_name: str,
+    body: RoleUpdate,
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+):
+    role = db.query(Role).filter(Role.name == role_name).first()
+    if not role:
+        raise HTTPException(404, "Role not found")
+    for field, value in body.model_dump(exclude_none=True).items():
+        setattr(role, field, value)
+    db.commit()
+    return {"success": True, "name": role.name}
+
+
+@router.get("/business-units")
+async def list_business_units(
+    current_user: User = Depends(require_admin_or_view_all_bus()),
+    db: Session = Depends(get_db),
+):
+    units = db.query(BusinessUnit).order_by(BusinessUnit.name).all()
+    return [{"id": u.id, "name": u.name} for u in units]
+
+
+@router.post("/business-units")
+async def create_business_unit(
+    body: BusinessUnitCreate,
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "name is required")
+    if db.query(BusinessUnit).filter(BusinessUnit.name == name).first():
+        raise HTTPException(409, "A business unit with this name already exists")
+    # Every BusinessUnit is still its own Company 1:1 for now (see
+    # migration 027_company) -- keep that invariant for new rows too.
+    company = db.query(Company).filter(Company.name == name).first()
+    if company is None:
+        company = Company(name=name)
+        db.add(company)
+        db.flush()
+    bu = BusinessUnit(name=name, company_id=company.id)
+    db.add(bu)
+    record_audit(
+        db,
+        action="admin.create_business_unit",
+        entity_type="business_unit",
+        entity_id=bu.id,
+        actor_id=current_user.id,
+        actor_username=current_user.username,
+        commit=False,
+    )
+    db.commit()
+    db.refresh(bu)
+    return {"id": bu.id, "name": bu.name}
+
+
+@router.get("/business-units/{bu_id}/analysis-profile")
+async def get_business_unit_analysis_profile(
+    bu_id: str,
+    current_user: User = Depends(require_admin_or_view_all_bus()),
+    db: Session = Depends(get_db),
+):
+    if not db.query(BusinessUnit).filter(BusinessUnit.id == bu_id).first():
+        raise HTTPException(404, "Business unit not found")
+    if not can_access_business_unit(current_user, bu_id):
+        raise HTTPException(404, "Business unit not found")
+    settings_view = resolve_analysis_settings(db, business_unit_id=bu_id)
+    overrides = get_analysis_profile_overrides(db, business_unit_id=bu_id)
+    return {
+        "business_unit_id": bu_id,
+        "settings": settings_view.__dict__,
+        "overridden_fields": sorted(overrides.keys()),
+        "field_types": {name: t.__name__ for name, t in ANALYSIS_PROFILE_FIELDS.items()},
+    }
+
+
+class AnalysisProfileUpdate(BaseModel):
+    patch: dict[str, bool | int | float | str]
+
+
+@router.put("/business-units/{bu_id}/analysis-profile")
+async def put_business_unit_analysis_profile(
+    bu_id: str,
+    body: AnalysisProfileUpdate,
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+):
+    if not db.query(BusinessUnit).filter(BusinessUnit.id == bu_id).first():
+        raise HTTPException(404, "Business unit not found")
+    try:
+        settings_view = update_analysis_profile(
+            db, business_unit_id=bu_id, patch=body.patch, actor=current_user
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    db.commit()
+    overrides = get_analysis_profile_overrides(db, business_unit_id=bu_id)
+    return {
+        "business_unit_id": bu_id,
+        "settings": settings_view.__dict__,
+        "overridden_fields": sorted(overrides.keys()),
+        "field_types": {name: t.__name__ for name, t in ANALYSIS_PROFILE_FIELDS.items()},
+    }
+
+
+@router.get("/coa")
+async def list_coa(
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+):
+    items = db.query(LineItem).order_by(LineItem.display_order, LineItem.account_code).all()
+    deps = db.query(LineItemDependency).all()
+    return {
+        "line_items": [
+            {
+                "id": li.id,
+                "account_code": li.account_code,
+                "name": li.name,
+                "category": li.category,
+                "is_calculated": li.is_calculated,
+                "formula": li.formula,
+                "business_unit": li.business_unit,
+            }
+            for li in items
+        ],
+        "dependencies": [
+            {
+                "id": d.id,
+                "dependent_item_id": d.dependent_item_id,
+                "source_item_id": d.source_item_id,
+                "relationship_type": d.relationship_type,
+                "weight": d.weight,
+            }
+            for d in deps
+        ],
+    }
+
+
+@router.post("/coa")
+async def create_line_item(
+    body: LineItemCreate,
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+):
+    from app.services.business_units import get_or_create_business_unit
+
+    bu = get_or_create_business_unit(db, body.business_unit)
+    existing = db.query(LineItem).filter(
+        LineItem.account_code == body.account_code,
+        LineItem.business_unit_id == (bu.id if bu else None),
+    ).first()
+    if existing:
+        raise HTTPException(409, "Account code already exists for this business unit")
+    fields = body.model_dump()
+    fields["business_unit_id"] = bu.id if bu else None
+    li = LineItem(**fields)
+    db.add(li)
+    db.commit()
+    db.refresh(li)
+    return {"id": li.id, "account_code": li.account_code}
+
+
+@router.post("/coa/dependencies")
+async def create_dependency(
+    body: DependencyCreate,
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+):
+    from app.services.dependency_graph import DependencyGraphManager
+
+    dag = DependencyGraphManager(db)
+    ok, msg = dag.add_dependency(
+        body.dependent_item_id, body.source_item_id, body.relationship_type, body.weight
+    )
+    if not ok:
+        raise HTTPException(400, msg)
+    db.commit()
+    return {"success": True, "message": msg}
+
+
+@router.post("/coa/wire-standard")
+async def wire_standard_coa(
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+):
+    created = ensure_standard_dependencies(db)
+    db.commit()
+    return {"success": True, "dependencies_created": created}
+
+
+@router.get("/audit")
+async def list_audit(
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    action: str | None = None,
+):
+    q = db.query(AuditEvent).order_by(AuditEvent.timestamp.desc())
+    if action:
+        q = q.filter(AuditEvent.action == action)
+    total = q.count()
+    rows = q.offset(offset).limit(limit).all()
+    return {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "events": [
+            {
+                "id": e.id,
+                "timestamp": e.timestamp.isoformat() if e.timestamp else None,
+                "actor_username": e.actor_username,
+                "action": e.action,
+                "entity_type": e.entity_type,
+                "entity_id": e.entity_id,
+                "details": e.details,
+            }
+            for e in rows
+        ],
+    }

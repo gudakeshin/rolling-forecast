@@ -8,6 +8,13 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
+import sys
+from pathlib import Path as _Path
+_alembic_dir = str(_Path(__file__).resolve().parents[1])
+if _alembic_dir not in sys.path:
+    sys.path.insert(0, _alembic_dir)
+from migration_helpers import create_table_if_missing, drop_table_if_exists
+
 revision: str = "001_initial"
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
@@ -16,7 +23,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # Roles
-    op.create_table(
+    create_table_if_missing(
         "roles",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
         sa.Column("name", sa.String(50), unique=True, nullable=False),
@@ -30,7 +37,7 @@ def upgrade() -> None:
     )
 
     # Users
-    op.create_table(
+    create_table_if_missing(
         "users",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("email", sa.String(255), unique=True, nullable=False),
@@ -44,7 +51,7 @@ def upgrade() -> None:
     )
 
     # Conversations
-    op.create_table(
+    create_table_if_missing(
         "conversations",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("user_id", sa.String(36), sa.ForeignKey("users.id"), nullable=False),
@@ -54,7 +61,7 @@ def upgrade() -> None:
     )
 
     # Messages
-    op.create_table(
+    create_table_if_missing(
         "messages",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("conversation_id", sa.String(36), sa.ForeignKey("conversations.id"), nullable=False),
@@ -67,7 +74,7 @@ def upgrade() -> None:
     )
 
     # Line Items
-    op.create_table(
+    create_table_if_missing(
         "line_items",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
         sa.Column("account_code", sa.String(50), unique=True, nullable=False),
@@ -87,7 +94,7 @@ def upgrade() -> None:
     )
 
     # Line Item Dependencies
-    op.create_table(
+    create_table_if_missing(
         "line_item_dependencies",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
         sa.Column("dependent_item_id", sa.Integer, sa.ForeignKey("line_items.id"), nullable=False),
@@ -97,7 +104,7 @@ def upgrade() -> None:
     )
 
     # Actuals Datasets
-    op.create_table(
+    create_table_if_missing(
         "actuals_datasets",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("source_type", sa.String(50), nullable=False),
@@ -114,7 +121,7 @@ def upgrade() -> None:
     )
 
     # Actuals Records
-    op.create_table(
+    create_table_if_missing(
         "actuals_records",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
         sa.Column("dataset_id", sa.String(36), sa.ForeignKey("actuals_datasets.id"), nullable=False),
@@ -125,7 +132,7 @@ def upgrade() -> None:
     )
 
     # Forecast Versions
-    op.create_table(
+    create_table_if_missing(
         "forecast_versions",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("name", sa.String(100), nullable=False),
@@ -155,7 +162,7 @@ def upgrade() -> None:
     )
 
     # Forecast Line Results
-    op.create_table(
+    create_table_if_missing(
         "forecast_line_results",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("version_id", sa.String(36), sa.ForeignKey("forecast_versions.id"), nullable=False),
@@ -175,7 +182,7 @@ def upgrade() -> None:
     )
 
     # Model Metadata
-    op.create_table(
+    create_table_if_missing(
         "model_metadata",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
         sa.Column("line_result_id", sa.String(36), sa.ForeignKey("forecast_line_results.id"), nullable=False),
@@ -196,7 +203,7 @@ def upgrade() -> None:
     )
 
     # Overrides
-    op.create_table(
+    create_table_if_missing(
         "overrides",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("version_id", sa.String(36), sa.ForeignKey("forecast_versions.id"), nullable=False),
@@ -214,7 +221,7 @@ def upgrade() -> None:
     )
 
     # Driver Form Configs
-    op.create_table(
+    create_table_if_missing(
         "driver_form_configs",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
         sa.Column("business_unit", sa.String(100), nullable=False),
@@ -227,7 +234,7 @@ def upgrade() -> None:
     )
 
     # Driver Inputs
-    op.create_table(
+    create_table_if_missing(
         "driver_inputs",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("version_id", sa.String(36), sa.ForeignKey("forecast_versions.id"), nullable=False),
@@ -245,17 +252,17 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_table("driver_inputs")
-    op.drop_table("driver_form_configs")
-    op.drop_table("overrides")
-    op.drop_table("model_metadata")
-    op.drop_table("forecast_line_results")
-    op.drop_table("forecast_versions")
-    op.drop_table("actuals_records")
-    op.drop_table("actuals_datasets")
-    op.drop_table("line_item_dependencies")
-    op.drop_table("line_items")
-    op.drop_table("messages")
-    op.drop_table("conversations")
-    op.drop_table("users")
-    op.drop_table("roles")
+    drop_table_if_exists("driver_inputs")
+    drop_table_if_exists("driver_form_configs")
+    drop_table_if_exists("overrides")
+    drop_table_if_exists("model_metadata")
+    drop_table_if_exists("forecast_line_results")
+    drop_table_if_exists("forecast_versions")
+    drop_table_if_exists("actuals_records")
+    drop_table_if_exists("actuals_datasets")
+    drop_table_if_exists("line_item_dependencies")
+    drop_table_if_exists("line_items")
+    drop_table_if_exists("messages")
+    drop_table_if_exists("conversations")
+    drop_table_if_exists("users")
+    drop_table_if_exists("roles")

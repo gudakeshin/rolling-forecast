@@ -4,12 +4,11 @@ import logging
 from typing import Any
 
 import numpy as np
-import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
-from app.models.forecast import ForecastVersion, ForecastLineResult
-from app.models.actuals import ActualsDataset, ActualsRecord
+from app.models.forecast import ForecastLineResult
+from app.models.actuals import ActualsRecord
 from app.models.line_item import LineItem
 
 logger = logging.getLogger(__name__)
@@ -47,8 +46,8 @@ class DetectAnomaliesSkill(BaseSkill):
                 },
                 "method": {
                     "type": "string",
-                    "description": "Detection method: zscore, iqr, trend_deviation, all",
-                    "enum": ["zscore", "iqr", "trend_deviation", "all"],
+                    "description": "Detection method: zscore, iqr, trend_deviation, stl_mad, all",
+                    "enum": ["zscore", "iqr", "trend_deviation", "stl_mad", "all"],
                     "default": "all",
                 },
                 "sensitivity": {
@@ -76,15 +75,23 @@ class DetectAnomaliesSkill(BaseSkill):
 
         version_id = params.get("version_id") or context.context_manager.get_active_version_id()
         if not version_id:
-            return SkillResult.error("No active forecast version. Generate a baseline first.")
+            return SkillResult.fail("No active forecast version. Generate a baseline first.")
 
         thresholds = self._get_thresholds(sensitivity)
         all_anomalies: list[dict] = []
+        actor = None
+        try:
+            from app.services.permissions import resolve_skill_user
+            actor = resolve_skill_user(context)
+        except Exception:
+            actor = None
 
         if target in ("actuals", "both"):
-            all_anomalies.extend(self._scan_actuals(db, params, method, thresholds))
+            all_anomalies.extend(self._scan_actuals(db, params, method, thresholds, user=actor))
         if target in ("forecast", "both"):
-            all_anomalies.extend(self._scan_forecast(db, version_id, params, method, thresholds))
+            all_anomalies.extend(
+                self._scan_forecast(db, version_id, params, method, thresholds, user=actor)
+            )
 
         if not all_anomalies:
             return SkillResult.ok(
@@ -115,7 +122,7 @@ class DetectAnomaliesSkill(BaseSkill):
         ]
 
         if critical_names:
-            summary_lines.append(f"\n**Top items needing attention:**")
+            summary_lines.append("\n**Top items needing attention:**")
             for name in critical_names:
                 item_findings = [a for a in critical if a["line_item"] == name]
                 note = item_findings[0].get("note", "") if item_findings else ""
@@ -171,13 +178,17 @@ class DetectAnomaliesSkill(BaseSkill):
             return "info"
 
     def _scan_actuals(
-        self, db: Session, params: dict, method: str, thresholds: dict
+        self, db: Session, params: dict, method: str, thresholds: dict, user=None
     ) -> list[dict]:
         """Scan actuals data for anomalies."""
-        anomalies = []
+        anomalies: list[dict[str, Any]] = []
 
-        # Get all line items (filtered)
+        # Get all line items (filtered + BU-scoped)
+        from app.services.permissions import line_item_scope_filter
+
         query = db.query(LineItem)
+        if user is not None:
+            query = line_item_scope_filter(query, user, LineItem)
         category = params.get("category")
         line_item_name = params.get("line_item_name")
         if category:
@@ -204,6 +215,11 @@ class DetectAnomaliesSkill(BaseSkill):
             values = np.array([r.value for r in records])
             periods = [r.period for r in records]
 
+            if method in ("stl_mad", "all"):
+                anomalies.extend(
+                    self._stl_mad_detection(values, periods, li, "actuals", thresholds["zscore"])
+                )
+
             if method in ("zscore", "all"):
                 anomalies.extend(self._zscore_detection(
                     values, periods, li, "actuals", thresholds["zscore"]
@@ -222,16 +238,20 @@ class DetectAnomaliesSkill(BaseSkill):
         return anomalies
 
     def _scan_forecast(
-        self, db: Session, version_id: str, params: dict, method: str, thresholds: dict
+        self, db: Session, version_id: str, params: dict, method: str, thresholds: dict, user=None
     ) -> list[dict]:
         """Scan forecast data for anomalies."""
-        anomalies = []
+        anomalies: list[dict[str, Any]] = []
+
+        from app.services.permissions import line_item_scope_filter
 
         query = (
             db.query(ForecastLineResult, LineItem)
             .join(LineItem)
             .filter(ForecastLineResult.version_id == version_id)
         )
+        if user is not None:
+            query = line_item_scope_filter(query, user, LineItem)
         category = params.get("category")
         line_item_name = params.get("line_item_name")
         if category:
@@ -302,7 +322,7 @@ class DetectAnomaliesSkill(BaseSkill):
         self, values: np.ndarray, periods: list, li: LineItem, source: str, threshold: float
     ) -> list[dict]:
         """Detect anomalies using Z-score method."""
-        anomalies = []
+        anomalies: list[dict[str, Any]] = []
         if len(values) < 3:
             return anomalies
 
@@ -330,11 +350,47 @@ class DetectAnomaliesSkill(BaseSkill):
 
         return anomalies
 
+    def _stl_mad_detection(
+        self,
+        values: np.ndarray,
+        periods: list,
+        li: LineItem,
+        source: str,
+        mad_z: float,
+    ) -> list[dict]:
+        """Reuse pre-fit STL+MAD detector (flags only; does not mutate series)."""
+        import pandas as pd
+        from app.services.outlier_cleaning import detect_outliers_stl_mad
+
+        if len(values) < 6:
+            return []
+        try:
+            dates = pd.DatetimeIndex([pd.Timestamp(f"{p}-01") if len(p) == 7 else pd.Timestamp(p) for p in periods])
+        except Exception:
+            dates = pd.date_range("2020-01-01", periods=len(values), freq="MS")
+        series = pd.Series(values.astype(float))
+        result = detect_outliers_stl_mad(series, dates, mad_z=mad_z)
+        anomalies: list[dict[str, Any]] = []
+        for i in result.outlier_indices:
+            severity = self._classify_severity(mad_z + 0.5, mad_z)
+            anomalies.append({
+                "line_item": li.name,
+                "category": li.category,
+                "period": periods[i],
+                "value": float(values[i]),
+                "source": source,
+                "method": "stl_mad",
+                "severity": severity,
+                "score": float(mad_z),
+                "note": f"STL/MAD outlier (threshold z≥{mad_z})",
+            })
+        return anomalies
+
     def _iqr_detection(
         self, values: np.ndarray, periods: list, li: LineItem, source: str, multiplier: float
     ) -> list[dict]:
         """Detect anomalies using IQR method."""
-        anomalies = []
+        anomalies: list[dict[str, Any]] = []
         if len(values) < 4:
             return anomalies
 
@@ -370,7 +426,7 @@ class DetectAnomaliesSkill(BaseSkill):
         self, values: np.ndarray, periods: list, li: LineItem, source: str, pct_threshold: float
     ) -> list[dict]:
         """Detect anomalies as large deviations from the trend line."""
-        anomalies = []
+        anomalies: list[dict[str, Any]] = []
         if len(values) < 4:
             return anomalies
 

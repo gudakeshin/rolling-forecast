@@ -37,6 +37,8 @@ frontend/node_modules/
 # Build output
 frontend/dist/
 frontend/build/
+frontend/tsconfig.tsbuildinfo
+*.tsbuildinfo
 
 # IDE
 .vscode/
@@ -54,3 +56,18 @@ Thumbs.db
 
 # Cursor
 .cursor/
+
+# Local tooling / analysis artifacts
+.claude/
+graphify-out/
+*.xlsx
+!docs/**/*.xlsx
+
+# Coverage
+.coverage
+coverage.json
+htmlcov/
+.coverage.*
+
+frontend/test-results/
+frontend/playwright-report/

@@ -13,14 +13,13 @@ from typing import Any
 from datetime import datetime, timezone
 
 import numpy as np
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.models.forecast import ForecastVersion, ForecastLineResult
 from app.models.line_item import LineItem
 from app.models.actuals import ActualsRecord
-from app.models.override import Override
+from app.services.permissions import can_access_business_unit, resolve_skill_user
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +113,7 @@ class ReviewForecastSkill(BaseSkill):
             return SkillResult.fail("No active forecast version to review.")
 
         version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-        if not version:
+        if not version or not can_access_business_unit(resolve_skill_user(context), version.business_unit_id):
             return SkillResult.fail(f"Version '{version_id}' not found.")
 
         results = (
@@ -272,6 +271,23 @@ class ReviewForecastSkill(BaseSkill):
                 label="Open Interactive Review Dashboard",
             )
         )
+        content_blocks.append(
+            self._action_block([
+                {
+                    "id": "open_review_dashboard",
+                    "label": "Open Review Dashboard",
+                    "variant": "primary",
+                    "panel": "review_dashboard",
+                    "version_id": version_id,
+                },
+                {
+                    "id": "open_forecast_table",
+                    "label": "View Forecast Table",
+                    "panel": "forecast_table",
+                    "version_id": version_id,
+                },
+            ])
+        )
 
         return SkillResult.ok(
             message=(
@@ -314,7 +330,7 @@ class ReviewForecastSkill(BaseSkill):
             return SkillResult.fail("No active forecast version.")
 
         version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-        if not version:
+        if not version or not can_access_business_unit(resolve_skill_user(context), version.business_unit_id):
             return SkillResult.fail(f"Version '{version_id}' not found.")
 
         if version.status != "draft":
@@ -368,6 +384,17 @@ class ReviewForecastSkill(BaseSkill):
                 label="Open Review Dashboard",
             )
         )
+        content_blocks.append(
+            self._action_block([
+                {
+                    "id": "open_review_dashboard",
+                    "label": "Open Review Dashboard",
+                    "variant": "primary",
+                    "panel": "review_dashboard",
+                    "version_id": version_id,
+                },
+            ])
+        )
 
         return SkillResult.ok(
             message=f"Submitted {version.name} for review",
@@ -378,10 +405,18 @@ class ReviewForecastSkill(BaseSkill):
     async def _approve(
         self, db: Session, params: dict[str, Any], context: SkillContext
     ) -> SkillResult:
-        """Approve a forecast (requires manager/admin role)."""
-        if context.user_role not in ("manager", "admin"):
+        """Approve a forecast (requires can_review permission)."""
+        from app.services.permissions import APPROVER_ROLES
+
+        role = context.user_role
+        allowed = (
+            context.context_manager.has_permission("review")
+            or role in APPROVER_ROLES
+            or role == "manager"
+        )
+        if not allowed:
             return SkillResult.fail(
-                "Only managers and admins can approve forecasts. Your role: " + context.user_role
+                "Only reviewers, publishers, and admins can approve forecasts. Your role: " + str(role)
             )
 
         version_id = params.get("version_id") or context.context_manager.get_active_version_id()
@@ -389,7 +424,7 @@ class ReviewForecastSkill(BaseSkill):
             return SkillResult.fail("No version specified.")
 
         version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-        if not version:
+        if not version or not can_access_business_unit(resolve_skill_user(context), version.business_unit_id):
             return SkillResult.fail(f"Version '{version_id}' not found.")
 
         if version.status != "in_review":
@@ -425,15 +460,23 @@ class ReviewForecastSkill(BaseSkill):
         self, db: Session, params: dict[str, Any], context: SkillContext
     ) -> SkillResult:
         """Reject a forecast and return to draft."""
-        if context.user_role not in ("manager", "admin"):
-            return SkillResult.fail("Only managers and admins can reject forecasts.")
+        from app.services.permissions import APPROVER_ROLES
+
+        role = context.user_role
+        allowed = (
+            context.context_manager.has_permission("review")
+            or role in APPROVER_ROLES
+            or role == "manager"
+        )
+        if not allowed:
+            return SkillResult.fail("Only reviewers, publishers, and admins can reject forecasts.")
 
         version_id = params.get("version_id") or context.context_manager.get_active_version_id()
         if not version_id:
             return SkillResult.fail("No version specified.")
 
         version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-        if not version:
+        if not version or not can_access_business_unit(resolve_skill_user(context), version.business_unit_id):
             return SkillResult.fail(f"Version '{version_id}' not found.")
 
         comments = params.get("comments", "")
@@ -461,7 +504,7 @@ class ReviewForecastSkill(BaseSkill):
             return SkillResult.fail("No active forecast version.")
 
         version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-        if not version:
+        if not version or not can_access_business_unit(resolve_skill_user(context), version.business_unit_id):
             return SkillResult.fail(f"Version '{version_id}' not found.")
 
         # Get items grouped by line item (only those needing attention)
@@ -551,7 +594,7 @@ class ReviewForecastSkill(BaseSkill):
             return SkillResult.fail("No active forecast version.")
 
         version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-        if not version:
+        if not version or not can_access_business_unit(resolve_skill_user(context), version.business_unit_id):
             return SkillResult.fail(f"Version '{version_id}' not found.")
 
         total = (

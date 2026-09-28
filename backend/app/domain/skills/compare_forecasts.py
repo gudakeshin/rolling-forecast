@@ -10,6 +10,7 @@ from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.models.forecast import ForecastVersion, ForecastLineResult
 from app.models.actuals import ActualsRecord
 from app.models.line_item import LineItem
+from app.services.permissions import can_access_business_unit, resolve_skill_user
 
 logger = logging.getLogger(__name__)
 
@@ -87,16 +88,19 @@ class CompareForecastsSkill(BaseSkill):
         if not version_id_a:
             return SkillResult.fail("No active forecast version for comparison.")
 
+        actor = resolve_skill_user(context)
+
         # If no second version specified, find the previous version
         if not version_id_b:
             version_a = db.query(ForecastVersion).filter(ForecastVersion.id == version_id_a).first()
-            if not version_a:
+            if not version_a or not can_access_business_unit(actor, version_a.business_unit_id):
                 return SkillResult.fail(f"Version '{version_id_a}' not found.")
 
             previous = (
                 db.query(ForecastVersion)
                 .filter(
                     ForecastVersion.id != version_id_a,
+                    ForecastVersion.business_unit_id == version_a.business_unit_id,
                     ForecastVersion.created_at < version_a.created_at,
                 )
                 .order_by(ForecastVersion.created_at.desc())
@@ -105,11 +109,16 @@ class CompareForecastsSkill(BaseSkill):
             if not previous:
                 return SkillResult.fail("No prior forecast version found for comparison.")
             version_id_b = previous.id
-        
+
         va = db.query(ForecastVersion).filter(ForecastVersion.id == version_id_a).first()
         vb = db.query(ForecastVersion).filter(ForecastVersion.id == version_id_b).first()
 
-        if not va or not vb:
+        if (
+            not va
+            or not vb
+            or not can_access_business_unit(actor, va.business_unit_id)
+            or not can_access_business_unit(actor, vb.business_unit_id)
+        ):
             return SkillResult.fail("One or both forecast versions not found.")
 
         # Fetch results for both versions
@@ -238,7 +247,7 @@ class CompareForecastsSkill(BaseSkill):
             return SkillResult.fail("No active forecast version.")
 
         version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-        if not version:
+        if not version or not can_access_business_unit(resolve_skill_user(context), version.business_unit_id):
             return SkillResult.fail(f"Version '{version_id}' not found.")
 
         category_filter = params.get("category_filter")

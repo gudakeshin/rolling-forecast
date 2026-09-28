@@ -1,32 +1,33 @@
+import { Button } from '../../ui/Button';
+import { dispatchRecommendedAction, type RecommendedAction } from '../../../utils/recommendedActions';
+
 interface Props {
   data: {
-    actions: { id: string; label: string; variant?: string }[];
+    actions: RecommendedAction[];
   };
 }
 
 export function ActionCard({ data }: Props) {
   const { actions } = data;
 
-  const handleAction = (actionId: string) => {
-    console.log('Action clicked:', actionId);
-  };
-
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="flex flex-wrap gap-2" role="group" aria-label="Suggested actions">
       {actions.map((action) => (
-        <button
-          key={action.id}
-          onClick={() => handleAction(action.id)}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+        <Button
+          key={action.id || action.type || action.label}
+          variant={
             action.variant === 'primary'
-              ? 'bg-deloitte-green hover:bg-deloitte-green/90 text-black'
+              ? 'primary'
               : action.variant === 'danger'
-              ? 'bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/30'
-              : 'bg-surface-700 hover:bg-surface-600 text-surface-300 border border-surface-600'
-          }`}
+                ? 'danger'
+                : 'secondary'
+          }
+          onClick={() => {
+            void dispatchRecommendedAction(action);
+          }}
         >
           {action.label}
-        </button>
+        </Button>
       ))}
     </div>
   );

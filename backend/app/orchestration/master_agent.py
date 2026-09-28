@@ -6,25 +6,60 @@ from typing import Any, AsyncIterator
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain_core.tools import StructuredTool
 from langgraph.prebuilt import create_react_agent
 
 from sqlalchemy.orm import Session
 from app.config import settings
 from app.orchestration.context_manager import ContextManager
 from app.domain.registry import get_registry
-from app.domain.base_skill import SkillContext
+from app.domain.engines.model_registry import get_model_registry
+from app.domain.base_skill import (
+    SkillContext,
+    push_skill_context,
+    reset_skill_context,
+)
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are the Rolling Forecast Assistant, an AI-powered FP&A agent that helps finance teams generate, manage, and analyze rolling forecasts.
+# Module-level compiled-graph cache: (role, definitions_generation, model) → agent
+_agent_cache: dict[tuple[str, int, str], Any] = {}
+
+
+def invalidate_agent_cache() -> None:
+    """Drop cached LangGraph agents (call on skill hot-reload)."""
+    _agent_cache.clear()
+
+
+def _auto_selectable_model_labels() -> list[str]:
+    """Display labels for models the auto-selection pipeline actually chooses between.
+
+    Excludes benchmark-only models (naive/seasonal-naive) and edge-case-only
+    models (zero/mean), which the pipeline uses internally but never presents
+    as a candidate to the analyst.
+    """
+    registry = get_model_registry()
+    labels = []
+    for name in registry.list_models():
+        model = registry.get(name)
+        if model is None:
+            continue
+        caps = model.capabilities
+        if caps.auto_selectable and not caps.is_benchmark:
+            labels.append(caps.display_label or name)
+    return labels
+
+
+SYSTEM_PROMPT_TEMPLATE = """You are the Rolling Forecast Assistant, an AI-powered FP&A agent that helps finance teams generate, manage, and analyze rolling forecasts.
 
 ## Your Capabilities
 You have access to specialized skills (tools) for:
-- **Forecast Planning:** Analyze data quality and run model comparisons (ARIMA, Prophet, ETS, Linear) BEFORE generating. Shows MAPE scores so the user can choose.
+- **Forecast Planning:** Analyze data quality and run model comparisons ({model_list}) BEFORE generating. Shows MAPE scores so the user can choose.
 - **Forecast Generation:** Generate statistical baseline forecasts. Supports auto-selection (best model per line item via MAPE comparison) or user-chosen models. Confidence scoring is automatic.
 - **Confidence Scoring:** Re-score confidence with custom thresholds (only needed if the user wants to change thresholds — generation includes default scoring).
 - **Version Management:** Create, list, compare, and manage immutable forecast versions
+- **Model Presets:** List, create, and run forecasts against saved named model configurations (a preset pins an algorithm or restricts the auto-selection pool) via `list_model_presets`, `manage_model_presets`, and the `model_preset` parameter on `generate_baseline`
+- **Actuals Dataset Control:** See which actuals dataset is currently authoritative and why via `list_actuals_datasets`; a manual upload always outranks a scheduled/API pull until an admin clears it with `manage_actuals_dataset` (action=unpin), or permanently delete a dataset and its uploaded file with `manage_actuals_dataset` (action=delete) — refused if any forecast version was built from it
+- **Company scoping:** Every company's actuals, forecasts, and line items are kept separate — `ingest_actuals` and `generate_baseline` take a `business_unit` parameter (name or id) naming which company; it's only optional when the user belongs to exactly one
 - **Overrides:** Apply human overrides to forecast values with dependency recalculation
 - **Review:** AI-powered triage to identify items needing attention
 - **Comparison:** Compare forecasts with variance analysis and bridge charts
@@ -36,7 +71,7 @@ When the user asks to generate, run, or create a forecast, ALWAYS follow this tw
 
 ### Step 1: Plan (use `plan_forecast` tool)
 - Analyze the uploaded data
-- Run ALL 4 algorithms (ARIMA, Prophet, ETS, Linear Trend) on a sample of line items
+- Run all {model_count} candidate algorithms ({model_list}) on a sample of line items
 - Show the MAPE (Mean Absolute Percentage Error) comparison table
 - Present the AI recommendation
 - Ask the user which approach they prefer
@@ -49,10 +84,7 @@ When the user asks to generate, run, or create a forecast, ALWAYS follow this tw
 
 **IMPORTANT:** Do NOT skip Step 1. Do NOT default model_type to "linear". The whole point is that each line item gets the BEST model based on MAPE testing.
 
-**Exception:** If the user explicitly says "use Prophet" or "run ARIMA", skip planning and go straight to generate_baseline with that model_type.
-
-## Current User Context
-{user_context}
+**Exception:** If the user explicitly says "use Prophet" or "run ARIMA", skip planning and go straight to generate_baseline with that model_type. Same for "run a forecast with my <preset name> model" — skip planning and pass `model_preset="<preset name>"` to generate_baseline directly (use `list_model_presets` first if you need to confirm the preset exists).
 
 ## Guidelines
 1. Always explain what you're doing before invoking a skill
@@ -70,7 +102,18 @@ When the user asks to generate, run, or create a forecast, ALWAYS follow this tw
 13. When answering questions, check if relevant context from uploaded documents is available. Use the search_context tool to find information in the user's document library.
 14. Use web_search for current market data, news, or external context. Use financial_lookup for stock prices, economic indicators, and company financials.
 15. When a user shares a URL, use fetch_url to read and optionally index the content.
+
+Dynamic per-turn context (user session, active version, document excerpts) is provided in subsequent system messages.
 """
+
+
+def _build_system_prompt() -> str:
+    """Render SYSTEM_PROMPT_TEMPLATE against the live model registry."""
+    labels = _auto_selectable_model_labels()
+    return SYSTEM_PROMPT_TEMPLATE.format(
+        model_list=", ".join(labels),
+        model_count=len(labels),
+    )
 
 
 class MasterAgent:
@@ -84,7 +127,6 @@ class MasterAgent:
     def __init__(self, context_manager: ContextManager, db: Session):
         self.context_manager = context_manager
         self.db = db
-        self._agent = None
         self._pending_query: str = ""
 
     def _build_skill_context(self) -> SkillContext:
@@ -96,47 +138,42 @@ class MasterAgent:
             user_role=self.context_manager.user_role,
             conversation_id=self.context_manager.conversation_id,
             working_memory=dict(self.context_manager._working_memory),
+            user=self.context_manager.user,
         )
 
-    def _get_agent(self):
-        """Build or return the LangGraph react agent."""
-        if self._agent is not None:
-            return self._agent
+    def _role_key(self) -> str:
+        user = self.context_manager.user
+        role = getattr(user, "role", None) if user else None
+        if role is not None and getattr(role, "name", None):
+            return role.name
+        return self.context_manager.user_role or "analyst"
 
-        # Initialize Claude LLM
+    def _get_agent(self):
+        """Return a cached LangGraph react agent; rebuild on role/model/skill change."""
+        registry = get_registry()
+        cache_key = (self._role_key(), registry.definitions_generation, settings.anthropic_model)
+        cached = _agent_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         llm = ChatAnthropic(
             model=settings.anthropic_model,
             anthropic_api_key=settings.anthropic_api_key,
-            temperature=0.1,
             max_tokens=4096,
+            timeout=120.0,
+            max_retries=2,
         )
 
-        # Get tools from skills registry
-        registry = get_registry()
         skill_context = self._build_skill_context()
         tools = registry.as_langchain_tools(skill_context)
 
-        # Build the system prompt with optional document context
-        system_message = SYSTEM_PROMPT.format(
-            user_context=self.context_manager.get_system_context()
-        )
-        doc_context = self.context_manager.get_relevant_context(
-            self._pending_query or "", top_k=3
-        )
-        if doc_context:
-            system_message += (
-                "\n\n## Relevant Context from Uploaded Documents\n"
-                + doc_context
-            )
-
-        # Create the react agent using LangGraph
-        self._agent = create_react_agent(
+        agent = create_react_agent(
             model=llm,
             tools=tools,
-            prompt=system_message,
+            prompt=_build_system_prompt(),
         )
-
-        return self._agent
+        _agent_cache[cache_key] = agent
+        return agent
 
     async def astream(self, user_message: str) -> AsyncIterator[dict[str, Any]]:
         """
@@ -153,19 +190,62 @@ class MasterAgent:
         - error: {error}
         """
         self._pending_query = user_message
-        self._agent = None  # rebuild to inject fresh document context
+        ctx_token = push_skill_context(self._build_skill_context())
+
+        # Per-conversation token budget — refuse before burning more LLM spend
+        upcoming = self.context_manager.estimate_message_tokens(user_message)
+        allowed, used, budget = self.context_manager.check_token_budget(upcoming)
+        if not allowed:
+            yield {
+                "event": "error",
+                "data": {
+                    "error": (
+                        f"Conversation token budget exceeded "
+                        f"({used:,}/{budget:,} tokens). Start a new conversation."
+                    )
+                },
+            }
+            yield {
+                "event": "message_end",
+                "data": {
+                    "content": (
+                        f"This conversation has reached its token budget "
+                        f"({used:,}/{budget:,}). Please start a new chat to continue."
+                    ),
+                    "content_blocks": [],
+                    "tool_calls": [],
+                    "panel_payload": None,
+                },
+            }
+            reset_skill_context(ctx_token)
+            return
+
         agent = self._get_agent()
 
-        # Build chat history from context
+        # Per-turn dynamic context (not baked into the cached graph prompt)
+        messages: list[Any] = [
+            SystemMessage(
+                content="## Current User Context\n"
+                + self.context_manager.get_system_context()
+            )
+        ]
+        doc_context = self.context_manager.get_relevant_context(
+            self._pending_query or "", top_k=3
+        )
+        if doc_context:
+            messages.append(
+                SystemMessage(
+                    content="## Relevant Context from Uploaded Documents\n" + doc_context
+                )
+            )
+
         chat_history = self.context_manager.get_chat_history()
-        messages = []
         for msg in chat_history[:-1]:  # Exclude the current message
             if msg["role"] == "user":
                 messages.append(HumanMessage(content=msg["content"]))
             elif msg["role"] == "assistant":
                 messages.append(AIMessage(content=msg["content"]))
 
-        # Add current message
         messages.append(HumanMessage(content=user_message))
 
         try:
@@ -183,11 +263,49 @@ class MasterAgent:
             # Track which tool_start events we've already emitted
             emitted_tool_starts: set[str] = set()
 
-            # Stream the agent execution
-            async for event in agent.astream(
-                {"messages": messages},
-                stream_mode="updates",
-            ):
+            # Stream the agent execution with recursion + wall-clock budget
+            import asyncio
+
+            from app.services.observability import get_langfuse_callback
+
+            stream_budget_s = float(getattr(settings, "max_forecast_generation_minutes", 30)) * 60
+            stream_budget_s = min(stream_budget_s, 180.0)  # chat turn cap
+
+            run_config: dict[str, Any] = {"recursion_limit": 25}
+            langfuse_cb = get_langfuse_callback()
+            if langfuse_cb is not None:
+                run_config["callbacks"] = [langfuse_cb]
+
+            async def _consume():
+                async for event in agent.astream(
+                    {"messages": messages},
+                    config=run_config,
+                    stream_mode="updates",
+                ):
+                    yield event
+
+            agen = _consume()
+            deadline = asyncio.get_event_loop().time() + stream_budget_s
+
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:
+                    yield {
+                        "event": "error",
+                        "data": {"error": "Agent streaming budget exceeded"},
+                    }
+                    break
+                try:
+                    event = await asyncio.wait_for(agen.__anext__(), timeout=remaining)
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError:
+                    yield {
+                        "event": "error",
+                        "data": {"error": "Agent streaming budget exceeded"},
+                    }
+                    break
+
                 for node_name, node_output in event.items():
                     if node_name == "tools":
                         # Tool execution result events
@@ -334,6 +452,55 @@ class MasterAgent:
                         # Handle other node types (custom nodes, checkpoints, etc.)
                         logger.debug(f"Unhandled node in stream: {node_name}")
 
+            # Numeric grounding (non-blocking): flag free-text figures not seen in tool results
+            grounding_note = None
+            if final_text and all_tool_calls:
+                try:
+                    from app.services.numeric_grounding import (
+                        _NUMBER_RE,
+                        validate_numeric_claims,
+                    )
+
+                    allowed_figures: set[str] = set()
+                    for tc in all_tool_calls:
+                        blob = json.dumps(tc, default=str)
+                        for m in _NUMBER_RE.finditer(blob):
+                            raw = m.group(0)
+                            allowed_figures.add(raw)
+                            allowed_figures.add(raw.replace(",", "").rstrip("%"))
+                    for block in all_content_blocks:
+                        blob = json.dumps(block, default=str)
+                        for m in _NUMBER_RE.finditer(blob):
+                            raw = m.group(0)
+                            allowed_figures.add(raw)
+                            allowed_figures.add(raw.replace(",", "").rstrip("%"))
+
+                    cleaned, verified, total = validate_numeric_claims(
+                        final_text, allowed_figures
+                    )
+                    if total > 0 and verified < total:
+                        # Same "status" block shape as BaseSkill._status_block (label/
+                        # progress/step/is_complete) — the frontend's StatusCard renders
+                        # an active job's progress bar when is_complete is False and
+                        # polls /jobs/{job_id}; this note is neither, so it must be
+                        # marked complete up front or the card spins forever on a
+                        # job that doesn't exist.
+                        grounding_note = {
+                            "type": "status",
+                            "data": {
+                                "label": (
+                                    f"{total - verified} figure(s) not found in tool "
+                                    "results — marked as [unverified]."
+                                ),
+                                "progress": 1,
+                                "step": "numeric_grounding",
+                                "is_complete": True,
+                            },
+                        }
+                        final_text = cleaned
+                except Exception:
+                    logger.debug("Numeric grounding skipped", exc_info=True)
+
             # Add final text as content block
             if final_text:
                 text_block = {"type": "text", "data": {"text": final_text}}
@@ -343,6 +510,25 @@ class MasterAgent:
                     "event": "content_block",
                     "data": text_block,
                 }
+            if grounding_note:
+                all_content_blocks.append(grounding_note)
+                yield {"event": "content_block", "data": grounding_note}
+
+            # Record approximate token spend against the conversation budget
+            try:
+                spent = self.context_manager.estimate_message_tokens(
+                    user_message,
+                    final_text,
+                    *(tc.get("tool", "") for tc in all_tool_calls),
+                )
+                # Also count history that was sent into the model this turn
+                for m in messages:
+                    content = getattr(m, "content", "") or ""
+                    if isinstance(content, str):
+                        spent += self.context_manager.estimate_message_tokens(content)
+                self.context_manager.record_token_usage(spent)
+            except Exception:
+                logger.debug("Failed to record conversation token usage", exc_info=True)
 
             # Send final message_end
             yield {
@@ -361,6 +547,8 @@ class MasterAgent:
                 "event": "error",
                 "data": {"error": str(e)},
             }
+        finally:
+            reset_skill_context(ctx_token)
 
     async def invoke(self, user_message: str) -> dict[str, Any]:
         """Non-streaming version -- runs the agent and returns the full response."""

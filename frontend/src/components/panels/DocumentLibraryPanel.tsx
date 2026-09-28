@@ -1,11 +1,42 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   Upload, Link2, Search, Trash2, FileText, FileSpreadsheet,
-  Image, Globe, File, Loader2, CheckCircle, XCircle,
-  ChevronDown, ChevronUp, Filter, FolderOpen, Plus,
-  ExternalLink, Tag, Clock, Database, AlertCircle,
+  Globe, File, Loader2, CheckCircle, XCircle,
+  FolderOpen, Plus, ExternalLink, Tag, Clock, Database, Download, Play, Pin,
 } from 'lucide-react';
 import { apiPost, apiDelete, apiGet } from '../../api/client';
+import { useAuthStore } from '../../store/authStore';
+import { useWorkspaceStore } from '../../store/workspaceStore';
+import { usePanelStore } from '../../store/panelStore';
+import { DataTable, downloadCsv, type DataTableColumn } from '../ui/DataTable';
+
+const NEW_COMPANY = '__new__';
+
+interface DatasetItem {
+  id: string;
+  source_type: string;
+  source_name: string;
+  row_count: number;
+  period_start: string;
+  period_end: string;
+  completeness_pct: number;
+  is_pinned: boolean;
+  ingested_at: string | null;
+  business_unit_id: string | null;
+}
+
+// A CSV/Excel file is financial actuals data, not a reference document --
+// route it to the forecast-ingestion pipeline instead of the RAG document
+// index, matching the same extension-based split the chat's own upload
+// button already makes (see components/chat/InputBar.tsx). Uploading it
+// here previously always indexed it for chat search only, so a forecast
+// re-run kept using whatever dataset was already current -- silently never
+// picking up the "new" data at all.
+const ACTUALS_EXTENSIONS = new Set(['.csv', '.xlsx', '.xls']);
+
+function getFileExtension(name: string): string {
+  return (name.lastIndexOf('.') >= 0 ? name.slice(name.lastIndexOf('.')) : '').toLowerCase();
+}
 
 const FILE_ICONS: Record<string, typeof FileText> = {
   pdf: FileText,
@@ -75,14 +106,50 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
   const d = data?.data || data;
   const initialDocs: DocItem[] = d?.documents || [];
   const summary = d?.summary || {};
+  const canViewAllBus = useAuthStore((s) => Boolean(s.user?.can_view_all_bus));
+  const openPanel = usePanelStore((s) => s.openPanel);
+  const workspaceId = useWorkspaceStore((s) => s.currentBusinessUnitId);
+  const workspaceName = useWorkspaceStore((s) => s.currentBusinessUnitName);
+  const businessUnits = useWorkspaceStore((s) => s.businessUnits);
 
   const [documents, setDocuments] = useState<DocItem[]>(initialDocs);
-  const [activeTab, setActiveTab] = useState<'documents' | 'upload' | 'search'>('documents');
+  const [activeTab, setActiveTab] = useState<'documents' | 'upload' | 'search' | 'datasets'>('documents');
   const [scopeFilter, setScopeFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+
+  // Actuals uploads (CSV/XLSX) need a company -- a regular user's own single
+  // business unit is inferred automatically server-side, but a cross-company
+  // caller must say which one, or every upload silently lands wherever their
+  // own account happens to be assigned. Only relevant to those callers.
+  const [businessUnitChoice, setBusinessUnitChoice] = useState('');
+  const [newCompanyName, setNewCompanyName] = useState('');
+
+  useEffect(() => {
+    if (canViewAllBus && workspaceId) setBusinessUnitChoice((prev) => prev || workspaceId);
+  }, [canViewAllBus, workspaceId]);
+
+  const [datasets, setDatasets] = useState<DatasetItem[]>([]);
+  const [datasetsLoading, setDatasetsLoading] = useState(false);
+
+  const refreshDatasets = useCallback(async () => {
+    setDatasetsLoading(true);
+    try {
+      const qs = canViewAllBus && workspaceId ? `?business_unit_id=${encodeURIComponent(workspaceId)}` : '';
+      const rows = await apiGet<DatasetItem[]>(`/upload/datasets${qs}`);
+      setDatasets(rows);
+    } catch {
+      /* ignore */
+    } finally {
+      setDatasetsLoading(false);
+    }
+  }, [canViewAllBus, workspaceId]);
+
+  useEffect(() => {
+    if (activeTab === 'datasets') void refreshDatasets();
+  }, [activeTab, refreshDatasets]);
 
   // URL ingestion
   const [urlInput, setUrlInput] = useState('');
@@ -93,8 +160,53 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
 
-  const [expandedDoc, setExpandedDoc] = useState<string | null>(null);
+  const [expandedDocIds, setExpandedDocIds] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const documentTableColumns = useMemo<DataTableColumn<Record<string, unknown>>[]>(
+    () => [
+      {
+        key: 'original_name',
+        label: 'Name',
+        render: (v, row) => {
+          const Icon = FILE_ICONS[String(row.file_type)] || File;
+          return (
+            <span className="inline-flex items-center gap-1.5 min-w-0">
+              <Icon className="w-3.5 h-3.5 text-surface-400 shrink-0" />
+              <span className="truncate max-w-[180px]">{String(v ?? '')}</span>
+            </span>
+          );
+        },
+      },
+      {
+        key: 'status',
+        label: 'Status',
+        render: (v) => (
+          <span className={`text-xs px-1.5 py-0.5 rounded border ${STATUS_STYLES[String(v)] || ''}`}>
+            {String(v ?? '')}
+          </span>
+        ),
+      },
+      {
+        key: 'chunk_count',
+        label: 'Chunks',
+        align: 'right',
+        render: (v) => String(v ?? 0),
+      },
+      {
+        key: 'file_size_bytes',
+        label: 'Size',
+        align: 'right',
+        render: (v) => formatBytes(Number(v) || 0),
+      },
+      {
+        key: 'scope',
+        label: 'Scope',
+        render: (v) => SCOPE_LABELS[String(v)] || String(v ?? ''),
+      },
+    ],
+    [],
+  );
 
   const filteredDocs = documents.filter(doc => {
     if (scopeFilter !== 'all' && doc.scope !== scopeFilter) return false;
@@ -119,20 +231,35 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
 
     let successCount = 0;
     let failCount = 0;
+    let ingestedActuals = false;
+    const ingestMessages: string[] = [];
+    const businessUnitValue =
+      businessUnitChoice === NEW_COMPANY ? newCompanyName.trim() : businessUnitChoice;
 
     for (const file of Array.from(files)) {
+      const ext = getFileExtension(file.name);
       try {
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('scope', 'user');
-        const res = await apiPost<any>('/context/upload', formData);
-        if (res.status === 'ready') {
+        if (ACTUALS_EXTENSIONS.has(ext)) {
+          // Ingests immediately (ingest=true default) into the forecast
+          // system -- this is financial data, not a reference document.
+          const formData = new FormData();
+          formData.append('file', file);
+          if (businessUnitValue) formData.append('business_unit', businessUnitValue);
+          const res = await apiPost<any>('/upload/actuals', formData);
           successCount++;
-        } else if (res.status === 'failed') {
-          failCount++;
-          setUploadError(res.error_message || `Failed to process ${file.name}`);
+          ingestedActuals = true;
+          ingestMessages.push(res.message || `${file.name} ingested`);
         } else {
-          successCount++;
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('scope', 'user');
+          const res = await apiPost<any>('/context/upload', formData);
+          if (res.status === 'failed') {
+            failCount++;
+            setUploadError(res.error_message || `Failed to process ${file.name}`);
+          } else {
+            successCount++;
+          }
         }
       } catch (e: any) {
         failCount++;
@@ -142,11 +269,19 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
 
     setIsUploading(false);
     if (successCount > 0) {
-      setUploadSuccess(`Uploaded ${successCount} file${successCount > 1 ? 's' : ''} successfully`);
+      setUploadSuccess(
+        ingestMessages.length > 0
+          ? ingestMessages.join(' ')
+          : `Uploaded ${successCount} file${successCount > 1 ? 's' : ''} successfully`,
+      );
     }
     await refreshDocuments();
+    if (ingestedActuals) {
+      if (businessUnitChoice === NEW_COMPANY) void useWorkspaceStore.getState().hydrate();
+      void refreshDatasets();
+    }
     setTimeout(() => { setUploadSuccess(null); setUploadError(null); }, 5000);
-  }, [refreshDocuments]);
+  }, [refreshDocuments, refreshDatasets, businessUnitChoice, newCompanyName]);
 
   const handleUrlIngest = useCallback(async () => {
     if (!urlInput.trim()) return;
@@ -191,6 +326,32 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
     handleFileUpload(e.dataTransfer.files);
   }, [handleFileUpload]);
 
+  const documentColumns = [
+    { key: 'original_name', label: 'Name' },
+    { key: 'file_type', label: 'Type' },
+    { key: 'scope', label: 'Scope' },
+    { key: 'status', label: 'Status' },
+    { key: 'chunk_count', label: 'Chunk Count' },
+    { key: 'file_size_bytes', label: 'File Size (bytes)' },
+    { key: 'created_at', label: 'Created At' },
+  ];
+
+  const handleExportDocuments = () => {
+    downloadCsv(
+      'documents_export',
+      documentColumns,
+      filteredDocs.map((doc) => ({
+        original_name: doc.original_name,
+        file_type: doc.file_type,
+        scope: doc.scope,
+        status: doc.status,
+        chunk_count: doc.chunk_count,
+        file_size_bytes: doc.file_size_bytes,
+        created_at: doc.created_at || '',
+      })) as Record<string, unknown>[],
+    );
+  };
+
   return (
     <div className="space-y-3">
       {/* Header Stats */}
@@ -198,27 +359,27 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
         <div className="bg-surface-800/60 border border-surface-700/50 rounded-lg p-2.5 text-center">
           <Database className="w-3.5 h-3.5 mx-auto mb-1 text-deloitte-green" />
           <div className="text-sm font-bold text-white">{summary.total_documents || documents.length}</div>
-          <div className="text-[8px] text-surface-500 uppercase tracking-wider">Documents</div>
+          <div className="text-xs text-surface-500 uppercase tracking-wider">Documents</div>
         </div>
         <div className="bg-surface-800/60 border border-surface-700/50 rounded-lg p-2.5 text-center">
           <FolderOpen className="w-3.5 h-3.5 mx-auto mb-1 text-sky-400" />
           <div className="text-sm font-bold text-white">{summary.total_chunks || 0}</div>
-          <div className="text-[8px] text-surface-500 uppercase tracking-wider">Chunks</div>
+          <div className="text-xs text-surface-500 uppercase tracking-wider">Chunks</div>
         </div>
         <div className="bg-surface-800/60 border border-surface-700/50 rounded-lg p-2.5 text-center">
           <FileText className="w-3.5 h-3.5 mx-auto mb-1 text-amber-400" />
           <div className="text-sm font-bold text-white">{formatBytes(summary.total_size_bytes || 0)}</div>
-          <div className="text-[8px] text-surface-500 uppercase tracking-wider">Total Size</div>
+          <div className="text-xs text-surface-500 uppercase tracking-wider">Total Size</div>
         </div>
       </div>
 
       {/* Tab Bar */}
       <div className="flex gap-1 bg-surface-800/40 rounded-lg p-0.5">
-        {(['documents', 'upload', 'search'] as const).map(tab => (
+        {(['documents', 'upload', 'datasets', 'search'] as const).map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`flex-1 py-1.5 px-2 rounded-md text-[10px] font-semibold uppercase tracking-wider transition-all ${
+            className={`flex-1 py-1.5 px-2 rounded-md text-xs font-semibold uppercase tracking-wider transition-all ${
               activeTab === tab
                 ? 'bg-deloitte-green/20 text-deloitte-green'
                 : 'text-surface-500 hover:text-surface-300'
@@ -226,6 +387,7 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
           >
             {tab === 'documents' && <FolderOpen className="w-3 h-3 inline mr-1" />}
             {tab === 'upload' && <Upload className="w-3 h-3 inline mr-1" />}
+            {tab === 'datasets' && <Database className="w-3 h-3 inline mr-1" />}
             {tab === 'search' && <Search className="w-3 h-3 inline mr-1" />}
             {tab}
           </button>
@@ -235,12 +397,51 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
       {/* Upload Tab */}
       {activeTab === 'upload' && (
         <div className="space-y-3">
+          {canViewAllBus ? (
+            <div className="bg-surface-800/40 border border-surface-700/50 rounded-lg p-3 space-y-2">
+              <label className="block text-xs text-surface-400 uppercase tracking-wider font-semibold">
+                Workspace (for CSV/XLSX actuals)
+              </label>
+              <select
+                value={businessUnitChoice}
+                onChange={e => setBusinessUnitChoice(e.target.value)}
+                className="w-full bg-surface-900/60 border border-surface-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-deloitte-green/50"
+              >
+                {businessUnits.map(bu => <option key={bu.id} value={bu.id}>{bu.name}</option>)}
+                <option value={NEW_COMPANY}>+ New company…</option>
+              </select>
+              {businessUnitChoice === NEW_COMPANY && (
+                <input
+                  type="text"
+                  value={newCompanyName}
+                  onChange={e => setNewCompanyName(e.target.value)}
+                  placeholder="e.g. Carl Zeiss India"
+                  className="w-full bg-surface-900/60 border border-surface-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-surface-600 focus:outline-none focus:border-deloitte-green/50"
+                />
+              )}
+              <p className="text-xs text-surface-600">
+                Your account can act across multiple companies, so CSV/XLSX uploads require this —
+                otherwise there's no way to tell which company the data belongs to. Uploading to a
+                new company creates that workspace.
+              </p>
+            </div>
+          ) : (
+            workspaceName && (
+              <div className="flex items-center gap-1.5 text-xs text-surface-500">
+                <Database className="w-3.5 h-3.5" />
+                Uploading actuals to your workspace: <span className="text-surface-300 font-medium">{workspaceName}</span>
+              </div>
+            )
+          )}
+
           {/* File Upload Zone */}
-          <div
+          <button
+            type="button"
             onDrop={handleDrop}
             onDragOver={e => e.preventDefault()}
             onClick={() => fileInputRef.current?.click()}
-            className="border-2 border-dashed border-surface-600 hover:border-deloitte-green/50 rounded-xl p-6 text-center cursor-pointer transition-colors"
+            aria-label="Upload documents"
+            className="w-full border-2 border-dashed border-surface-600 hover:border-deloitte-green/50 rounded-xl p-6 text-center cursor-pointer transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-deloitte-green"
           >
             <input
               ref={fileInputRef}
@@ -249,6 +450,7 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
               accept=".pdf,.docx,.doc,.pptx,.xlsx,.xls,.csv,.txt,.md,.html,.htm"
               className="hidden"
               onChange={e => handleFileUpload(e.target.files)}
+              tabIndex={-1}
             />
             {isUploading ? (
               <Loader2 className="w-8 h-8 mx-auto mb-2 text-deloitte-green animate-spin" />
@@ -258,16 +460,16 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
             <p className="text-xs text-surface-400 mb-1">
               {isUploading ? 'Processing...' : 'Drop files here or click to upload'}
             </p>
-            <p className="text-[10px] text-surface-600">
-              PDF, DOCX, PPTX, XLSX, CSV, TXT, HTML
+            <p className="text-xs text-surface-600">
+              PDF, DOCX, PPTX, TXT, HTML for chat reference &middot; CSV, XLSX ingested as actuals data
             </p>
-          </div>
+          </button>
 
           {/* URL Ingestion */}
           <div className="bg-surface-800/40 border border-surface-700/50 rounded-lg p-3">
             <div className="flex items-center gap-2 mb-2">
               <Link2 className="w-3.5 h-3.5 text-sky-400" />
-              <span className="text-[10px] text-surface-400 uppercase tracking-wider font-semibold">Index from URL</span>
+              <span className="text-xs text-surface-400 uppercase tracking-wider font-semibold">Index from URL</span>
             </div>
             <div className="flex gap-2">
               <input
@@ -303,15 +505,79 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
         </div>
       )}
 
+      {/* Datasets Tab */}
+      {activeTab === 'datasets' && (
+        <div className="space-y-2">
+          {workspaceName && (
+            <p className="text-xs text-surface-500">
+              Ingested actuals for <span className="text-surface-300 font-medium">{workspaceName}</span>
+            </p>
+          )}
+          {datasetsLoading ? (
+            <div className="text-center py-8 text-surface-600">
+              <Loader2 className="w-6 h-6 mx-auto mb-2 animate-spin" />
+            </div>
+          ) : datasets.length === 0 ? (
+            <div className="text-center py-8 text-surface-600">
+              <Database className="w-8 h-8 mx-auto mb-2 opacity-40" />
+              <p className="text-xs">No datasets uploaded yet</p>
+              <button
+                onClick={() => setActiveTab('upload')}
+                className="mt-2 text-xs text-deloitte-green hover:underline"
+              >
+                Upload actuals
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {datasets.map((ds) => (
+                <div
+                  key={ds.id}
+                  className="bg-surface-800/40 border border-surface-700/50 rounded-lg p-2.5 flex items-center justify-between gap-2"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-medium text-white truncate max-w-[160px]">
+                        {ds.source_name || ds.source_type}
+                      </span>
+                      {ds.is_pinned && (
+                        <span
+                          title="Current dataset"
+                          className="inline-flex items-center gap-0.5 text-xs px-1.5 py-0.5 bg-deloitte-green/10 text-deloitte-green rounded border border-deloitte-green/30"
+                        >
+                          <Pin className="w-2.5 h-2.5" /> pinned
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-surface-500 mt-0.5">
+                      {ds.period_start}–{ds.period_end} · {ds.row_count.toLocaleString()} rows
+                      {ds.ingested_at ? ` · ${formatDate(ds.ingested_at)}` : ''}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => openPanel('run_forecast', { dataset_id: ds.id })}
+                    className="shrink-0 inline-flex items-center gap-1 text-xs text-deloitte-green hover:underline"
+                  >
+                    <Play className="w-3 h-3" /> Run forecast
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Documents Tab */}
       {activeTab === 'documents' && (
         <div className="space-y-2">
           {/* Filters */}
-          <div className="flex gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex gap-2">
             <select
               value={scopeFilter}
               onChange={e => setScopeFilter(e.target.value)}
-              className="bg-surface-800/60 border border-surface-700/50 rounded-lg px-2 py-1 text-[10px] text-surface-300 focus:outline-none"
+              className="bg-surface-800/60 border border-surface-700/50 rounded-lg px-2 py-1 text-xs text-surface-300 focus:outline-none"
             >
               <option value="all">All Scopes</option>
               <option value="user">My Documents</option>
@@ -322,13 +588,25 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
               <select
                 value={typeFilter}
                 onChange={e => setTypeFilter(e.target.value)}
-                className="bg-surface-800/60 border border-surface-700/50 rounded-lg px-2 py-1 text-[10px] text-surface-300 focus:outline-none"
+                className="bg-surface-800/60 border border-surface-700/50 rounded-lg px-2 py-1 text-xs text-surface-300 focus:outline-none"
               >
                 <option value="all">All Types</option>
                 {uniqueTypes.map(t => (
                   <option key={t} value={t}>{t.toUpperCase()}</option>
                 ))}
               </select>
+            )}
+            </div>
+            {filteredDocs.length > 0 && (
+              <button
+                type="button"
+                onClick={handleExportDocuments}
+                className="inline-flex items-center gap-1.5 text-xs text-surface-300 hover:text-white px-2 py-1 rounded-md border border-surface-600 hover:border-deloitte-green/40 shrink-0"
+                title="Export documents CSV"
+              >
+                <Download className="w-3.5 h-3.5" />
+                CSV
+              </button>
             )}
           </div>
 
@@ -339,99 +617,88 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
               <p className="text-xs">No documents uploaded yet</p>
               <button
                 onClick={() => setActiveTab('upload')}
-                className="mt-2 text-[10px] text-deloitte-green hover:underline"
+                className="mt-2 text-xs text-deloitte-green hover:underline"
               >
                 Upload your first document
               </button>
             </div>
           ) : (
-            <div className="space-y-1.5">
-              {filteredDocs.map(doc => {
-                const Icon = FILE_ICONS[doc.file_type] || File;
-                const isExpanded = expandedDoc === doc.id;
+            <DataTable
+              title="Documents"
+              columns={documentTableColumns}
+              rows={filteredDocs as unknown as Record<string, unknown>[]}
+              maxHeight={360}
+              exportFilename="documents_export"
+              hideExport
+              getRowId={(row) => String(row.id)}
+              expandedRowIds={expandedDocIds}
+              onRowClick={(row) => {
+                const id = String(row.id);
+                setExpandedDocIds((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(id)) next.delete(id);
+                  else next.add(id);
+                  return next;
+                });
+              }}
+              rowActions={(row) => (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleDelete(String(row.id));
+                  }}
+                  className="p-1 text-surface-600 hover:text-red-400 transition-colors"
+                  title="Delete"
+                  aria-label={`Delete ${String(row.original_name ?? '')}`}
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              )}
+              renderExpandedRow={(row) => {
+                const doc = row as unknown as DocItem;
                 return (
-                  <div
-                    key={doc.id}
-                    className="bg-surface-800/40 border border-surface-700/50 rounded-lg overflow-hidden"
-                  >
-                    <div
-                      className="flex items-center gap-2 p-2.5 cursor-pointer hover:bg-surface-700/30 transition-colors"
-                      onClick={() => setExpandedDoc(isExpanded ? null : doc.id)}
-                    >
-                      <Icon className="w-4 h-4 text-surface-400 shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-xs text-white font-medium truncate">
-                          {doc.original_name}
-                        </div>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className={`text-[8px] px-1.5 py-0.5 rounded border ${STATUS_STYLES[doc.status] || ''}`}>
-                            {doc.status}
-                          </span>
-                          <span className="text-[8px] text-surface-600">
-                            {doc.chunk_count} chunks
-                          </span>
-                          <span className="text-[8px] text-surface-600">
-                            {formatBytes(doc.file_size_bytes)}
-                          </span>
-                        </div>
-                      </div>
-                      <button
-                        onClick={e => { e.stopPropagation(); handleDelete(doc.id); }}
-                        className="p-1 text-surface-600 hover:text-red-400 transition-colors"
-                        title="Delete"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                      {isExpanded ? (
-                        <ChevronUp className="w-3 h-3 text-surface-500" />
-                      ) : (
-                        <ChevronDown className="w-3 h-3 text-surface-500" />
-                      )}
+                  <div className="space-y-1.5">
+                    {doc.description && (
+                      <p className="text-xs text-surface-400 italic">{doc.description}</p>
+                    )}
+                    <div className="flex flex-wrap gap-1.5 text-xs text-surface-500">
+                      <span className="flex items-center gap-0.5">
+                        <Tag className="w-2.5 h-2.5" /> {doc.file_type.toUpperCase()}
+                      </span>
+                      <span className="flex items-center gap-0.5">
+                        <Clock className="w-2.5 h-2.5" /> {formatDate(doc.created_at)}
+                      </span>
+                      <span className="px-1.5 py-0.5 bg-surface-700/50 rounded">
+                        {SCOPE_LABELS[doc.scope] || doc.scope}
+                      </span>
                     </div>
-                    {isExpanded && (
-                      <div className="px-3 pb-2.5 border-t border-surface-700/30 pt-2 space-y-1.5">
-                        {doc.description && (
-                          <p className="text-[10px] text-surface-400 italic">{doc.description}</p>
-                        )}
-                        <div className="flex flex-wrap gap-1.5 text-[9px] text-surface-500">
-                          <span className="flex items-center gap-0.5">
-                            <Tag className="w-2.5 h-2.5" /> {doc.file_type.toUpperCase()}
-                          </span>
-                          <span className="flex items-center gap-0.5">
-                            <Clock className="w-2.5 h-2.5" /> {formatDate(doc.created_at)}
-                          </span>
-                          <span className="px-1.5 py-0.5 bg-surface-700/50 rounded">
-                            {SCOPE_LABELS[doc.scope] || doc.scope}
-                          </span>
-                        </div>
-                        {doc.source_url && (
-                          <a
-                            href={doc.source_url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="flex items-center gap-1 text-[10px] text-sky-400 hover:underline"
+                    {doc.source_url && (
+                      <a
+                        href={doc.source_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1 text-xs text-sky-400 hover:underline"
+                      >
+                        <ExternalLink className="w-2.5 h-2.5" /> {doc.source_url}
+                      </a>
+                    )}
+                    {doc.tags && doc.tags.length > 0 && (
+                      <div className="flex gap-1">
+                        {doc.tags.map((tag, i) => (
+                          <span
+                            key={i}
+                            className="text-xs px-1.5 py-0.5 bg-deloitte-green/10 text-deloitte-green rounded"
                           >
-                            <ExternalLink className="w-2.5 h-2.5" /> {doc.source_url}
-                          </a>
-                        )}
-                        {doc.tags && doc.tags.length > 0 && (
-                          <div className="flex gap-1">
-                            {doc.tags.map((tag, i) => (
-                              <span
-                                key={i}
-                                className="text-[8px] px-1.5 py-0.5 bg-deloitte-green/10 text-deloitte-green rounded"
-                              >
-                                {tag}
-                              </span>
-                            ))}
-                          </div>
-                        )}
+                            {tag}
+                          </span>
+                        ))}
                       </div>
                     )}
                   </div>
                 );
-              })}
-            </div>
+              }}
+            />
           )}
         </div>
       )}
@@ -460,7 +727,7 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
 
           {searchResults.length > 0 ? (
             <div className="space-y-2">
-              <p className="text-[10px] text-surface-500">{searchResults.length} results found</p>
+              <p className="text-xs text-surface-500">{searchResults.length} results found</p>
               {searchResults.map((result, i) => (
                 <div
                   key={result.chunk_id}
@@ -468,16 +735,16 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
                 >
                   <div className="flex items-center justify-between mb-1.5">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] font-bold text-deloitte-green">{i + 1}</span>
-                      <span className="text-[10px] text-white font-medium truncate max-w-[200px]">
+                      <span className="text-xs font-bold text-deloitte-green">{i + 1}</span>
+                      <span className="text-xs text-white font-medium truncate max-w-[200px]">
                         {result.original_name}
                       </span>
                     </div>
-                    <span className="text-[9px] px-1.5 py-0.5 bg-deloitte-green/10 text-deloitte-green rounded">
+                    <span className="text-xs px-1.5 py-0.5 bg-deloitte-green/10 text-deloitte-green rounded">
                       {Math.round(result.score * 100)}% match
                     </span>
                   </div>
-                  <p className="text-[10px] text-surface-400 leading-relaxed line-clamp-4">
+                  <p className="text-xs text-surface-400 leading-relaxed line-clamp-4">
                     {result.content}
                   </p>
                 </div>
@@ -487,13 +754,13 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
             <div className="text-center py-6 text-surface-600">
               <Search className="w-6 h-6 mx-auto mb-2 opacity-40" />
               <p className="text-xs">No results found</p>
-              <p className="text-[10px] mt-1">Try different keywords or upload more documents</p>
+              <p className="text-xs mt-1">Try different keywords or upload more documents</p>
             </div>
           ) : !searchQuery ? (
             <div className="text-center py-6 text-surface-600">
               <Search className="w-6 h-6 mx-auto mb-2 opacity-40" />
               <p className="text-xs">Search across all your uploaded documents</p>
-              <p className="text-[10px] mt-1">Uses semantic search to find relevant content</p>
+              <p className="text-xs mt-1">Uses semantic search to find relevant content</p>
             </div>
           ) : null}
         </div>
