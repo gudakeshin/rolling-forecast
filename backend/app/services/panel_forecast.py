@@ -20,7 +20,13 @@ import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sqlalchemy.orm import Session
 
-from app.domain.engines.base_model import mase_denominator, seasonal_period_length
+from app.domain.engines.base_model import (
+    _pinball,
+    _smape,
+    mase_denominator,
+    recency_weighted_mean,
+    seasonal_period_length,
+)
 from app.domain.engines.global_gbm import (
     QUANTILES,
     GlobalPanelContext,
@@ -51,27 +57,6 @@ N_DRIVER_SLOTS = 3
 N_FOLDS = 3
 FOLD_HORIZON = 3
 MIN_POINTS = 6
-
-
-def _smape(actuals: np.ndarray, predicted: np.ndarray) -> float:
-    denom = np.abs(actuals) + np.abs(predicted)
-    mask = denom > 1e-12
-    if mask.sum() == 0:
-        return float("inf")
-    return float(np.mean(2.0 * np.abs(actuals[mask] - predicted[mask]) / denom[mask]) * 100)
-
-
-def _pinball(actuals: np.ndarray, quantile_forecast: np.ndarray, tau: float) -> float:
-    err = actuals - quantile_forecast
-    return float(np.mean(np.where(err >= 0, tau * err, (tau - 1.0) * err)))
-
-
-def _weighted_mean(values: list[float]) -> float:
-    finite = [v for v in values if v != float("inf") and not np.isnan(v)]
-    if not finite:
-        return float("inf")
-    weights = list(range(1, len(finite) + 1))
-    return float(sum(v * w for v, w in zip(finite, weights)) / sum(weights))
 
 
 def _future_periods(last_period: str, horizon: int, cal_cfg: FiscalCalendarConfig | None) -> list[str]:
@@ -387,8 +372,10 @@ def _panel_walk_forward_cv(
         per_fold_train.append((rows, targets))
         per_fold_test.append(test_by_line)
 
-    fold_mapes: dict[int, list[float]] = {li.id: [] for li in eligible}
-    fold_mases: dict[int, list[float]] = {li.id: [] for li in eligible}
+    # Same conventions as IForecastModel.evaluate_cv: most-recent fold first,
+    # None = data made the fold unscorable for that metric, inf = model failed.
+    fold_mapes: dict[int, list[float | None]] = {li.id: [] for li in eligible}
+    fold_mases: dict[int, list[float | None]] = {li.id: [] for li in eligible}
     fold_smapes: dict[int, list[float]] = {li.id: [] for li in eligible}
     fold_pb10: dict[int, list[float]] = {li.id: [] for li in eligible}
     fold_pb90: dict[int, list[float]] = {li.id: [] for li in eligible}
@@ -397,6 +384,10 @@ def _panel_walk_forward_cv(
     coverage_total: dict[int, int] = {li.id: 0 for li in eligible}
     n_test: dict[int, int] = {li.id: 0 for li in eligible}
     n_folds_used: dict[int, int] = {li.id: 0 for li in eligible}
+
+    def _record_failed_fold(li_id: int) -> None:
+        for folds in (fold_mapes, fold_mases, fold_smapes, fold_pb10, fold_pb90):
+            folds[li_id].append(float("inf"))
 
     for fold_idx in range(N_FOLDS):
         rows, targets = per_fold_train[fold_idx]
@@ -416,6 +407,11 @@ def _panel_walk_forward_cv(
                 fold_models[q] = gbm
         except Exception as e:
             logger.warning("global_gbm panel CV fold %d fit failed: %s", fold_idx + 1, e)
+            # The model failed this fold for every line in it. Recording the
+            # failure (rather than dropping the fold) keeps fold positions
+            # aligned and makes the model ineligible on those lines.
+            for li_id in test_by_line:
+                _record_failed_fold(li_id)
             continue
 
         for li_id, (test_feats, test_targets, denom) in test_by_line.items():
@@ -425,6 +421,7 @@ def _panel_walk_forward_cv(
             try:
                 preds = {q: np.asarray(fold_models[q].predict(test_df), dtype=float) for q in QUANTILES}
             except Exception:
+                _record_failed_fold(li_id)
                 continue
 
             actuals = np.asarray(test_targets, dtype=float)
@@ -438,14 +435,14 @@ def _panel_walk_forward_cv(
 
             mask = actuals != 0
             if mask.sum() == 0:
-                fold_mapes[li_id].append(float("inf"))
+                fold_mapes[li_id].append(None)
             else:
                 fold_mapes[li_id].append(
                     float(np.mean(np.abs((actuals[mask] - point[mask]) / actuals[mask])) * 100)
                 )
             fold_smapes[li_id].append(_smape(actuals, point))
             fold_mases[li_id].append(
-                float(np.mean(np.abs(actuals - point)) / denom) if denom > 1e-12 else float("inf")
+                float(np.mean(np.abs(actuals - point)) / denom) if denom > 1e-12 else None
             )
             fold_pb10[li_id].append(_pinball(actuals, lower, 0.10))
             fold_pb90[li_id].append(_pinball(actuals, upper, 0.90))
@@ -462,17 +459,17 @@ def _panel_walk_forward_cv(
             continue  # never got a usable fold this run — leave out (ineligible)
 
         cov_total = coverage_total[li_id]
-        mean_pb10 = _weighted_mean(fold_pb10[li_id])
-        mean_pb90 = _weighted_mean(fold_pb90[li_id])
+        mean_pb10 = recency_weighted_mean(fold_pb10[li_id])
+        mean_pb90 = recency_weighted_mean(fold_pb90[li_id])
         mean_pb = (
             (mean_pb10 + mean_pb90) / 2.0
             if mean_pb10 != float("inf") and mean_pb90 != float("inf")
             else float("inf")
         )
         results[li_id] = {
-            "mean_mape": _weighted_mean(fold_mapes[li_id]),
-            "mean_smape": _weighted_mean(fold_smapes[li_id]),
-            "mean_mase": _weighted_mean(fold_mases[li_id]),
+            "mean_mape": recency_weighted_mean(fold_mapes[li_id]),
+            "mean_smape": recency_weighted_mean(fold_smapes[li_id]),
+            "mean_mase": recency_weighted_mean(fold_mases[li_id]),
             "mean_pinball_10": mean_pb10,
             "mean_pinball_90": mean_pb90,
             "mean_pinball": mean_pb,
@@ -481,6 +478,7 @@ def _panel_walk_forward_cv(
             "n": n_test[li_id],
             "fold_mapes": fold_mapes[li_id],
             "fold_mases": fold_mases[li_id],
+            "fold_horizon": FOLD_HORIZON,
             "n_folds_used": n_folds_used[li_id],
             "mase_scale_method": "seasonal_naive",
         }
