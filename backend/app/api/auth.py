@@ -1,5 +1,6 @@
 """Authentication endpoints -- login, register, current user, OIDC SSO."""
 
+import secrets
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -12,6 +13,8 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from app.database import get_db
 from app.config import settings
+from app.models.business_unit import BusinessUnit
+from app.models.company import Company
 from app.models.user import User, Role
 from app.schemas.auth import (
     LoginRequest,
@@ -209,6 +212,18 @@ async def register(
 
     from app.services.business_units import get_or_create_business_unit
 
+    # Self-registration may start a new company but never join an existing one:
+    # typing a company's name is not proof of membership. Existing companies are
+    # joined only through an admin (/auth/admin/users or company memberships).
+    if body.business_unit and (
+        db.query(BusinessUnit).filter(BusinessUnit.name == body.business_unit).first()
+        or db.query(Company).filter(Company.name == body.business_unit).first()
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="That company already exists. Ask its administrator to add you.",
+        )
+
     bu = get_or_create_business_unit(db, body.business_unit)
     user = User(
         email=body.email,
@@ -340,6 +355,9 @@ async def oidc_login(request: Request):
     return RedirectResponse(f"{authorize_url}?{urlencode(params)}")
 
 
+OIDC_ALLOWED_ALGS = frozenset({"RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512"})
+
+
 async def _verify_oidc_id_token(client, id_token: str, expected_nonce: str) -> dict:
     """Verify id_token signature against the IdP JWKS and return claims."""
     issuer = settings.oidc_issuer.rstrip("/")
@@ -372,21 +390,87 @@ async def _verify_oidc_id_token(client, id_token: str, expected_nonce: str) -> d
     if key is None:
         raise ValueError("No matching JWK for id_token")
 
-    key_obj = jose_jwk.construct(key)
+    # Never let the token pick its own algorithm: an attacker-chosen HS256
+    # would turn the IdP's *public* key into the HMAC secret.
+    alg = header.get("alg")
+    if alg not in OIDC_ALLOWED_ALGS:
+        raise ValueError(f"id_token alg {alg!r} not allowed")
+    key_obj = jose_jwk.construct(key, algorithm=alg)
     claims = jwt.decode(
         id_token,
         key_obj,
-        algorithms=[header.get("alg", "RS256")],
+        algorithms=[alg],
         audience=settings.oidc_client_id,
         options={"verify_at_hash": False},
     )
-    if claims.get("iss") and not str(claims["iss"]).rstrip("/").startswith(issuer):
-        # Allow issuer with/without trailing slash
-        if str(claims["iss"]).rstrip("/") != issuer:
-            raise ValueError("id_token issuer mismatch")
-    if expected_nonce and claims.get("nonce") and claims["nonce"] != expected_nonce:
+    # Exact issuer match (trailing slash tolerated) -- a prefix match would
+    # accept a sibling realm such as ".../realms/rf-evil".
+    if str(claims.get("iss") or "").rstrip("/") != issuer:
+        raise ValueError("id_token issuer mismatch")
+    if claims.get("nonce") != expected_nonce:
         raise ValueError("nonce mismatch")
     return claims
+
+
+def resolve_oidc_user(db: Session, claims: dict, info: dict) -> User:
+    """Find or create the local user for a verified IdP identity.
+
+    Identity is (iss, sub) from the signed id_token. A pre-existing local
+    account is linked only by an IdP-*verified* email -- never by
+    preferred_username, which any IdP user can choose (an IdP user named
+    "admin" must not become the local admin).
+    """
+    issuer = str(claims.get("iss") or settings.oidc_issuer).rstrip("/")
+    subject = claims.get("sub")
+    if not subject:
+        raise HTTPException(status_code=401, detail="OIDC id_token missing sub")
+    if info.get("sub") and info["sub"] != subject:
+        raise HTTPException(status_code=401, detail="OIDC userinfo subject mismatch")
+
+    user = (
+        db.query(User)
+        .filter(User.oidc_issuer == issuer, User.oidc_subject == subject)
+        .first()
+    )
+    if user:
+        return user
+
+    email = info.get("email") or claims.get("email")
+    email_verified = info.get("email_verified", claims.get("email_verified"))
+    if not email or email_verified is not True:
+        raise HTTPException(status_code=403, detail="OIDC account has no verified email")
+
+    user = db.query(User).filter(User.email == email).first()
+    if user:
+        if user.oidc_subject and (user.oidc_issuer, user.oidc_subject) != (issuer, subject):
+            raise HTTPException(status_code=403, detail="Account is linked to another SSO identity")
+        user.oidc_issuer, user.oidc_subject = issuer, subject
+        db.commit()
+        db.refresh(user)
+        return user
+
+    base = (info.get("preferred_username") or email.split("@")[0])[:90]
+    username = base
+    while db.query(User).filter(User.username == username).first():
+        username = f"{base}-{secrets.token_hex(3)}"
+    role = db.query(Role).filter(Role.name == "analyst").first()
+    user = User(
+        email=email,
+        username=username,
+        # Unusable local password: SSO users sign in through the IdP only.
+        hashed_password=pwd_context.hash(secrets.token_urlsafe(32)),
+        full_name=info.get("name") or username,
+        role_id=role.id if role else None,
+        is_active=True,
+        oidc_issuer=issuer,
+        oidc_subject=subject,
+    )
+    db.add(user)
+    db.flush()
+    ensure_active_membership(db, user)
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 @router.get("/oidc/callback")
@@ -439,17 +523,19 @@ async def oidc_callback(
             raise HTTPException(status_code=401, detail="OIDC token exchange failed")
         tokens = token_resp.json()
 
-        # Validate id_token signature via IdP JWKS + nonce
+        # Validate id_token signature via IdP JWKS + nonce. The id_token is the
+        # only signed statement of who the user is, so a missing one is fatal.
         id_token = tokens.get("id_token")
-        if id_token:
-            try:
-                claims = await _verify_oidc_id_token(client, id_token, pending.nonce)
-                if claims.get("nonce") and claims.get("nonce") != pending.nonce:
-                    raise HTTPException(status_code=401, detail="OIDC nonce mismatch")
-            except HTTPException:
-                raise
-            except Exception as e:
-                raise HTTPException(status_code=401, detail=f"OIDC id_token invalid: {e}") from e
+        if not id_token:
+            raise HTTPException(status_code=401, detail="OIDC response missing id_token")
+        try:
+            claims = await _verify_oidc_id_token(client, id_token, pending.nonce)
+            if claims.get("nonce") != pending.nonce:
+                raise HTTPException(status_code=401, detail="OIDC nonce mismatch")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=401, detail=f"OIDC id_token invalid: {e}") from e
 
         access = tokens.get("access_token")
         userinfo = await client.get(
@@ -459,27 +545,7 @@ async def oidc_callback(
             raise HTTPException(status_code=401, detail="OIDC userinfo failed")
         info = userinfo.json()
 
-    email = info.get("email") or info.get("preferred_username")
-    username = info.get("preferred_username") or (email.split("@")[0] if email else None)
-    if not email or not username:
-        raise HTTPException(status_code=400, detail="OIDC profile missing email/username")
-
-    user = db.query(User).filter((User.email == email) | (User.username == username)).first()
-    if not user:
-        role = db.query(Role).filter(Role.name == "analyst").first()
-        user = User(
-            email=email,
-            username=username,
-            hashed_password=pwd_context.hash(f"oidc:{username}"),
-            full_name=info.get("name") or username,
-            role_id=role.id if role else None,
-            is_active=True,
-        )
-        db.add(user)
-        db.flush()
-        ensure_active_membership(db, user)
-        db.commit()
-        db.refresh(user)
+    user = resolve_oidc_user(db, claims, info)
 
     record_audit(
         db,

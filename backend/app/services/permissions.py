@@ -34,12 +34,36 @@ def user_has_permission(user: User, permission: str) -> bool:
 
 
 def can_view_all_bus(user: User) -> bool:
-    """True if user may read line items across all business units."""
-    if not user.role:
-        return False
-    if getattr(user.role, "can_view_all_bus", False) or user.role.can_admin:
-        return True
-    return user.role.name == "admin"
+    """True if user may read and act across all companies.
+
+    Only a platform admin (User.is_platform_admin) has that reach. An
+    ``admin`` role -- or the legacy Role.can_view_all_bus flag -- administers
+    the caller's *active* company only: roles are shared across companies,
+    so honouring a role flag here would let any company's admin see every
+    company.
+    """
+    return bool(getattr(user, "is_platform_admin", False))
+
+
+def is_platform_admin(user: User | None) -> bool:
+    return user is not None and can_view_all_bus(user)
+
+
+def require_platform_admin():
+    """FastAPI dependency for settings that apply to every company at once
+    (skill prompts, FX rates, the global audit log)."""
+    # Lazy import to avoid circular dependency with app.api.auth
+    from app.api.auth import get_current_user
+
+    def _dependency(current_user: User = Depends(get_current_user)) -> User:
+        if not is_platform_admin(current_user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Platform administrator access required",
+            )
+        return current_user
+
+    return _dependency
 
 
 _Q = TypeVar("_Q", bound=Query)

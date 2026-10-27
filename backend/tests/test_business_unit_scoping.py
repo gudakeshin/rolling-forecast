@@ -50,6 +50,7 @@ def _make_admin_user(db_session, seed_roles, username: str, business_unit: Busin
         full_name=username,
         business_unit_id=business_unit.id if business_unit else None,
         role_id=seed_roles["admin"].id,
+        is_platform_admin=True,
     )
     db_session.add(u)
     db_session.commit()

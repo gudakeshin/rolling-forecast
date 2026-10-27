@@ -31,11 +31,36 @@ def scope_char_limit(scope: str) -> int:
     return int(settings.core_memory_char_limit_user)
 
 
-def resolve_memory_target(user: User, scope: str) -> MemoryTarget:
+def _company_id(db: Session, user: User) -> str | None:
+    from app.services.company_membership import active_company_id
+
+    return active_company_id(db, user)
+
+
+def resolve_memory_target(db: Session, user: User, scope: str) -> MemoryTarget:
+    """Where a write by `user` to `scope` lands, enforcing who may write it.
+
+    Every block below except ``persona`` is keyed to one owner, so it can
+    only reach that owner's prompts. ``organization`` is the active
+    company's shared memory (company admins only); ``persona`` -- the one
+    block every company's prompt includes -- is platform-admin only, since a
+    write there is effectively a system-prompt edit for all tenants.
+    """
+    from app.services.permissions import is_platform_admin
+
     if scope not in VALID_SCOPES:
         raise ValueError(f"Invalid scope '{scope}'")
-    if scope in {"persona", "organization"}:
+    if scope == "persona":
+        if not is_platform_admin(user):
+            raise ValueError("Only a platform administrator can write persona memory")
         return MemoryTarget(scope=scope, owner_id=None)
+    if scope == "organization":
+        if not user.can_admin:
+            raise ValueError("Only a company administrator can write organization memory")
+        company_id = _company_id(db, user)
+        if not company_id:
+            raise ValueError("User has no company; cannot write organization memory")
+        return MemoryTarget(scope=scope, owner_id=company_id)
     if scope == "user":
         return MemoryTarget(scope=scope, owner_id=user.id)
     if not user.business_unit_id:
@@ -71,7 +96,7 @@ def upsert_core_memory(
     char_limit: int,
     replace: bool,
 ) -> MemoryBlock:
-    target = resolve_memory_target(actor, scope)
+    target = resolve_memory_target(db, actor, scope)
     block = _get_block(db, scope=target.scope, owner_id=target.owner_id, label=label)
     before = block.content if block else ""
 
@@ -130,11 +155,17 @@ def upsert_core_memory(
 
 
 def list_core_memory_for_user(db: Session, user: User) -> list[MemoryBlock]:
+    """Every core-memory block `user` may read -- the one visibility rule
+    shared by the API, the chat system prompt and the memory skills."""
     clauses = [
         (MemoryBlock.scope == "persona") & (MemoryBlock.owner_id.is_(None)),
-        (MemoryBlock.scope == "organization") & (MemoryBlock.owner_id.is_(None)),
         (MemoryBlock.scope == "user") & (MemoryBlock.owner_id == user.id),
     ]
+    company_id = _company_id(db, user)
+    if company_id:
+        clauses.append(
+            (MemoryBlock.scope == "organization") & (MemoryBlock.owner_id == company_id)
+        )
     if user.business_unit_id:
         clauses.append(
             (MemoryBlock.scope == "business_unit") & (MemoryBlock.owner_id == user.business_unit_id)

@@ -114,9 +114,19 @@ def test_async_jobs_required_in_production_without_explicit_flag(monkeypatch):
 def test_async_jobs_default_false_outside_prod_compose(monkeypatch):
     """Local/dev compose leaves REQUIRE_ASYNC_JOBS unset → sync generate_baseline OK."""
     monkeypatch.setattr(settings, "require_async_jobs", False)
-    for env in ("development", "test", "staging"):
+    for env in ("development", "test"):
         monkeypatch.setattr(settings, "app_env", env)
         assert settings.async_jobs_required is False, env
+
+
+def test_unknown_app_env_fails_closed_to_production(monkeypatch):
+    """Only explicit development/test relax production guards; staging/prod/typos don't."""
+    for env in ("production", "prod", "staging", "uat", "Production ", "developement"):
+        monkeypatch.setattr(settings, "app_env", env)
+        assert settings.is_production is True, env
+    for env in ("development", "test", "TEST"):
+        monkeypatch.setattr(settings, "app_env", env)
+        assert settings.is_production is False, env
 
 
 def test_driver_context_preload_batches_lookups(db_session, seed_line_items):

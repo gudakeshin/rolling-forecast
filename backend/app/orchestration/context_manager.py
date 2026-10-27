@@ -2,7 +2,6 @@
 
 from typing import Any
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
 from app.models.conversation import Conversation, Message
 from app.models.memory import MemoryBlock
 from app.models.user import User
@@ -182,22 +181,9 @@ class ContextManager:
 
     def _get_core_memory_blocks(self) -> list[MemoryBlock]:
         """Return core-memory blocks visible to this user."""
-        q = self.db.query(MemoryBlock)
-        clauses = [
-            (MemoryBlock.scope == "persona") & (MemoryBlock.owner_id.is_(None)),
-            (MemoryBlock.scope == "organization") & (MemoryBlock.owner_id.is_(None)),
-            (MemoryBlock.scope == "user") & (MemoryBlock.owner_id == self.user.id),
-        ]
-        if self.user.business_unit_id:
-            clauses.append(
-                (MemoryBlock.scope == "business_unit")
-                & (MemoryBlock.owner_id == self.user.business_unit_id)
-            )
-        rows = (
-            q.filter(or_(*clauses))
-            .order_by(MemoryBlock.scope.asc(), MemoryBlock.label.asc())
-            .all()
-        )
+        from app.services.memory_blocks import list_core_memory_for_user
+
+        rows = list_core_memory_for_user(self.db, self.user)
         # Keep prompt growth bounded even if stored blocks are larger.
         budget = max(0, int(settings.core_memory_prompt_char_budget))
         if budget <= 0:

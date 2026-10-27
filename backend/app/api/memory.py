@@ -10,12 +10,15 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
 from app.models.conversation import Conversation, Message
-from app.models.memory import MemoryBlock
 from app.models.user import User
 from app.services import archival_memory
 from app.services.audit import record_audit
 from app.api.auth import get_current_user
-from app.services.memory_blocks import scope_char_limit, upsert_core_memory
+from app.services.memory_blocks import (
+    list_core_memory_for_user,
+    scope_char_limit,
+    upsert_core_memory,
+)
 
 router = APIRouter(prefix="/memory", tags=["memory"])
 
@@ -39,22 +42,7 @@ async def list_core_memory(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    clauses = [
-        (MemoryBlock.scope == "persona") & (MemoryBlock.owner_id.is_(None)),
-        (MemoryBlock.scope == "organization") & (MemoryBlock.owner_id.is_(None)),
-        (MemoryBlock.scope == "user") & (MemoryBlock.owner_id == current_user.id),
-    ]
-    if current_user.business_unit_id:
-        clauses.append(
-            (MemoryBlock.scope == "business_unit")
-            & (MemoryBlock.owner_id == current_user.business_unit_id)
-        )
-    rows = (
-        db.query(MemoryBlock)
-        .filter(or_(*clauses))
-        .order_by(MemoryBlock.scope.asc(), MemoryBlock.label.asc())
-        .all()
-    )
+    rows = list_core_memory_for_user(db, current_user)
     return {
         "blocks": [
             {

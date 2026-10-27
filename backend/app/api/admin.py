@@ -15,8 +15,10 @@ from app.models.audit import AuditEvent
 from app.schemas.auth import GrantMembershipRequest, UserResponse
 from app.services.permissions import (
     can_access_business_unit,
+    is_platform_admin,
     require_admin_or_view_all_bus,
     require_permission,
+    require_platform_admin,
 )
 from app.services.analysis_profile import (
     ANALYSIS_PROFILE_FIELDS,
@@ -26,7 +28,14 @@ from app.services.analysis_profile import (
 )
 from app.services.coa_dependencies import ensure_standard_dependencies
 from app.services.audit import record_audit
-from app.services.company_membership import ensure_active_membership, grant_membership, list_memberships
+from app.models.company_membership import CompanyMembership
+from app.services.company_membership import (
+    active_company_id,
+    ensure_active_membership,
+    grant_membership,
+    is_member,
+    list_memberships,
+)
 from passlib.context import CryptContext
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -78,8 +87,39 @@ async def list_users(
     current_user: User = Depends(require_permission("admin")),
     db: Session = Depends(get_db),
 ):
-    users = db.query(User).order_by(User.username).all()
-    return [UserResponse.model_validate(u) for u in users]
+    q = db.query(User).order_by(User.username)
+    if not is_platform_admin(current_user):
+        # A company admin manages their active company's members only.
+        company_id = active_company_id(db, current_user)
+        q = q.join(CompanyMembership, CompanyMembership.user_id == User.id).filter(
+            CompanyMembership.company_id == company_id
+        )
+    return [UserResponse.model_validate(u) for u in q.all()]
+
+
+def _managed_user_or_404(db: Session, actor: User, user_id: str) -> User:
+    """The target user, if `actor` may administer them.
+
+    Platform admins manage anyone. A company admin manages users who belong
+    to their active company *only* -- never a platform admin, and never
+    someone who also holds a membership elsewhere (a password reset would
+    otherwise be a takeover of that other company's access). Not-found and
+    not-yours look the same.
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    if is_platform_admin(actor):
+        return user
+    company_id = active_company_id(db, actor)
+    other_companies = (
+        db.query(CompanyMembership.id)
+        .filter(CompanyMembership.user_id == user.id, CompanyMembership.company_id != company_id)
+        .first()
+    )
+    if is_platform_admin(user) or not is_member(db, user.id, company_id) or other_companies:
+        raise HTTPException(404, "User not found")
+    return user
 
 
 @router.patch("/users/{user_id}", response_model=UserResponse)
@@ -89,9 +129,9 @@ async def update_user(
     current_user: User = Depends(require_permission("admin")),
     db: Session = Depends(get_db),
 ):
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(404, "User not found")
+    user = _managed_user_or_404(db, current_user, user_id)
+    if body.business_unit is not None and not is_platform_admin(current_user):
+        raise HTTPException(403, "Only a platform administrator can move users between companies")
     if body.full_name is not None:
         user.full_name = body.full_name
     if body.business_unit is not None:
@@ -132,9 +172,7 @@ async def get_user_memberships(
     current_user: User = Depends(require_permission("admin")),
     db: Session = Depends(get_db),
 ):
-    target = db.query(User).filter(User.id == user_id).first()
-    if not target:
-        raise HTTPException(404, "User not found")
+    target = _managed_user_or_404(db, current_user, user_id)
     return list_memberships(db, target)
 
 
@@ -148,6 +186,10 @@ async def grant_user_membership(
     """Grant `user_id` a role in a company -- doesn't change their currently
     active company, just adds it to their switchable set (see
     POST /auth/switch-company)."""
+    if not is_platform_admin(current_user) and body.company_id != active_company_id(
+        db, current_user
+    ):
+        raise HTTPException(404, "Company not found")
     role = db.query(Role).filter(Role.name == body.role_name).first()
     if not role:
         raise HTTPException(400, f"Role '{body.role_name}' not found")
@@ -193,7 +235,7 @@ async def list_roles(
 async def update_role(
     role_name: str,
     body: RoleUpdate,
-    current_user: User = Depends(require_permission("admin")),
+    current_user: User = Depends(require_platform_admin()),
     db: Session = Depends(get_db),
 ):
     role = db.query(Role).filter(Role.name == role_name).first()
@@ -210,14 +252,16 @@ async def list_business_units(
     current_user: User = Depends(require_admin_or_view_all_bus()),
     db: Session = Depends(get_db),
 ):
-    units = db.query(BusinessUnit).order_by(BusinessUnit.name).all()
-    return [{"id": u.id, "name": u.name} for u in units]
+    q = db.query(BusinessUnit).order_by(BusinessUnit.name)
+    if not is_platform_admin(current_user):
+        q = q.filter(BusinessUnit.id == current_user.business_unit_id)
+    return [{"id": u.id, "name": u.name} for u in q.all()]
 
 
 @router.post("/business-units")
 async def create_business_unit(
     body: BusinessUnitCreate,
-    current_user: User = Depends(require_permission("admin")),
+    current_user: User = Depends(require_platform_admin()),
     db: Session = Depends(get_db),
 ):
     name = body.name.strip()
@@ -384,7 +428,7 @@ async def wire_standard_coa(
 
 @router.get("/audit")
 async def list_audit(
-    current_user: User = Depends(require_permission("admin")),
+    current_user: User = Depends(require_platform_admin()),
     db: Session = Depends(get_db),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),

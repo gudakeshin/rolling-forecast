@@ -108,6 +108,8 @@ def test_sod_creator_cannot_self_approve(client):
             )
             db.add(creator)
             db.flush()
+        # Cross-company system admin (the version below has no company).
+        creator.is_platform_admin = True
 
         version = ForecastVersion(
             name="FC-SoD-Test",

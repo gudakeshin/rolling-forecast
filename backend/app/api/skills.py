@@ -14,7 +14,7 @@ from app.domain.skill_loader import (
     SKILLS_DIR,
 )
 from app.models.user import User
-from app.services.permissions import require_permission
+from app.services.permissions import require_platform_admin
 from app.services.audit import record_audit
 from app.database import get_db
 from sqlalchemy.orm import Session
@@ -93,7 +93,7 @@ async def get_skill(skill_name: str, current_user: User = Depends(get_current_us
 async def update_skill(
     skill_name: str,
     req: SkillUpdateRequest,
-    current_user: User = Depends(require_permission("admin")),
+    current_user: User = Depends(require_platform_admin()),
     db: Session = Depends(get_db),
 ):
     """Update a skill's .md definition file (admin only)."""
@@ -140,7 +140,7 @@ async def update_skill(
 @router.post("/")
 async def create_skill_definition(
     req: SkillCreateRequest,
-    current_user: User = Depends(require_permission("admin")),
+    current_user: User = Depends(require_platform_admin()),
     db: Session = Depends(get_db),
 ):
     """Create a new skill .md definition file (admin only)."""
@@ -179,7 +179,7 @@ async def create_skill_definition(
 
 @router.post("/reload")
 async def reload_definitions(
-    current_user: User = Depends(require_permission("admin")),
+    current_user: User = Depends(require_platform_admin()),
 ):
     """Reload all skill .md definitions from disk (admin only)."""
     registry = get_registry()

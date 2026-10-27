@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, ForeignKey, Boolean
+from sqlalchemy import String, DateTime, ForeignKey, Boolean, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -34,6 +34,9 @@ class Role(Base):
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        Index("uq_users_oidc_identity", "oidc_issuer", "oidc_subject", unique=True),
+    )
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())
@@ -51,6 +54,14 @@ class User(Base):
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     role_id: Mapped[int] = mapped_column(ForeignKey("roles.id"), nullable=False)
+    # Stable SSO identity: an IdP user is linked by (issuer, subject), never by
+    # a mutable/claimable email or username -- see api/auth.py oidc_callback.
+    oidc_issuer: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    oidc_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Cross-company reach is a property of the *person*, not of a Role: roles
+    # are shared across companies, so a role flag granted in one company's
+    # membership would otherwise reach every company. See permissions.py.
+    is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )

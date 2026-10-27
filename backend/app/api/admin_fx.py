@@ -14,7 +14,7 @@ from app.models.fx import FxRate
 from app.models.user import User
 from app.services.audit import record_audit
 from app.services.fx import get_reporting_currency, set_reporting_currency
-from app.services.permissions import require_permission
+from app.services.permissions import require_permission, require_platform_admin
 from app.services.upload_safety import save_upload
 
 router = APIRouter(prefix="/admin/fx", tags=["admin-fx"])
@@ -127,7 +127,7 @@ async def list_rates(
 @router.post("/rates")
 async def create_rate(
     body: FxRateCreate,
-    current_user: User = Depends(require_permission("admin")),
+    current_user: User = Depends(require_platform_admin()),
     db: Session = Depends(get_db),
 ):
     existing = (
@@ -173,7 +173,7 @@ async def create_rate(
 async def update_rate(
     rate_id: str,
     body: FxRateUpdate,
-    current_user: User = Depends(require_permission("admin")),
+    current_user: User = Depends(require_platform_admin()),
     db: Session = Depends(get_db),
 ):
     row = db.query(FxRate).filter(FxRate.id == rate_id).first()
@@ -200,7 +200,7 @@ async def update_rate(
 @router.delete("/rates/{rate_id}")
 async def delete_rate(
     rate_id: str,
-    current_user: User = Depends(require_permission("admin")),
+    current_user: User = Depends(require_platform_admin()),
     db: Session = Depends(get_db),
 ):
     row = db.query(FxRate).filter(FxRate.id == rate_id).first()
@@ -223,7 +223,7 @@ async def delete_rate(
 @router.post("/rates/upload")
 async def upload_rates_csv(
     file: UploadFile = File(...),
-    current_user: User = Depends(require_permission("admin")),
+    current_user: User = Depends(require_platform_admin()),
     db: Session = Depends(get_db),
 ):
     """CSV columns: from_currency,to_currency,period,rate[,rate_type]."""

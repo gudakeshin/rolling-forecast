@@ -94,6 +94,7 @@ def test_hard_delete_cascades_every_dependent_table(
         id = "admin-test"
         username = "admin-test"
         business_unit_id = None
+        is_platform_admin = True
         role = type("R", (), {"can_view_all_bus": True, "can_admin": True, "name": "admin"})()
 
     asyncio.run(delete_version(version_id, current_user=_Admin(), db=db_session))
@@ -142,6 +143,7 @@ async def test_hard_delete_blocked_by_branched_child_version(db_session, seed_li
         id = "admin-test"
         username = "admin-test"
         business_unit_id = None
+        is_platform_admin = True
         role = type("R", (), {"can_view_all_bus": True, "can_admin": True, "name": "admin"})()
 
     with pytest.raises(HTTPException) as exc:
@@ -198,6 +200,7 @@ async def test_new_version_name_does_not_collide_after_deletes(
         id = skill_context.user.id
         username = skill_context.user.username
         business_unit_id = None
+        is_platform_admin = True
         role = type("R", (), {"can_view_all_bus": True, "can_admin": True, "name": "admin"})()
 
     # Delete the newer one -- a naive count-based name would now reuse it.

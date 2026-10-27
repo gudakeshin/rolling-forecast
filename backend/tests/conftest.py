@@ -73,10 +73,17 @@ def ensure_app_db_schema_columns() -> None:
             conn.execute(text("ALTER TABLE actuals_datasets ADD COLUMN business_unit_id VARCHAR(36)"))
         if "storage_path" not in ad_cols:
             conn.execute(text("ALTER TABLE actuals_datasets ADD COLUMN storage_path TEXT"))
-        if "business_unit_id" not in {
-            c["name"] for c in inspect(engine).get_columns("users")
-        }:
+        user_cols = {c["name"] for c in inspect(engine).get_columns("users")}
+        if "business_unit_id" not in user_cols:
             conn.execute(text("ALTER TABLE users ADD COLUMN business_unit_id VARCHAR(36)"))
+        if "is_platform_admin" not in user_cols:
+            conn.execute(
+                text("ALTER TABLE users ADD COLUMN is_platform_admin BOOLEAN DEFAULT 0")
+            )
+        if "oidc_issuer" not in user_cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN oidc_issuer VARCHAR(512)"))
+        if "oidc_subject" not in user_cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN oidc_subject VARCHAR(255)"))
         if "business_unit_id" not in {
             c["name"] for c in inspect(engine).get_columns("line_items")
         }:
@@ -250,7 +257,9 @@ def seed_users(db_session, seed_roles, seed_business_unit):
         db_session.add(u)
         return u
 
-    admin = _user("admin", "admin@test.local", "admin", full_name="Test Admin")
+    admin = _user(
+        "admin", "admin@test.local", "admin", full_name="Test Admin", is_platform_admin=True
+    )
     analyst = _user(
         "analyst", "analyst@test.local", "analyst",
         full_name="Test Analyst", business_unit="North America",

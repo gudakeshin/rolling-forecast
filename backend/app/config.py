@@ -4,6 +4,9 @@ from pydantic_settings import BaseSettings
 from pathlib import Path
 
 
+NON_PRODUCTION_ENVS = frozenset({"development", "test"})
+
+
 class Settings(BaseSettings):
     # Anthropic
     anthropic_api_key: str = ""
@@ -168,7 +171,12 @@ class Settings(BaseSettings):
 
     @property
     def is_production(self) -> bool:
-        return self.app_env.lower() == "production"
+        """Fail closed: anything other than an explicit dev/test env is production.
+
+        A typo or an unlisted value ("prod", "staging", "uat") must not quietly
+        re-enable demo users, open registration and weak-secret allowances.
+        """
+        return self.app_env.strip().lower() not in NON_PRODUCTION_ENVS
 
     @property
     def async_jobs_required(self) -> bool:

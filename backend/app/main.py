@@ -122,7 +122,11 @@ def seed_roles_and_admin(db):
             hashed_password=pwd_context.hash("admin"),
             full_name="System Admin",
             role_id=admin_role.id,
+            is_platform_admin=True,
         ))
+    elif admin and not admin.is_platform_admin:
+        # Demo DBs created before is_platform_admin existed.
+        admin.is_platform_admin = True
 
     analyst_role = db.query(Role).filter(Role.name == "analyst").first()
     analyst = db.query(User).filter(User.username == "analyst").first()

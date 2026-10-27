@@ -56,7 +56,7 @@ def test_create_notification_without_dedup_key_never_collapses(db_session, seed_
 
 
 @pytest.fixture
-def seed_reviewer(db_session, seed_roles):
+def seed_reviewer(db_session, seed_roles, seed_business_unit):
     role = db_session.query(Role).filter(Role.name == "reviewer").first()
     if not role:
         role = Role(
@@ -77,6 +77,9 @@ def seed_reviewer(db_session, seed_roles):
             role_id=role.id,
         )
         db_session.add(user)
+    # A reviewer *in the analyst's company*: role flags no longer grant
+    # cross-company reach (only User.is_platform_admin does).
+    user.business_unit_id = seed_business_unit.id
     db_session.commit()
     return user
 

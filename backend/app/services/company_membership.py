@@ -42,6 +42,25 @@ def list_memberships(db: Session, user: User) -> list[dict]:
     return out
 
 
+def active_company_id(db: Session, user: User) -> str | None:
+    """Company behind the user's active business unit (None if unassigned)."""
+    if not user.business_unit_id:
+        return None
+    bu = db.query(BusinessUnit).filter(BusinessUnit.id == user.business_unit_id).first()
+    return bu.company_id if bu else None
+
+
+def is_member(db: Session, user_id: str, company_id: str | None) -> bool:
+    if not company_id:
+        return False
+    return (
+        db.query(CompanyMembership.id)
+        .filter(CompanyMembership.user_id == user_id, CompanyMembership.company_id == company_id)
+        .first()
+        is not None
+    )
+
+
 def ensure_active_membership(db: Session, user: User) -> None:
     """Upsert a membership matching the user's CURRENT business_unit_id/role_id.
 
