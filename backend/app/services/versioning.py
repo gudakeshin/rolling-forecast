@@ -68,6 +68,10 @@ def clone_version_for_edit(
                 p10=r.p10,
                 p50=r.p50,
                 p90=r.p90,
+                # Immutable model point: carried so FVA on the child still
+                # measures edits/scenarios against what the model produced.
+                model_p50=r.model_p50,
+                pre_reconcile_p50=r.pre_reconcile_p50,
                 confidence_score=r.confidence_score,
                 confidence_level=r.confidence_level,
                 model_type=r.model_type,
