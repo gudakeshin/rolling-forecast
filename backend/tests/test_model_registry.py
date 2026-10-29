@@ -135,9 +135,16 @@ class TestGlobalGBMRegistration:
     """Phase 2.1 — the global panel model must flow through the existing
     two-stage screen and Occam tie-break unchanged; it is never special-cased."""
 
-    def test_not_registered_by_default(self):
+    def test_registered_by_default(self):
+        # Shipped on (with blending) after passing the plan's backtest criterion.
         registry = ModelRegistry()
-        assert "global_gbm" not in registry.list_models()
+        assert "global_gbm" in registry.list_models()
+
+    def test_not_registered_when_disabled(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "enable_global_gbm_model", False)
+        assert "global_gbm" not in ModelRegistry().list_models()
 
     def test_registered_when_enabled(self, monkeypatch):
         from app.config import settings

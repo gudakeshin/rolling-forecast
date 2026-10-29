@@ -478,10 +478,12 @@ def stable_pipeline_settings(monkeypatch):
 
     Winsorizing and post-break truncation would reshape a noise series into a
     short one, which starves the slower models of folds and destroys the tie the
-    nudge tests are about.
+    nudge tests are about. Blending is off too: it would merge the tied pair
+    into an ensemble, and these tests are about which single model wins.
     """
     from app.config import settings
 
+    monkeypatch.setattr(settings, "enable_ensemble_blending", False)
     monkeypatch.setattr(settings, "outlier_cleaning_enabled", False)
     monkeypatch.setattr(settings, "structural_break_min_post_points", 10**6)
 

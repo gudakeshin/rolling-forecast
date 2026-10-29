@@ -140,15 +140,16 @@ class Settings(BaseSettings):
     # Closed cycles of realized vintages before realized coverage overrides CV.
     conformal_realized_min_cycles: int = 3
     # Global cross-series panel model (gradient-boosted quantile regressors,
-    # fit once across all line items in a version). Off by default — the
-    # two-stage cost screen would otherwise start admitting it into every
-    # material line's comparison the moment it ships.
-    enable_global_gbm_model: bool = False
-    # Blend the top-2 models when they land inside the 1-SE selection band
-    # (inverse-MASE weights) instead of publishing the Occam winner alone.
-    # Off by default — same reasoning as conformal/global-GBM: an upgrade
-    # should never silently change which numbers a published forecast shows.
-    enable_ensemble_blending: bool = False
+    # fit once across all line items in a version) and top-2 blending inside
+    # the 1-SE selection band (inverse-MASE weights). On by default, and only
+    # together: the enhancement plan ships new model behavior only if it beats
+    # the baseline on MASE without regressing pinball, and on the three seed
+    # datasets (scripts/backtest_roster.py) blend+GBM does (-11.8% / -8.8%
+    # MASE, -8.8% / -3.4% pinball) while blending alone regresses pinball.
+    # Published versions are stored, so this changes new runs only; a company
+    # can switch either off in its AnalysisProfile.
+    enable_global_gbm_model: bool = True
+    enable_ensemble_blending: bool = True
 
     # Context Engine
     chroma_persist_dir: str = str(Path(__file__).parent.parent / "data" / "chroma")
