@@ -416,13 +416,18 @@ async def scheduled_driver_overdue_sweep(ctx: dict) -> dict:
                 )
             }
             for form in forms:
+                # A form only concerns its own company's versions; pairing it
+                # with every version told one company's input providers about
+                # another company's forecast.
+                if form.business_unit_id != version.business_unit_id:
+                    continue
                 if form.id in submitted_form_ids:
                     continue
                 deadline = check_driver_deadline(form.soft_deadline_days, form.hard_deadline_days)
                 if not (deadline["is_past_soft"] or deadline["is_past_hard"]):
                     continue
                 recipients = users_in_business_unit_with_permission(
-                    db, form.business_unit, "can_input"
+                    db, form.business_unit, "can_input", business_unit_id=form.business_unit_id
                 )
                 created = notify_users(
                     db,
@@ -465,7 +470,13 @@ async def scheduled_anomaly_sweep(ctx: dict) -> dict:
     db = SessionLocal()
     scope_token = push_tenant_scope(UNRESTRICTED)  # deliberately every company, see docstring
     try:
+        # Must see every company's versions: a platform admin. A company admin
+        # (role "admin" only) gets 404 on other companies' versions.
         admin = (
+            db.query(User)
+            .filter(User.is_platform_admin.is_(True), User.is_active.is_(True))
+            .first()
+        ) or (
             db.query(User)
             .join(Role)
             .filter(Role.name == "admin", User.is_active.is_(True))
@@ -483,7 +494,11 @@ async def scheduled_anomaly_sweep(ctx: dict) -> dict:
         recipients = users_with_permission(db, "can_review")
         notified = 0
         for version in versions:
-            result = await get_anomaly_dashboard(version_id=version.id, current_user=admin, db=db)
+            try:
+                result = await get_anomaly_dashboard(version_id=version.id, current_user=admin, db=db)
+            except Exception as e:  # one unreadable version must not stop the sweep
+                logger.warning("scheduled_anomaly_sweep: skipped version %s: %s", version.id, e)
+                continue
             for item in result.data.get("anomalies", []):
                 if item.get("worst_severity") != "critical" or item.get("is_dismissed"):
                     continue

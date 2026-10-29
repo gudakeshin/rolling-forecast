@@ -111,14 +111,22 @@ def users_with_permission(db: Session, permission: str) -> list[User]:
 
 
 def users_in_business_unit_with_permission(
-    db: Session, business_unit: str, permission: str
+    db: Session, business_unit: str | None, permission: str, *, business_unit_id: str | None = None
 ) -> list[User]:
+    """Active users of one company holding `permission`. Matched by company id
+    when given (the real tenant boundary); the legacy free-text name is only a
+    fallback for rows that predate business_unit_id."""
+    company = (
+        User.business_unit_id == business_unit_id
+        if business_unit_id
+        else User.business_unit == business_unit
+    )
     return (
         db.query(User)
         .join(Role)
         .filter(
             User.is_active.is_(True),
-            User.business_unit == business_unit,
+            company,
             getattr(Role, permission).is_(True),
         )
         .all()
