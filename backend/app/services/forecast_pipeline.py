@@ -142,106 +142,65 @@ def _exog_admission_band(mase_plain: float, fold_diffs: list[float]) -> float:
     return max(se, floor)
 
 
-def _evaluate_plain_vs_exog(
-    registry: ModelRegistry,
-    *,
-    model_name: str,
-    values: pd.Series,
-    dates: pd.DatetimeIndex,
-    exog_train: pd.DataFrame,
-) -> dict[str, Any] | None:
-    """Fold MASE for plain vs exog variants of the same model.
+def _round_or_none(v: float | None) -> float | None:
+    return round(float(v), 6) if v is not None and np.isfinite(v) else None
 
-    Returns mean MASEs, fold diffs, and whether exog clears the 1-SE admission band.
+
+def _admit_exog_from_mode_scores(mode_scores: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Exog admission decision from origin-restricted fold scores.
+
+    Compares plain vs exog_mode=forecast (driver forecast from data ≤ origin)
+    on the same folds. The ``known`` score — exog fed realised holdout driver
+    values — is an oracle a live forecast never has, so it is carried only as
+    ``mase_exog_oracle`` diagnostic metadata and never decides admission.
+    Returns ``None`` when no folds were scored.
     """
-    model = registry.get(model_name)
-    if model is None or not model.capabilities.supports_exog:
+    if not mode_scores or not mode_scores.get("n_folds"):
         return None
-    if exog_train is None or exog_train.shape[1] == 0:
-        return None
-    # Guarded above, so this only narrows the type — it cannot raise here.
-    exog_model = as_exog_model(model)
-
-    n = len(values)
-    m = seasonal_period_length()
-    fold_h = 3
-    n_folds = 3
-    mase_plain: list[float] = []
-    mase_exog: list[float] = []
-    used = 0
-
-    for fold in range(1, n_folds + 1):
-        holdout = fold_h * fold
-        train_end = n - holdout
-        if train_end < max(18, model.min_data_points):
-            break
-        test_start = train_end
-        test_end = min(train_end + fold_h, n)
-        if test_end <= test_start:
-            break
-
-        y_train = values.iloc[:train_end]
-        y_test = np.asarray(values.iloc[test_start:test_end].values, dtype=float)
-        d_train = dates[:train_end]
-        ex_tr = exog_train.iloc[:train_end]
-        ex_te = exog_train.iloc[test_start:test_end]
-
-        denom, _ = mase_denominator(np.asarray(y_train.values, dtype=float), m)
-        if denom <= 1e-12:
-            continue
-
-        try:
-            p_plain = exog_model.fit(y_train, d_train, exog=None)
-            fc_plain = exog_model.predict(p_plain, len(y_test), d_train[-1], exog_future=None)
-            err_p = np.abs(y_test - np.asarray(fc_plain.point_forecast[: len(y_test)], dtype=float))
-            mase_plain.append(float(np.mean(err_p) / denom))
-        except Exception:
-            mase_plain.append(float("inf"))
-
-        try:
-            p_ex = exog_model.fit(y_train, d_train, exog=ex_tr)
-            fc_ex = exog_model.predict(p_ex, len(y_test), d_train[-1], exog_future=ex_te)
-            err_e = np.abs(y_test - np.asarray(fc_ex.point_forecast[: len(y_test)], dtype=float))
-            mase_exog.append(float(np.mean(err_e) / denom))
-        except Exception:
-            mase_exog.append(float("inf"))
-        used += 1
-
-    if used == 0:
-        return None
-
-    mean_plain = _mean_finite(mase_plain)
-    mean_exog = _mean_finite(mase_exog)
+    fold_plain = [
+        float("inf") if v is None else float(v) for v in mode_scores.get("fold_mase_plain") or []
+    ]
+    fold_exog = [
+        float("inf") if v is None else float(v) for v in mode_scores.get("fold_mase_forecast") or []
+    ]
+    # Pair folds: a fold where either variant failed says nothing about the gap,
+    # and averaging over different fold subsets would flatter whichever side
+    # dropped its hard folds.
+    paired = [
+        (fold_plain[i], fold_exog[i])
+        for i in range(min(len(fold_plain), len(fold_exog)))
+        if np.isfinite(fold_plain[i]) and np.isfinite(fold_exog[i])
+    ]
+    mean_plain = float(np.mean([a for a, _ in paired])) if paired else None
+    mean_exog = float(np.mean([b for _, b in paired])) if paired else None
+    base = {
+        "n_folds": mode_scores["n_folds"],
+        "basis": "origin_restricted_forecast",
+        "mase_plain": _round_or_none(mean_plain),
+        "mase_exog": _round_or_none(mean_exog),
+        "mase_exog_oracle": _round_or_none(mode_scores.get("mase_known")),
+        "fold_mase_plain": [_round_or_none(v) for v in fold_plain],
+        "fold_mase_exog": [_round_or_none(v) for v in fold_exog],
+    }
     if mean_plain is None or mean_exog is None:
         return {
-            "n_folds": used,
-            "mase_plain": mean_plain,
-            "mase_exog": mean_exog,
+            **base,
             "exog_admitted": False,
             "exog_rejected_reason": "non_finite_mase",
             "admission_band": None,
         }
 
-    diffs = [
-        (mase_plain[i] - mase_exog[i])
-        for i in range(min(len(mase_plain), len(mase_exog)))
-        if np.isfinite(mase_plain[i]) and np.isfinite(mase_exog[i])
-    ]
-    band = _exog_admission_band(mean_plain, diffs)
+    band = _exog_admission_band(mean_plain, [a - b for a, b in paired])
     # Admit only when exog beats plain by more than the band (winner's-curse guard)
     admitted = mean_exog < (mean_plain - band)
     reason = None if admitted else "insufficient_improvement_vs_plain"
     if mean_exog >= mean_plain:
         reason = "exog_mase_not_better"
     return {
-        "n_folds": used,
-        "mase_plain": round(mean_plain, 6),
-        "mase_exog": round(mean_exog, 6),
+        **base,
         "admission_band": round(band, 6),
         "exog_admitted": admitted,
         "exog_rejected_reason": reason,
-        "fold_mase_plain": [round(v, 6) if np.isfinite(v) else None for v in mase_plain],
-        "fold_mase_exog": [round(v, 6) if np.isfinite(v) else None for v in mase_exog],
     }
 
 
@@ -256,20 +215,23 @@ def _evaluate_arima_exog_modes(
     db: Session,
     cal_cfg: FiscalCalendarConfig | None = None,
     random_seed: int = 42,
+    model_name: str = "arima",
 ) -> dict[str, Any] | None:
-    """Fold MASE under exog_mode=forecast vs known.
+    """Fold MASE for plain vs exog under exog_mode=forecast and known.
 
-    - known: holdout exog uses actual driver values
+    All three variants are scored on identical folds so they can be paired:
+
+    - plain: no exog
     - forecast: holdout exog uses driver forecasts fit only on data ≤ fold origin
-      (no look-ahead into post-origin actuals)
+      (no look-ahead into post-origin actuals) — this is what admission uses
+    - known: holdout exog uses actual driver values (oracle; diagnostic only)
     """
     from app.services.driver_forecast_cache import build_origin_overlays
 
-    model = registry.get("arima")
-    if model is None:
+    model = registry.get(model_name)
+    if model is None or not model.capabilities.supports_exog:
         return None
-    # ARIMA is the only exog-capable engine; assert that explicitly rather than
-    # letting a TypeError get swallowed by the per-fold `except Exception`.
+    # Guarded above, so this only narrows the type — it cannot raise here.
     exog_model = as_exog_model(model)
 
     # Specs / train matrix from known actuals (no leakage in training block)
@@ -289,9 +251,15 @@ def _evaluate_arima_exog_modes(
     m = seasonal_period_length()
     fold_h = 3
     n_folds = 3
+    mase_plain: list[float] = []
     mase_forecast: list[float] = []
     mase_known: list[float] = []
     used = 0
+
+    def _fold_mase(params: dict[str, Any], y_test: np.ndarray, last_date, exog_future, denom: float) -> float:
+        fc = exog_model.predict(params, len(y_test), last_date, exog_future=exog_future)
+        err = np.abs(y_test - np.asarray(fc.point_forecast[: len(y_test)], dtype=float))
+        return float(np.mean(err) / denom)
 
     for fold in range(1, n_folds + 1):
         holdout = fold_h * fold
@@ -306,9 +274,18 @@ def _evaluate_arima_exog_modes(
         y_train = values.iloc[:train_end]
         y_test = np.asarray(values.iloc[test_start:test_end].values, dtype=float)
         d_train = dates[:train_end]
+        denom, _ = mase_denominator(np.asarray(y_train.values, dtype=float), m)
+        if denom <= 1e-12:
+            continue
         train_periods = [str(p) for p in periods[:train_end]]
         holdout_periods = [str(p) for p in periods[test_start:test_end]]
         origin = train_periods[-1]
+
+        try:
+            p_plain = exog_model.fit(y_train, d_train, exog=None)
+            mase_plain.append(_fold_mase(p_plain, y_test, d_train[-1], None, denom))
+        except Exception:
+            mase_plain.append(float("inf"))
 
         ex_k_train = bundle_known.exog_train.iloc[:train_end]
         ex_k_test = bundle_known.exog_train.iloc[test_start:test_end]
@@ -331,40 +308,25 @@ def _evaluate_arima_exog_modes(
             max_links=3,
             overlays=overlays,
         )
-        if bundle_f is None:
+        common = (
+            [c for c in ex_k_train.columns if c in bundle_f.exog_train.columns]
+            if bundle_f is not None
+            else []
+        )
+        if not common:
             mase_forecast.append(float("inf"))
         else:
-            ex_f_train = bundle_f.exog_train
-            ex_f_test = bundle_f.exog_future
-            # Align columns with known bundle when possible
-            common = [c for c in ex_k_train.columns if c in ex_f_train.columns]
-            if not common:
+            try:
+                p_f = exog_model.fit(y_train, d_train, exog=bundle_f.exog_train[common])
+                mase_forecast.append(
+                    _fold_mase(p_f, y_test, d_train[-1], bundle_f.exog_future[common], denom)
+                )
+            except Exception:
                 mase_forecast.append(float("inf"))
-            else:
-                try:
-                    p_f = exog_model.fit(y_train, d_train, exog=ex_f_train[common])
-                    fc_f = exog_model.predict(
-                        p_f, len(y_test), d_train[-1], exog_future=ex_f_test[common]
-                    )
-                    err_f = np.abs(
-                        y_test - np.asarray(fc_f.point_forecast[: len(y_test)], dtype=float)
-                    )
-                    denom, _ = mase_denominator(np.asarray(y_train.values, dtype=float), m)
-                    mase_forecast.append(
-                        float(np.mean(err_f) / denom) if denom > 1e-12 else float("inf")
-                    )
-                except Exception:
-                    mase_forecast.append(float("inf"))
-
-        denom, _ = mase_denominator(np.asarray(y_train.values, dtype=float), m)
-        if denom <= 1e-12:
-            continue
 
         try:
             p_k = exog_model.fit(y_train, d_train, exog=ex_k_train)
-            fc_k = exog_model.predict(p_k, len(y_test), d_train[-1], exog_future=ex_k_test)
-            err_k = np.abs(y_test - np.asarray(fc_k.point_forecast[: len(y_test)], dtype=float))
-            mase_known.append(float(np.mean(err_k) / denom))
+            mase_known.append(_fold_mase(p_k, y_test, d_train[-1], ex_k_test, denom))
         except Exception:
             mase_known.append(float("inf"))
         used += 1
@@ -373,8 +335,12 @@ def _evaluate_arima_exog_modes(
         return None
     return {
         "n_folds": used,
+        "mase_plain": _mean_finite(mase_plain),
         "mase_forecast": _mean_finite(mase_forecast),
         "mase_known": _mean_finite(mase_known),
+        "fold_mase_plain": [_round_or_none(v) for v in mase_plain],
+        "fold_mase_forecast": [_round_or_none(v) for v in mase_forecast],
+        "fold_mase_known": [_round_or_none(v) for v in mase_known],
         "origin_restricted": True,
     }
 
@@ -889,13 +855,23 @@ def forecast_line_item(
                     else settings.exog_min_points_per_regressor
                 ) * max(k, 1)
                 if min_train >= needed:
-                    decision = _evaluate_plain_vs_exog(
+                    # Score plain vs exog with driver values forecast from the
+                    # fold origin only — what a live forecast actually has. The
+                    # realised-driver ("known") score is an oracle and is kept
+                    # purely as diagnostic metadata.
+                    mode_scores = _evaluate_arima_exog_modes(
                         registry,
-                        model_name=selected_model,
+                        line_item_id=li.id,
                         values=effective_values,
                         dates=effective_dates,
-                        exog_train=exog_bundle.exog_train,
+                        periods=[str(p) for p in periods[-len(effective_values):]],
+                        version_id=ctx.version_id,
+                        db=db,
+                        cal_cfg=cal_cfg,
+                        random_seed=random_seed,
+                        model_name=selected_model,
                     )
+                    decision = _admit_exog_from_mode_scores(mode_scores)
                     use_exog = bool(decision and decision.get("exog_admitted"))
                     exog_spec = {
                         "mode": "forecast" if use_exog else "rejected",
@@ -917,22 +893,11 @@ def forecast_line_item(
                         "required_points": needed,
                         "exog_source_version_id": ctx.version_id,
                         "plain_vs_exog": decision,
-                    }
-                    mode_scores = _evaluate_arima_exog_modes(
-                        registry,
-                        line_item_id=li.id,
-                        values=effective_values,
-                        dates=effective_dates,
-                        periods=[str(p) for p in periods[-len(effective_values):]],
-                        version_id=ctx.version_id,
-                        db=db,
-                        cal_cfg=cal_cfg,
-                        random_seed=random_seed,
-                    )
-                    exog_spec["exog_mode_scores"] = mode_scores or {
-                        "n_folds": 0,
-                        "mase_forecast": None,
-                        "mase_known": None,
+                        "exog_mode_scores": mode_scores or {
+                            "n_folds": 0,
+                            "mase_forecast": None,
+                            "mase_known": None,
+                        },
                     }
                     if not use_exog:
                         reason = exog_spec["exog_rejected_reason"]

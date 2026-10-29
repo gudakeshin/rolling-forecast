@@ -74,11 +74,16 @@ def test_forecast_pipeline_stamps_exog_spec_when_enabled(db_session):
     vals = []
     drv = []
     rng = np.random.default_rng(42)
-    x = 100.0
+    xs = [100.0]
+    for _ in range(38):
+        xs.append(xs[-1] + rng.normal(0, 3.0))  # irregular driver path
     for i in range(36):
         period = f"{2021 + (i // 12)}-{(i % 12) + 1:02d}"
-        x = x + rng.normal(0, 3.0)  # irregular driver path
-        y = 50.0 + 4.0 * x + rng.normal(0, 1.0)
+        x = xs[i + 3]
+        # Line responds to the driver 3 periods back, so at a 3-step fold
+        # origin the holdout regressor values are already known — the gain
+        # survives the origin-restricted (no oracle) admission test.
+        y = 50.0 + 4.0 * xs[i] + rng.normal(0, 1.0)
         periods.append(period)
         drv.append({"period": period, "value": float(x)})
         vals.append(float(y))
@@ -88,7 +93,7 @@ def test_forecast_pipeline_stamps_exog_spec_when_enabled(db_session):
             driver_id=d.id,
             line_item_id=li.id,
             relation="level",
-            lag=0,
+            lag=3,
             status="active",
             link_type="manual",
             transform="level",
@@ -358,3 +363,69 @@ def test_board_pack_lists_driver_dependent_lines(db_session, seed_users):
     assert "hc@lag1" in notes[0]
     assert "inflated" in notes[0].lower()
 
+
+
+def test_exog_rejected_when_driver_only_helps_with_oracle_future(db_session):
+    """A same-period random-walk driver explains the line perfectly *if* you are
+    handed its realised future — which a live forecast never is. Admission must
+    use origin-restricted driver forecasts and reject it; the oracle score is
+    kept only as diagnostic metadata."""
+    li = LineItem(account_code="REV-EXOG-ORACLE", name="Oracle Exog", category="Revenue", display_order=12)
+    db_session.add(li)
+    db_session.flush()
+    d = Driver(key="driver_oracle", name="Oracle Driver", driver_type="macro")
+    db_session.add(d)
+    db_session.flush()
+
+    rng = np.random.default_rng(7)
+    x = 100.0
+    periods, vals, drv = [], [], []
+    for i in range(36):
+        period = f"{2021 + (i // 12)}-{(i % 12) + 1:02d}"
+        x = x + rng.normal(0, 3.0)  # unforecastable beyond "stays where it is"
+        y = 50.0 + 4.0 * x + rng.normal(0, 0.5)
+        periods.append(period)
+        drv.append({"period": period, "value": float(x)})
+        vals.append(float(y))
+    upsert_driver_values(db_session, driver_id=d.id, rows=drv)
+    db_session.add(
+        DriverLink(
+            driver_id=d.id,
+            line_item_id=li.id,
+            relation="level",
+            lag=0,
+            status="active",
+            link_type="manual",
+            transform="level",
+        )
+    )
+    db_session.commit()
+
+    values = pd.Series(vals, dtype=float)
+    dates = pd.DatetimeIndex([pd.Timestamp(f"{p}-01") for p in periods])
+    out = forecast_line_item(
+        db_session,
+        li,
+        values,
+        dates,
+        periods,
+        LineForecastContext(
+            version_id="phase8-oracle",
+            horizon=6,
+            random_seed=42,
+            model_type="arima",
+            selection_rule="mase_pinball_complexity",
+            is_material=True,
+            cal_cfg=get_calendar_config(),
+            model_registry=ModelRegistry(),
+            enable_driver_forecasting=True,
+        ),
+    )
+    spec = (out.metadata_rows[0].parameters or {})["exog_spec"]
+    decision = spec["plain_vs_exog"]
+    assert decision["basis"] == "origin_restricted_forecast"
+    # The oracle would have admitted it by a wide margin ...
+    assert decision["mase_exog_oracle"] < 0.5 * decision["mase_plain"]
+    # ... but with only origin-time driver forecasts there is no real gain.
+    assert spec["exog_admitted"] is False
+    assert spec["mode"] == "rejected"

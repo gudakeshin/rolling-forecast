@@ -605,3 +605,148 @@ def test_delete_version_endpoint(client):
     # "already archived" no-op like the old archive-only behavior.
     r = client.delete(f"/api/panel/version/{scenario_id}", headers=headers)
     assert r.status_code == 404
+
+
+def test_what_if_shock_moves_forecast_periods_by_fitted_beta_at_lag(db_session, seed_users):
+    """A shock must reach forecast periods (driver plan/forecast as base), honour
+    the link lag, run through the baseline's fitted exog beta, and leave the
+    immutable model_p50 alone."""
+    from app.models.forecast import ModelMetadata
+
+    li = LineItem(account_code="REV-WHATIF-LAG", name="Revenue lag", category="Revenue", display_order=5)
+    db_session.add(li)
+    db_session.flush()
+    base = ForecastVersion(
+        name="Base Lag",
+        status="draft",
+        version_type="scheduled",
+        scenario="base",
+        horizon_months=3,
+        created_by=seed_users["admin"].id,
+        created_at=datetime.now(timezone.utc),
+    )
+    db_session.add(base)
+    db_session.flush()
+    d = create_driver(db_session, key="drv_lag", name="Lag Driver", driver_type="macro", actor=seed_users["admin"])
+    db_session.flush()
+    # History ends 2024-12; the future only exists as the baseline's driver forecast.
+    upsert_driver_values(
+        db_session,
+        driver_id=d.id,
+        rows=[{"period": f"2024-{m:02d}", "value": 50.0} for m in range(1, 13)],
+    )
+    upsert_driver_values(
+        db_session,
+        driver_id=d.id,
+        rows=[{"period": f"2025-{m:02d}", "value": 52.0} for m in range(1, 4)],
+        value_type="forecast",
+        version_id=base.id,
+    )
+    link = assert_link(
+        db_session,
+        driver_id=d.id,
+        line_item_id=li.id,
+        relation="level",
+        coefficient=2.0,  # discovery estimate — must lose to the fitted beta
+        status="active",
+        actor=seed_users["admin"],
+    )
+    link.lag = 1
+    params = {
+        "exog_spec": {"exog_admitted": True, "mode": "forecast"},
+        "exog_betas": {f"d{d.id}_lag1": 3.0},
+    }
+    for period in ("2025-01", "2025-02", "2025-03"):
+        flr = ForecastLineResult(
+            version_id=base.id, line_item_id=li.id, period=period,
+            p10=180.0, p50=200.0, p90=220.0, model_p50=200.0,
+        )
+        db_session.add(flr)
+        db_session.flush()
+        db_session.add(ModelMetadata(line_result_id=flr.id, model_type="arima", parameters=params))
+    db_session.commit()
+
+    out = create_what_if_scenario(
+        db_session,
+        base_version_id=base.id,
+        scenario_label="driver-up",
+        shocks=[DriverShock(driver_id=d.id, mode="absolute", value=10.0)],
+        actor=seed_users["admin"],
+    )
+    rows = {
+        r.period: r
+        for r in db_session.query(ForecastLineResult)
+        .filter(ForecastLineResult.version_id == out["scenario_version_id"], ForecastLineResult.line_item_id == li.id)
+        .all()
+    }
+    # 2025-01 reads the driver at 2024-12 (history, not shocked) -> unchanged.
+    assert rows["2025-01"].p50 == pytest.approx(200.0)
+    # 2025-02/03 read the shocked 2025-01/02 driver: +beta * delta = 3.0 * 10.
+    assert rows["2025-02"].p50 == pytest.approx(230.0)
+    assert rows["2025-03"].p50 == pytest.approx(230.0)
+    assert out["affected_line_periods"] == 2
+    assert out["line_items"][0]["effect_source"] == "fitted_exog_beta"
+    # The model point is the FVA anchor and must not move with the scenario.
+    for r in rows.values():
+        assert r.model_p50 == pytest.approx(200.0)
+    # The band travels with the point.
+    assert rows["2025-02"].p10 == pytest.approx(210.0)
+    assert rows["2025-02"].p90 == pytest.approx(250.0)
+
+
+def test_what_if_future_base_falls_back_to_last_actual(db_session, seed_users):
+    """With no stored driver forecast/plan, the base carries the last actual
+    forward (as the baseline exog matrix does) instead of skipping the future."""
+    li = LineItem(account_code="REV-WHATIF-FF", name="Revenue ffill", category="Revenue", display_order=6)
+    db_session.add(li)
+    db_session.flush()
+    base = ForecastVersion(
+        name="Base FF",
+        status="draft",
+        version_type="scheduled",
+        scenario="base",
+        horizon_months=2,
+        created_by=seed_users["admin"].id,
+        created_at=datetime.now(timezone.utc),
+    )
+    db_session.add(base)
+    db_session.flush()
+    for period in ("2025-01", "2025-02"):
+        db_session.add(
+            ForecastLineResult(
+                version_id=base.id, line_item_id=li.id, period=period,
+                p10=90.0, p50=100.0, p90=110.0, model_p50=100.0,
+            )
+        )
+    d = create_driver(db_session, key="drv_ff", name="FF Driver", driver_type="macro", actor=seed_users["admin"])
+    db_session.flush()
+    upsert_driver_values(db_session, driver_id=d.id, rows=[{"period": "2024-12", "value": 40.0}])
+    assert_link(
+        db_session,
+        driver_id=d.id,
+        line_item_id=li.id,
+        relation="level",
+        coefficient=0.5,
+        status="active",
+        actor=seed_users["admin"],
+    )
+    db_session.commit()
+
+    out = create_what_if_scenario(
+        db_session,
+        base_version_id=base.id,
+        scenario_label="pct-up",
+        shocks=[DriverShock(driver_id=d.id, mode="pct", value=25.0)],
+        actor=seed_users["admin"],
+    )
+    rows = (
+        db_session.query(ForecastLineResult)
+        .filter(ForecastLineResult.version_id == out["scenario_version_id"], ForecastLineResult.line_item_id == li.id)
+        .all()
+    )
+    # base driver 40 -> 50 in both forecast periods; coefficient 0.5 => +5.
+    assert len(rows) == 2
+    for r in rows:
+        assert r.p50 == pytest.approx(105.0)
+        assert r.model_p50 == pytest.approx(100.0)
+    assert out["line_items"][0]["effect_source"] == "discovery_link"
