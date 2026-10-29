@@ -401,6 +401,15 @@ def register_all_skills() -> SkillsRegistry:
     registry.register(ListModelPresetsSkill())
     registry.register(ManageModelPresetsSkill())
 
+    # Company forecast settings (AnalysisProfile) — read, and confirm-gated writes
+    from app.domain.skills.forecast_settings import (
+        GetForecastSettingsSkill,
+        UpdateForecastSettingsSkill,
+    )
+
+    registry.register(GetForecastSettingsSkill())
+    registry.register(UpdateForecastSettingsSkill())
+
     # Actuals dataset precedence — visibility/control over manual-upload pins
     from app.domain.skills.manage_actuals_dataset import (
         ListActualsDatasetsSkill,

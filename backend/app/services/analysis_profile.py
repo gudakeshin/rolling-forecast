@@ -114,20 +114,16 @@ def get_analysis_profile_overrides(db: Session, *, business_unit_id: str) -> dic
     return overrides
 
 
-def update_analysis_profile(
-    db: Session,
-    *,
-    business_unit_id: str,
-    patch: dict[str, Any],
-    actor,
-) -> AnalysisSettings:
-    """Validate and write a set of per-business-unit overrides, audited one
-    event per changed key. Raises ValueError for an unknown key or a value
-    that doesn't match its declared type."""
+def validate_analysis_patch(patch: dict[str, Any]) -> dict[str, Any]:
+    """Coerce a proposed set of overrides to their declared types without
+    writing anything. Raises ValueError for an unknown key or a value that
+    doesn't match its type -- the same checks `update_analysis_profile` applies,
+    so a dry run (e.g. the agent's proposal step) can't pass where a write fails."""
     unknown = set(patch) - set(ANALYSIS_PROFILE_FIELDS)
     if unknown:
         raise ValueError(f"Unknown analysis profile field(s): {sorted(unknown)}")
 
+    coerced: dict[str, Any] = {}
     for name, value in patch.items():
         field_type = ANALYSIS_PROFILE_FIELDS[name]
         if field_type is bool and not isinstance(value, bool):
@@ -136,7 +132,23 @@ def update_analysis_profile(
             raise ValueError(f"'{name}' must be a number")
         if field_type in (int, float) and not isinstance(value, (int, float)):
             raise ValueError(f"'{name}' must be a number")
-        coerced = field_type(value)
+        coerced[name] = field_type(value)
+    return coerced
+
+
+def update_analysis_profile(
+    db: Session,
+    *,
+    business_unit_id: str,
+    patch: dict[str, Any],
+    actor,
+    source: str = "admin_ui",
+) -> AnalysisSettings:
+    """Validate and write a set of per-business-unit overrides, audited one
+    event per changed key (``source`` records which surface made the change,
+    e.g. the admin UI or the chat agent). Raises ValueError for an unknown key
+    or a value that doesn't match its declared type."""
+    for name, coerced in validate_analysis_patch(patch).items():
         set_tenant_setting(
             db, f"{_KEY_PREFIX}{name}", _encode(coerced), business_unit_id=business_unit_id
         )
@@ -147,7 +159,7 @@ def update_analysis_profile(
             entity_id=business_unit_id,
             actor_id=getattr(actor, "id", None),
             actor_username=getattr(actor, "username", None),
-            details={"field": name, "value": coerced},
+            details={"field": name, "value": coerced, "source": source},
         )
 
     return resolve_analysis_settings(db, business_unit_id=business_unit_id)
