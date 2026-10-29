@@ -3,6 +3,27 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { InputBar } from './InputBar';
 import { FollowUpChips } from './FollowUpChips';
 import { stepHistory } from '../../utils/promptHistory';
+import { resetComposerSourceCaches, skillCommandsFor } from './composerSources';
+import { useAuthStore } from '../../store/authStore';
+import { useVersionStore } from '../../store/versionStore';
+
+vi.mock('../../api/client', () => ({
+  uploadFile: vi.fn(),
+  apiPost: vi.fn(),
+  apiGet: vi.fn().mockResolvedValue({
+    skills: [
+      { name: 'generate_baseline', description: 'Generate a statistical baseline', required_role: 'generate' },
+      { name: 'manage_model_presets', description: 'Create or edit presets', required_role: 'admin' },
+      { name: 'query_forecast', description: 'Answer questions about a forecast', required_role: null },
+    ],
+  }),
+}));
+
+vi.mock('../../api/drivers', () => ({
+  listDrivers: vi.fn().mockResolvedValue([
+    { id: 7, key: 'unit_volume', name: 'Unit volume', driver_type: 'volume', aggregation: 'sum' },
+  ]),
+}));
 
 vi.mock('../../api/dashboard', () => ({
   searchLineItems: vi.fn().mockResolvedValue({
@@ -22,7 +43,38 @@ function setup() {
 }
 
 describe('composer (plan 6.2)', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+    resetComposerSourceCaches();
+    useAuthStore.setState({ user: { can_generate: true, can_admin: false } as any });
+    useVersionStore.setState({ versions: [{ id: 'v1', name: 'FC-2026-10-v1', status: 'draft', scenario: 'base' } as any] });
+  });
+
+  it('lists the registered skills the user may run, and a skill prefills instead of sending', async () => {
+    const { onSend, box, type } = setup();
+    type('/');
+    await waitFor(() => expect(screen.getByRole('option', { name: /\/generate_baseline/ })).toBeTruthy());
+    expect(screen.getByRole('option', { name: /\/query_forecast/ })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: /\/manage_model_presets/ })).toBeNull(); // admin only
+
+    type('/generate_b');
+    fireEvent.click(screen.getByRole('option', { name: /\/generate_baseline/ }));
+    expect(onSend).not.toHaveBeenCalled();
+    expect(box.value).toBe('Use generate_baseline: ');
+  });
+
+  it('@ also finds drivers and versions, inserted with their kind', async () => {
+    const { box, type } = setup();
+    type('Compare @unit');
+    await waitFor(() => expect(screen.getByRole('option', { name: /Unit volume/ })).toBeTruthy());
+    fireEvent.click(screen.getByRole('option', { name: /Unit volume/ }));
+    expect(box.value).toBe('Compare driver "Unit volume" ');
+
+    type('Open @fc-2026');
+    await waitFor(() => expect(screen.getByRole('option', { name: /FC-2026-10-v1/ })).toBeTruthy());
+    fireEvent.click(screen.getByRole('option', { name: /FC-2026-10-v1/ }));
+    expect(box.value).toBe('Open version FC-2026-10-v1 ');
+  });
 
   it('/ opens the command menu and Enter runs the highlighted command', () => {
     const { onSend, box, type } = setup();
@@ -110,5 +162,17 @@ describe('FollowUpChips (plan 6.2)', () => {
   it('stays out of the way when the reply already has actions', () => {
     const { container } = render(<FollowUpChips message={message(['action'])} onSend={vi.fn()} />);
     expect(container.innerHTML).toBe('');
+  });
+});
+
+
+describe('skillCommandsFor', () => {
+  const skills = [
+    { name: 'b_skill', description: '', required_role: 'review' },
+    { name: 'a_skill', description: '', required_role: null },
+  ];
+  it('keeps unrestricted skills and those the user has the role for, sorted', () => {
+    expect(skillCommandsFor(skills, { can_review: false } as any).map((c) => c.id)).toEqual(['a_skill']);
+    expect(skillCommandsFor(skills, { can_review: true } as any).map((c) => c.id)).toEqual(['a_skill', 'b_skill']);
   });
 });

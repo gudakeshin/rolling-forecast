@@ -3,7 +3,14 @@ import { Send, Paperclip, Loader2, CheckCircle, Square, Terminal, AtSign } from 
 import { uploadFile, apiPost } from '../../api/client';
 import { useI18n } from '../../i18n/useI18n';
 import { useComposerStore } from '../../store/composerStore';
-import { searchLineItems, type LineItemSearchResult } from '../../api/dashboard';
+import { useAuthStore } from '../../store/authStore';
+import {
+  loadSkills,
+  searchMentions,
+  skillCommandsFor,
+  type MentionOption,
+  type SkillCommand,
+} from './composerSources';
 import { loadPromptHistory, rememberPrompt, stepHistory } from '../../utils/promptHistory';
 import type { MessageKey } from '../../i18n';
 
@@ -41,6 +48,21 @@ function findMentionToken(value: string, caret: number): { start: number; end: n
   return { start: at, end: caret, query };
 }
 
+/** One row of the `/` menu: a quick prompt (sent at once) or a skill (prefilled). */
+interface MenuCommand {
+  key: string;
+  label: string;
+  description: string;
+  text: string;
+  send: boolean;
+}
+
+const MENTION_KIND_LABEL: Record<MentionOption['kind'], MessageKey> = {
+  line_item: 'chat.mention.kind.lineItem',
+  driver: 'chat.mention.kind.driver',
+  version: 'chat.mention.kind.version',
+};
+
 interface Props {
   onSend: (content: string) => void;
   onStop?: () => void;
@@ -64,7 +86,9 @@ export function InputBar({ onSend, onStop, isStreaming }: Props) {
   const [slashHighlight, setSlashHighlight] = useState(0);
   const [mentionToken, setMentionToken] = useState<{ start: number; end: number; query: string } | null>(null);
   const [mentionHighlight, setMentionHighlight] = useState(0);
-  const [mentionResults, setMentionResults] = useState<LineItemSearchResult[]>([]);
+  const [mentionResults, setMentionResults] = useState<MentionOption[]>([]);
+  const user = useAuthStore((s) => s.user);
+  const [skillCommands, setSkillCommands] = useState<SkillCommand[]>([]);
   const [mentionLoading, setMentionLoading] = useState(false);
 
   useEffect(() => {
@@ -84,14 +108,36 @@ export function InputBar({ onSend, onStop, isStreaming }: Props) {
     });
   }, [prefillId]);
 
-  const slashMatch = !menuClosed && /^\/([a-z]*)$/i.exec(input);
+  const slashMatch = !menuClosed && /^\/([a-z_]*)$/i.exec(input);
   const slashQuery = slashMatch ? slashMatch[1].toLowerCase() : null;
-  const filteredCommands = useMemo(() => {
+
+  // Registered skills the user may run, loaded the first time `/` is typed.
+  useEffect(() => {
+    if (slashQuery == null || skillCommands.length > 0) return;
+    let cancelled = false;
+    void loadSkills().then((skills) => {
+      if (!cancelled) setSkillCommands(skillCommandsFor(skills, user));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [slashQuery, skillCommands.length, user]);
+
+  // Quick prompts (sent at once) first, then one command per skill (prefilled).
+  const filteredCommands = useMemo<MenuCommand[]>(() => {
     if (slashQuery == null) return [];
-    return SLASH_COMMANDS.filter(
+    const quick = SLASH_COMMANDS.filter(
       (c) => c.id.startsWith(slashQuery) || t(c.labelKey).toLowerCase().includes(slashQuery),
-    );
-  }, [slashQuery, t]);
+    ).map<MenuCommand>((c) => ({
+      key: `quick:${c.id}`, label: t(c.labelKey), description: t(c.descKey), text: t(c.promptKey), send: true,
+    }));
+    const skills = skillCommands
+      .filter((c) => c.id.includes(slashQuery))
+      .map<MenuCommand>((c) => ({
+        key: `skill:${c.id}`, label: `/${c.id}`, description: c.description, text: c.prompt, send: false,
+      }));
+    return [...quick, ...skills];
+  }, [slashQuery, t, skillCommands]);
   const slashOpen = slashQuery != null;
   const mentionOpen = !menuClosed && mentionToken != null;
 
@@ -108,9 +154,9 @@ export function InputBar({ onSend, onStop, isStreaming }: Props) {
     setMentionLoading(true);
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      searchLineItems(mentionToken.query, 5)
+      searchMentions(mentionToken.query)
         .then((res) => {
-          if (!cancelled) setMentionResults(res.items || []);
+          if (!cancelled) setMentionResults(res);
         })
         .catch(() => {
           if (!cancelled) setMentionResults([]);
@@ -142,17 +188,28 @@ export function InputBar({ onSend, onStop, isStreaming }: Props) {
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
   }, [input, isStreaming, onSend]);
 
-  const runSlashCommand = (cmd: SlashCommand) => {
-    onSend(t(cmd.promptKey));
-    setInput('');
+  const runSlashCommand = (cmd: MenuCommand) => {
+    if (cmd.send) {
+      onSend(cmd.text);
+      setInput('');
+    } else {
+      setInput(cmd.text); // a skill needs details: let the user finish the request
+      requestAnimationFrame(() => {
+        const el = textareaRef.current;
+        if (el) {
+          el.focus();
+          el.setSelectionRange(cmd.text.length, cmd.text.length);
+        }
+      });
+    }
     setMenuClosed(false);
   };
 
-  const insertMention = (item: LineItemSearchResult) => {
+  const insertMention = (item: MentionOption) => {
     if (!mentionToken) return;
     const before = input.slice(0, mentionToken.start);
     const after = input.slice(mentionToken.end);
-    const inserted = `${item.name} `;
+    const inserted = `${item.insert} `;
     const next = `${before}${inserted}${after}`;
     setInput(next);
     setMentionToken(null);
@@ -312,7 +369,7 @@ export function InputBar({ onSend, onStop, isStreaming }: Props) {
             <div className="max-h-60 overflow-y-auto pb-1.5">
               {filteredCommands.map((cmd, i) => (
                 <button
-                  key={cmd.id}
+                  key={cmd.key}
                   type="button"
                   role="option"
                   aria-selected={i === slashHighlight}
@@ -322,8 +379,8 @@ export function InputBar({ onSend, onStop, isStreaming }: Props) {
                     i === slashHighlight ? 'bg-deloitte-green/12 text-deloitte-green' : 'text-surface-200'
                   }`}
                 >
-                  <span className="font-mono text-xs">{t(cmd.labelKey)}</span>
-                  <span className="text-xs text-surface-500 truncate">{t(cmd.descKey)}</span>
+                  <span className="font-mono text-xs shrink-0">{cmd.label}</span>
+                  <span className="text-xs text-surface-500 truncate">{cmd.description}</span>
                 </button>
               ))}
             </div>
@@ -348,7 +405,7 @@ export function InputBar({ onSend, onStop, isStreaming }: Props) {
             <div className="max-h-60 overflow-y-auto pb-1.5">
               {mentionResults.map((item, i) => (
                 <button
-                  key={item.id}
+                  key={item.key}
                   type="button"
                   role="option"
                   aria-selected={i === mentionHighlight}
@@ -359,7 +416,9 @@ export function InputBar({ onSend, onStop, isStreaming }: Props) {
                   }`}
                 >
                   <span className="truncate">{item.name}</span>
-                  <span className="text-xs text-surface-500 shrink-0">{item.account_code}</span>
+                  <span className="text-xs text-surface-500 shrink-0">
+                    {t(MENTION_KIND_LABEL[item.kind])} · {item.detail}
+                  </span>
                 </button>
               ))}
             </div>
