@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -20,6 +21,7 @@ from app.domain.engines.base_model import (
     IForecastModel,
     as_exog_model,
     as_panel_model,
+    cv_fold_horizon,
 )
 from app.domain.engines.linear import LinearTrendModel
 from app.domain.engines.ets import ETSModel
@@ -44,7 +46,9 @@ class ModelComparisonResult:
     evaluation_time_ms: float
     eligible: bool
     error: str | None = None
-    fold_mapes: list[float] = field(default_factory=list)
+    # Per-fold scores, most recent fold first; None = fold unscorable on this
+    # metric for data reasons (see base_model.recency_weighted_mean).
+    fold_mapes: list[float | None] = field(default_factory=list)
     n_folds: int = 0
     mase: float = float("inf")
     smape: float = float("inf")
@@ -52,7 +56,10 @@ class ModelComparisonResult:
     pinball_10: float = float("inf")
     pinball_90: float = float("inf")
     coverage_80: float | None = None
-    fold_mases: list[float] = field(default_factory=list)
+    fold_mases: list[float | None] = field(default_factory=list)
+    # CV fold length the fold lists were scored on; folds pair across models
+    # only when this matches.
+    fold_horizon: int | None = None
     # Signed out-of-sample errors keyed by horizon step, straight from
     # evaluate_cv. Deliberately NOT serialized in to_dict() -- this is the
     # conformal calibration set, consumed in-process by the pipeline, and it
@@ -130,8 +137,9 @@ class ModelSelectionResult:
                     "eligible": c.eligible,
                     "evaluation_time_ms": round(c.evaluation_time_ms, 1),
                     "error": c.error,
-                    "fold_mapes": [round(m, 2) if m != float("inf") else None for m in c.fold_mapes],
-                    "fold_mases": [round(m, 4) if m != float("inf") else None for m in c.fold_mases],
+                    "fold_mapes": [_round_fold(m, 2) for m in c.fold_mapes],
+                    "fold_mases": [_round_fold(m, 4) for m in c.fold_mases],
+                    "fold_horizon": c.fold_horizon,
                     "n_folds": c.n_folds,
                     "complexity_rank": c.complexity_rank,
                     "cost_class": c.cost_class,
@@ -180,9 +188,22 @@ def _admit_expensive(
     return False
 
 
-def _selection_band(fold_scores: list[float], n_folds: int) -> float:
-    """1-SE band; floor at 5% of mean when folds ≤ 3 (under-powered SE)."""
-    finite = [s for s in fold_scores if s != float("inf") and not np.isnan(s)]
+def _round_fold(v: float | None, digits: int) -> float | None:
+    return round(v, digits) if v is not None and np.isfinite(v) else None
+
+
+def _finite_folds(fold_scores: list[float | None]) -> list[float]:
+    return [float(s) for s in fold_scores if s is not None and np.isfinite(s)]
+
+
+def _selection_band(fold_scores: list[float | None], n_folds: int) -> float:
+    """1-SE band from ONE model's own fold scores (unpaired).
+
+    Model selection uses ``_paired_band`` instead; this remains for callers
+    that only have the winner's folds, and as the fallback when two models'
+    folds cannot be paired. Floor at 5% of mean when folds ≤ 3.
+    """
+    finite = _finite_folds(fold_scores)
     if not finite:
         return 0.0
     mean = float(np.mean(finite))
@@ -196,12 +217,75 @@ def _selection_band(fold_scores: list[float], n_folds: int) -> float:
     return band
 
 
+def _paired_band(
+    best_folds: list[float | None],
+    cand_folds: list[float | None],
+    best_score: float,
+    *,
+    paired: bool = True,
+) -> float:
+    """1-SE tolerance for one candidate vs the best model, from PAIRED folds.
+
+    Fold i is the same holdout window for every model (fold lists are
+    most-recent-first and the fold length is per-series), so the standard
+    error that matters is that of the per-fold differences
+    ``cand_i - best_i``. Pooling every model's fold scores instead — the old
+    behaviour — measures how hard the windows are (a shared effect that
+    cancels in the difference), which inflated the band and handed wins to
+    simpler models that were consistently worse fold-by-fold.
+
+    With ≤ 3 paired folds the SE is under-powered, so the band is floored at
+    5% of the best score. ``paired=False`` (fold structures differ, e.g. the
+    panel model's fixed folds) falls back to the unpaired SE of the two
+    models' folds.
+    """
+    floor = 0.05 * abs(best_score) if np.isfinite(best_score) else 0.0
+    if not paired:
+        pooled = _finite_folds(best_folds) + _finite_folds(cand_folds)
+        return _selection_band(pooled, min(len(best_folds), len(cand_folds)))
+    diffs = [
+        float(c) - float(b)
+        for b, c in zip(best_folds, cand_folds)
+        if b is not None and c is not None and np.isfinite(b) and np.isfinite(c)
+    ]
+    k = len(diffs)
+    se = float(np.std(diffs, ddof=1) / np.sqrt(k)) if k >= 2 else 0.0
+    return max(se, floor) if k <= 3 else se
+
+
+def _within_paired_band(
+    scored: list[ModelComparisonResult],
+    *,
+    score: Callable[[ModelComparisonResult], float],
+    folds: Callable[[ModelComparisonResult], list[float | None]],
+) -> list[ModelComparisonResult]:
+    best = min(scored, key=score)
+    best_score = score(best)
+    within = []
+    for c in scored:
+        if c is best:
+            within.append(c)
+            continue
+        paired = (
+            c.fold_horizon is None
+            or best.fold_horizon is None
+            or c.fold_horizon == best.fold_horizon
+        )
+        band = _paired_band(folds(best), folds(c), best_score, paired=paired)
+        if score(c) <= best_score + band:
+            within.append(c)
+    return within
+
+
 def _within_band_candidates(
     comparisons: list[ModelComparisonResult],
     *,
     rule: str,
 ) -> list[ModelComparisonResult]:
     """Eligible candidates inside the 1-SE band of the best score, Occam-sorted.
+
+    The band is per candidate: the SE of its paired per-fold differences
+    against the best model (``_paired_band``).
 
     Element 0 is the Occam winner `_pick_best` returns; a second element, when
     present, is genuinely tied with it under the same tolerance the tie-break
@@ -215,14 +299,11 @@ def _within_band_candidates(
         scored = [c for c in eligible if c.mape != float("inf")]
         if not scored:
             return []
-        best_mape = min(c.mape for c in scored)
         # First filter to near-best (1-SE band), then apply the Occam
         # tie-break to every candidate inside it — not just exact ties.
-        band = _selection_band(
-            [m for c in scored for m in (c.fold_mapes or [c.mape])],
-            max((c.n_folds for c in scored), default=0),
+        within = _within_paired_band(
+            scored, score=lambda c: c.mape, folds=lambda c: c.fold_mapes
         )
-        within = [c for c in scored if c.mape <= best_mape + band]
         within.sort(key=lambda c: (c.is_benchmark, c.complexity_rank, c.mape))
         return within
 
@@ -232,12 +313,9 @@ def _within_band_candidates(
         # Fall back to MAPE pool if no MASE
         return _within_band_candidates(comparisons, rule="mape")
 
-    best_mase = min(c.mase for c in scored)
-    # Use fold MASEs from the best model's peers for SE; approximate with all fold_mases
-    all_folds = [m for c in scored for m in (c.fold_mases or []) if m != float("inf")]
-    n_folds = max((c.n_folds for c in scored), default=0)
-    band = _selection_band(all_folds or [best_mase], n_folds)
-    within = [c for c in scored if c.mase <= best_mase + band]
+    within = _within_paired_band(
+        scored, score=lambda c: c.mase, folds=lambda c: c.fold_mases
+    )
     # Every candidate here is already "close enough" to the best score, so
     # the Occam tie-break (simpler, non-benchmark model) leads the sort —
     # raw MASE/pinball only break ties among equally-simple candidates.
@@ -356,6 +434,7 @@ class ModelRegistry:
             error=None if (mape != float("inf") or mase != float("inf")) else "Evaluation returned inf",
             fold_mapes=cv.get("fold_mapes") or [],
             fold_mases=cv.get("fold_mases") or [],
+            fold_horizon=cv.get("fold_horizon"),
             fold_residuals=cv.get("fold_residuals") or {},
             n_folds=cv.get("n_folds_used") or 0,
             complexity_rank=caps.complexity_rank,
@@ -370,7 +449,7 @@ class ModelRegistry:
         series: pd.Series,
         dates: pd.DatetimeIndex,
         *,
-        test_size: int,
+        fold_horizon: int,
         raise_folds: bool = False,
         panel: "GlobalPanelContext | None" = None,
         line_item_id: int | None = None,
@@ -399,7 +478,6 @@ class ModelRegistry:
             )
 
         n_folds = 3
-        fold_horizon = max(3, test_size // 2) if test_size else 3
         if (
             caps.max_folds_short_series is not None
             and len(series) < caps.short_series_threshold
@@ -483,8 +561,17 @@ class ModelRegistry:
         two_stage: bool = True,
         panel: "GlobalPanelContext | None" = None,
         line_item_id: int | None = None,
+        forecast_horizon: int | None = None,
     ) -> ModelSelectionResult:
-        """Walk-forward CV comparison with optional two-stage cost screening."""
+        """Walk-forward CV comparison with optional two-stage cost screening.
+
+        Folds are ``cv_fold_horizon(forecast_horizon, len(series))`` steps
+        long — the horizon being forecast (default
+        ``settings.default_horizon_months``), shortened only when history is
+        too short for two folds. ``test_size`` is legacy and no longer sets
+        the fold length: the old ``max(3, test_size // 2)`` scored every model
+        on 3-step folds while forecasts run 12 steps out.
+        """
         from app.config import settings
 
         np.random.seed(random_seed)
@@ -495,6 +582,9 @@ class ModelRegistry:
             else float(settings.selection_wall_clock_seconds)
         )
         deadline = time.time() + budget if budget and budget > 0 else None
+        fold_horizon = cv_fold_horizon(
+            forecast_horizon or settings.default_horizon_months, len(series)
+        )
 
         requested = models_to_test or [
             n for n, m in self._models.items() if m.capabilities.auto_selectable
@@ -531,7 +621,7 @@ class ModelRegistry:
                 n_downgraded += 1
                 continue
             comparisons.append(self._evaluate_one(
-                model_name, series, dates, test_size=test_size, panel=panel, line_item_id=line_item_id
+                model_name, series, dates, fold_horizon=fold_horizon, panel=panel, line_item_id=line_item_id
             ))
 
         cheap_mases = [c.mase for c in comparisons if c.mase != float("inf")]
@@ -570,7 +660,7 @@ class ModelRegistry:
                 n_downgraded += 1
                 continue
             comparisons.append(self._evaluate_one(
-                model_name, series, dates, test_size=test_size, panel=panel, line_item_id=line_item_id
+                model_name, series, dates, fold_horizon=fold_horizon, panel=panel, line_item_id=line_item_id
             ))
 
         # Also record unknown requested models

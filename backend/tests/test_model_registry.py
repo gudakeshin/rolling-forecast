@@ -201,7 +201,7 @@ class TestGlobalGBMRegistration:
             fitted_at="2026-01-01T00:00:00+00:00",
         )
         comparison = registry._evaluate_one(
-            "global_gbm", series, dates, test_size=6, panel=panel, line_item_id=7
+            "global_gbm", series, dates, fold_horizon=3, panel=panel, line_item_id=7
         )
         assert comparison.eligible is True
         assert comparison.mase == 0.55
@@ -209,7 +209,7 @@ class TestGlobalGBMRegistration:
 
         # A line the panel never scored is ineligible, not a crash.
         missing = registry._evaluate_one(
-            "global_gbm", series, dates, test_size=6, panel=panel, line_item_id=999
+            "global_gbm", series, dates, fold_horizon=3, panel=panel, line_item_id=999
         )
         assert missing.mase == float("inf")
 
