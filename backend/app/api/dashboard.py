@@ -895,6 +895,13 @@ async def get_executive_dashboard(
     # ─── 9. Monthly time series ───────────────────────
     time_series = envelope["time_series"]
 
+    # Company-defined KPI formulas. Never allowed to break the dashboard.
+    try:
+        custom_kpis = evaluate_kpis(db, version)
+    except Exception:
+        logger.exception("Custom KPI evaluation failed for version %s", version.id)
+        custom_kpis = []
+
     # ─── 10. Accuracy KPIs ────────────────────────────
     accuracy_kpis: dict[str, Any] = {"avg_mape": 0, "avg_bias": 0, "bias_direction": "neutral", "hit_rate": 0, "comparisons": 0}
     if actuals_map:
@@ -957,7 +964,7 @@ async def get_executive_dashboard(
             "bridge_narrative": bridge_narrative,
             "accuracy": accuracy_kpis,
             "time_series": time_series,
-            "custom_kpis": evaluate_kpis(db, version),
+            "custom_kpis": custom_kpis,
             "version_business_unit_id": version.business_unit_id,
         },
     )
