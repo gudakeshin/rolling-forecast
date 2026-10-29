@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { LayoutDashboard, MessagesSquare, MessageSquarePlus, Trash2, Loader2, Bookmark } from 'lucide-react';
+import { LayoutDashboard, MessagesSquare, MessageSquarePlus, Trash2, Loader2, Bookmark, Users } from 'lucide-react';
 import { usePanelStore, useSecondaryPanelStore } from '../../store/panelStore';
 import { useSavedViewsStore } from '../../store/savedViewsStore';
+import { useAuthStore } from '../../store/authStore';
 import { useChatStore } from '../../store/chatStore';
 import { getConversation, getConversations, deleteConversation } from '../../api/chat';
 import { toast } from '../../store/toastStore';
@@ -77,13 +78,29 @@ export function Sidebar() {
   );
 }
 
-/** Named panel+filter presets saved from any panel's header ("Save as view").
- * localStorage-only today — see store/savedViewsStore.ts. */
+/** Named panel+filter presets saved from any panel's header ("Save as view"),
+ * stored server-side per company — see store/savedViewsStore.ts. */
 function SavedViews() {
   const { t } = useI18n();
   const views = useSavedViewsStore((s) => s.views);
+  const load = useSavedViewsStore((s) => s.load);
   const deleteView = useSavedViewsStore((s) => s.deleteView);
+  const setShared = useSavedViewsStore((s) => s.setShared);
   const openPanel = usePanelStore((s) => s.openPanel);
+  // Views belong to the active company: reload when it changes.
+  const businessUnitId = useAuthStore((s) => s.user?.business_unit_id);
+
+  useEffect(() => {
+    load().catch((e) => {
+      console.error(e);
+      toast.error(t('sidebar.viewsLoadError'));
+    });
+    // `t` is stable per locale; reloading on a locale change is not needed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load, businessUnitId]);
+
+  const run = (action: Promise<void>) =>
+    action.catch((e) => toast.error(e?.message || t('sidebar.viewError')));
 
   if (!views.length) return null;
 
@@ -102,19 +119,38 @@ function SavedViews() {
             <button
               type="button"
               onClick={() => openPanel(v.panelType, v.panelParams)}
-              className="flex-1 min-w-0 text-left rounded-lg px-2 py-1.5 text-xs truncate text-surface-300"
-              title={v.name}
+              className="flex-1 min-w-0 flex items-center gap-1 text-left rounded-lg px-2 py-1.5 text-xs text-surface-300"
+              title={v.isOwner ? v.name : `${v.name} — ${t('sidebar.sharedView')}`}
             >
-              {v.name}
+              <span className="truncate">{v.name}</span>
+              {v.isShared && (
+                <Users
+                  className="w-3 h-3 shrink-0 text-surface-500"
+                  aria-label={v.isOwner ? t('sidebar.shareView') : t('sidebar.sharedView')}
+                />
+              )}
             </button>
-            <button
-              type="button"
-              onClick={() => deleteView(v.id)}
-              className="opacity-0 group-hover:opacity-100 focus:opacity-100 self-center mr-1 p-1 rounded-md text-surface-500 hover:text-red-400 transition-opacity"
-              aria-label={`${t('sidebar.deleteView')} ${v.name}`}
-            >
-              <Trash2 className="w-3 h-3" />
-            </button>
+            {v.isOwner && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => run(setShared(v.id, !v.isShared))}
+                  className="opacity-0 group-hover:opacity-100 focus:opacity-100 self-center p-1 rounded-md text-surface-500 hover:text-surface-200 transition-opacity"
+                  aria-label={`${v.isShared ? t('sidebar.unshareView') : t('sidebar.shareView')} ${v.name}`}
+                  aria-pressed={v.isShared}
+                >
+                  <Users className="w-3 h-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => run(deleteView(v.id))}
+                  className="opacity-0 group-hover:opacity-100 focus:opacity-100 self-center mr-1 p-1 rounded-md text-surface-500 hover:text-red-400 transition-opacity"
+                  aria-label={`${t('sidebar.deleteView')} ${v.name}`}
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </>
+            )}
           </div>
         ))}
       </div>

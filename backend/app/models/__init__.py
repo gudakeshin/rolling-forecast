@@ -26,6 +26,7 @@ from app.models.review_undo import ReviewUndoSnapshot
 from app.models.model_preset import ModelPreset
 from app.models.tenant_setting import BusinessUnitSetting
 from app.models.company_membership import CompanyMembership
+from app.models.saved_view import SavedView
 
 __all__ = [
     "User",
@@ -70,4 +71,5 @@ __all__ = [
     "ModelPreset",
     "BusinessUnitSetting",
     "CompanyMembership",
+    "SavedView",
 ]
