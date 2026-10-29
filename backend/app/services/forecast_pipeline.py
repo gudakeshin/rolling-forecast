@@ -581,7 +581,7 @@ class LineForecastContext:
     realized_coverage: dict[int, float] | None = None
     # Global cross-series panel model context, built once per version-
     # generation run (see panel_forecast.build_global_panel_context). None
-    # unless settings.enable_global_gbm_model is on and panel build succeeded.
+    # unless the company's enable_global_gbm_model is on and panel build succeeded.
     panel: "GlobalPanelContext | None" = None
 
 
@@ -608,6 +608,26 @@ class LineForecast:
     was_sparse: bool = False
     had_structural_break: bool = False
     was_clamped: bool = False
+
+
+def _sparse_history_pool(
+    registry: ModelRegistry, ctx: "LineForecastContext", line_item_id: int
+) -> list[str]:
+    """Candidates for a short-history line: linear plus the global panel model
+    when the panel has both a CV score and forecast features for this line,
+    narrowed to ``ctx.models_to_test`` when that is set."""
+    panel = ctx.panel
+    pool = ["linear"]
+    if (
+        panel is not None
+        and registry.get("global_gbm") is not None
+        and line_item_id in panel.per_line_cv_results
+        and line_item_id in panel.predict_features_by_line
+    ):
+        pool.append("global_gbm")
+    if ctx.models_to_test:
+        pool = [m for m in pool if m in ctx.models_to_test]
+    return pool
 
 
 def forecast_line_item(
@@ -656,15 +676,23 @@ def forecast_line_item(
 
     try:
         effective_model_type = forced or model_type
+        sparse_pool: list[str] = []
         if forced is None and effective.is_sparse and model_type == "auto":
-            effective_model_type = "linear"
+            # Short history under-powers per-series CV, so the only contest is
+            # linear vs the global panel model (whose CV is panel-wide);
+            # without the panel model this line is forced to linear as before.
+            sparse_pool = _sparse_history_pool(registry, ctx, li.id)
+            if "global_gbm" not in sparse_pool:
+                sparse_pool = []
+                effective_model_type = "linear"
 
+        comparison = None
         if effective_model_type == "auto":
             selected_model, selection_mape, comparison = registry.auto_select(
                 effective_values,
                 effective_dates,
                 random_seed=random_seed,
-                models_to_test=ctx.models_to_test,
+                models_to_test=sparse_pool or ctx.models_to_test,
                 selection_rule=selection_rule,
                 wall_clock_budget_seconds=(
                     ctx.analysis.selection_wall_clock_seconds if ctx.analysis is not None else None
@@ -674,6 +702,12 @@ def forecast_line_item(
                 line_item_id=li.id,
                 forecast_horizon=horizon,
             )
+            if not selected_model and sparse_pool:
+                # Neither short-history candidate produced a finite score:
+                # fall back to the short-history default, not a failed line.
+                comparison = None
+                effective_model_type = "linear"
+        if comparison is not None:
             selection_result = comparison
             out.comparison = comparison.to_dict()
             out.n_downgraded = comparison.n_downgraded
