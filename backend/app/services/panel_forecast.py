@@ -66,6 +66,30 @@ def _future_periods(last_period: str, horizon: int, cal_cfg: FiscalCalendarConfi
     return forecast_horizon_periods(last_period, horizon, cfg)
 
 
+def _origin_scale(values: np.ndarray, t: int) -> float:
+    """Typical size of a line around origin t (mean |value| over the last 12
+    points), the unit the panel model's targets and level features use."""
+    window = values[max(0, t - 11) : t + 1]
+    scale = float(np.mean(np.abs(window))) if len(window) else 0.0
+    return scale if scale > 1e-9 else 1.0
+
+
+def _relative_lag_features(values: np.ndarray, t: int) -> dict[str, float]:
+    """lag_rolling_features expressed relative to the origin value, in units
+    of _origin_scale: level-free, so one tree model serves lines of very
+    different size and can carry a trend past levels it has seen."""
+    origin = float(values[t])
+    scale = _origin_scale(values, t)
+    return {
+        k: (v / scale if k.startswith("roll_std") else (v - origin) / scale)
+        for k, v in lag_rolling_features(values, t).items()
+    }
+
+
+def _relative_target(values: np.ndarray, t: int, target_idx: int) -> float:
+    return (float(values[target_idx]) - float(values[t])) / _origin_scale(values, t)
+
+
 def _category_onehot(line_items: list[LineItem]) -> dict[int, dict[str, float]]:
     """One-hot vectors built from THIS panel's own category vocabulary."""
     vocab: dict[str, set[str]] = {f: set() for f in CATEGORY_FIELDS}
@@ -155,6 +179,7 @@ def build_global_panel_context(
     training_rows: list[dict[str, float]] = []
     training_targets: list[float] = []
     predict_features_by_line: dict[int, pd.DataFrame] = {}
+    predict_origin_by_line: dict[int, tuple[float, float]] = {}
 
     for li in eligible:
         res = effective_series_by_line[li.id]
@@ -173,7 +198,7 @@ def build_global_panel_context(
                 target_idx = t + h
                 if target_idx >= n:
                     break
-                feats = lag_rolling_features(values, t)
+                feats = _relative_lag_features(values, t)
                 feats.update(fiscal_features(periods[target_idx]))
                 feats.update(horizon_feature(h))
                 feats.update(onehot.get(li.id, {}))
@@ -184,11 +209,12 @@ def build_global_panel_context(
                 )
                 feats.update(_driver_row_from_series(exog_row))
                 training_rows.append(feats)
-                training_targets.append(float(values[target_idx]))
+                training_targets.append(_relative_target(values, t, target_idx))
 
         future_rows: list[dict[str, float]] = []
+        predict_origin_by_line[li.id] = (float(values[n - 1]), _origin_scale(values, n - 1))
         for h in range(1, horizon + 1):
-            feats = lag_rolling_features(values, n - 1)
+            feats = _relative_lag_features(values, n - 1)
             future_period = future_periods[h - 1] if h - 1 < len(future_periods) else periods[-1]
             feats.update(fiscal_features(future_period))
             feats.update(horizon_feature(h))
@@ -238,6 +264,7 @@ def build_global_panel_context(
         fitted_at=datetime.now(timezone.utc).isoformat(),
         n_training_rows=len(training_rows),
         n_lines=len(eligible),
+        predict_origin_by_line=predict_origin_by_line,
     )
 
 
@@ -276,12 +303,15 @@ def _panel_walk_forward_cv(
     """
     m = seasonal_period_length()
     per_fold_train: list[tuple[list[dict[str, float]], list[float]]] = []
-    per_fold_test: list[dict[int, tuple[list[dict[str, float]], list[float], float]]] = []
+    # line -> (test features, actuals, MASE denominator, (origin value, origin scale))
+    per_fold_test: list[
+        dict[int, tuple[list[dict[str, float]], list[float], float, tuple[float, float]]]
+    ] = []
 
     for fold in range(1, N_FOLDS + 1):
         rows: list[dict[str, float]] = []
         targets: list[float] = []
-        test_by_line: dict[int, tuple[list[dict[str, float]], list[float], float]] = {}
+        test_by_line: dict[int, tuple[list[dict[str, float]], list[float], float, tuple[float, float]]] = {}
 
         for li in eligible:
             res = effective_series_by_line[li.id]
@@ -305,7 +335,7 @@ def _panel_walk_forward_cv(
                     target_idx = t + h
                     if target_idx >= train_end:
                         break
-                    feats = lag_rolling_features(values, t)
+                    feats = _relative_lag_features(values, t)
                     feats.update(fiscal_features(periods[target_idx]))
                     feats.update(horizon_feature(h))
                     feats.update(onehot.get(li.id, {}))
@@ -316,7 +346,7 @@ def _panel_walk_forward_cv(
                     )
                     feats.update(_driver_row_from_series(exog_row))
                     rows.append(feats)
-                    targets.append(float(values[target_idx]))
+                    targets.append(_relative_target(values, t, target_idx))
 
             origin_period = periods[train_end - 1]
             holdout_periods = [str(p) for p in periods[test_start:test_end]]
@@ -353,7 +383,7 @@ def _panel_walk_forward_cv(
             origin_idx = train_end - 1
             for i in range(test_end - test_start):
                 h = i + 1
-                feats = lag_rolling_features(values, origin_idx)
+                feats = _relative_lag_features(values, origin_idx)
                 feats.update(fiscal_features(periods[test_start + i]))
                 feats.update(horizon_feature(h))
                 feats.update(onehot.get(li.id, {}))
@@ -367,7 +397,8 @@ def _panel_walk_forward_cv(
 
             test_targets = [float(v) for v in values[test_start:test_end]]
             denom, _ = mase_denominator(values[:train_end], m)
-            test_by_line[li.id] = (test_feats, test_targets, denom)
+            origin = (float(values[origin_idx]), _origin_scale(values, origin_idx))
+            test_by_line[li.id] = (test_feats, test_targets, denom, origin)
 
         per_fold_train.append((rows, targets))
         per_fold_test.append(test_by_line)
@@ -414,12 +445,15 @@ def _panel_walk_forward_cv(
                 _record_failed_fold(li_id)
             continue
 
-        for li_id, (test_feats, test_targets, denom) in test_by_line.items():
+        for li_id, (test_feats, test_targets, denom, (level, scale)) in test_by_line.items():
             if not test_feats:
                 continue
             test_df = _fold_feature_frame(test_feats, feature_columns)
             try:
-                preds = {q: np.asarray(fold_models[q].predict(test_df), dtype=float) for q in QUANTILES}
+                preds = {
+                    q: level + np.asarray(fold_models[q].predict(test_df), dtype=float) * scale
+                    for q in QUANTILES
+                }
             except Exception:
                 _record_failed_fold(li_id)
                 continue

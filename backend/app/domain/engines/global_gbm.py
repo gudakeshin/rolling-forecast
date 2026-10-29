@@ -19,7 +19,7 @@ lives in app.services.panel_forecast.build_global_panel_context.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -63,6 +63,11 @@ class GlobalPanelContext:
     fitted_at: str
     n_training_rows: int = 0
     n_lines: int = 0
+    # line_item_id -> (origin value, origin scale). The models predict the
+    # change from the origin in units of the line's recent size, so a trend
+    # carries forward and one model fits lines of any magnitude; predict()
+    # maps back with origin + prediction * scale. Absent = raw-level model.
+    predict_origin_by_line: dict[int, tuple[float, float]] = field(default_factory=dict)
 
 
 def lag_rolling_features(values: np.ndarray, origin_idx: int) -> dict[str, float]:
@@ -195,6 +200,11 @@ class GlobalGBMModel(IForecastModel):
             if gbm is None:
                 raise RuntimeError(f"no fitted production model for quantile {q}")
             preds[q] = np.asarray(gbm.predict(X), dtype=float)
+
+        origin = panel.predict_origin_by_line.get(line_item_id)
+        if origin is not None:
+            level, scale = origin
+            preds = {q: level + p * scale for q, p in preds.items()}
 
         lower, point, upper = preds[0.10], preds[0.50], preds[0.90]
         # Independently-trained quantile regressors are not guaranteed

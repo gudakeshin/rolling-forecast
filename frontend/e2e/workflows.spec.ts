@@ -153,6 +153,22 @@ test.describe('analyst workflows', () => {
     await expect(saved).toHaveCount(0);
   });
 
+  test('maximize shows one panel full width, restore brings both back', async ({ page }) => {
+    await login(page);
+    await page.getByRole('button', { name: /executive dashboard/i }).click();
+    await page.getByRole('button', { name: /pin beside/i }).first().click();
+    await page.getByRole('button', { name: /^document library$/i }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(2, { timeout: 15_000 });
+
+    await page.getByRole('button', { name: /maximize panel/i }).first().click();
+    await expect(page.getByRole('dialog')).toHaveCount(1);
+    await expect(page.getByLabel(/message composer/i)).toBeHidden();
+
+    await page.getByRole('button', { name: /restore panel/i }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(2);
+    await expect(page.getByLabel(/message composer/i)).toBeVisible();
+  });
+
   test.describe('with a forecast', () => {
     let reviewer: { username: string; password: string };
 
@@ -190,6 +206,25 @@ test.describe('analyst workflows', () => {
 
       await page.getByRole('button', { name: /^undo$/i }).click();
       await expect(page.getByText(/^undone: /i)).toBeVisible({ timeout: 10_000 });
+    });
+
+    test('a shared link reopens the panel with its filters, across reloads', async ({ page }) => {
+      const s = await session(page.request, ANALYST, ANALYST_PW);
+      const versions = await (
+        await page.request.get('/api/panel/versions', { headers: { Authorization: `Bearer ${s.access_token}` } })
+      ).json();
+      const versionId = (Array.isArray(versions) ? versions : versions.versions)[0].id;
+      const pp = encodeURIComponent(JSON.stringify({ version_id: versionId, category: 'Revenue' }));
+
+      await login(page);
+      await page.goto(`/?panel=forecast_table&pp=${pp}`);
+      const panel = page.getByRole('dialog');
+      await expect(panel).toBeVisible({ timeout: 20_000 });
+      await expect(panel.getByRole('combobox').first()).toHaveValue('Revenue');
+
+      await page.reload();
+      await expect(page.getByRole('dialog').getByRole('combobox').first()).toHaveValue('Revenue', { timeout: 20_000 });
+      expect(new URL(page.url()).searchParams.get('panel')).toBe('forecast_table');
     });
 
     test('export full version downloads every row', async ({ page }) => {

@@ -227,3 +227,78 @@ def test_held_out_fold_driver_columns_use_origin_restricted_overlay(db_session, 
     assert spy.call_count == 3
     for call in spy.call_args_list:
         assert call.kwargs["driver_ids"] == [driver.id]
+
+
+def test_steady_trends_are_extrapolated_not_flattened(db_session, registry):
+    """Targets are changes from the origin in units of the line's size, so the
+    panel model carries a trend forward instead of capping at levels it saw
+    (the raw-level model flattened trending lines)."""
+    from app.domain.engines.global_gbm import GlobalGBMModel
+
+    periods = _periods()
+    rng = np.random.default_rng(11)
+    lines = [_add_line(db_session, f"TREND-{i}") for i in range(6)]
+    series_by_line = {}
+    for i, li in enumerate(lines):
+        base, slope = 200.0 * (i + 1), 4.0 * (i + 1)  # very different sizes
+        vals = list(base + slope * np.arange(N_PERIODS) + rng.normal(0, base * 0.005, N_PERIODS))
+        series_by_line[li.id] = vals
+        _add_actuals(db_session, li, periods, vals)
+    effective, periods_by_line, cal_cfg = _build_inputs(db_session, lines, periods, series_by_line)
+    panel = build_global_panel_context(
+        db_session, line_items=lines, effective_series_by_line=effective,
+        periods_by_line=periods_by_line, cal_cfg=cal_cfg, version_id="v1",
+        horizon=6, random_seed=42, registry=registry,
+    )
+    assert panel is not None
+
+    model = GlobalGBMModel()
+    for li in lines:
+        values = series_by_line[li.id]
+        dates = pd.DatetimeIndex([pd.Timestamp(period_to_date(p, cal_cfg)) for p in periods])
+        params = model.fit(pd.Series(values), dates, panel=panel, line_item_id=li.id)
+        out = model.predict(params, 6, dates[-1], panel=panel)
+        last = values[-1]
+        # Forecast keeps rising past the last observation, and stays in the
+        # right ballpark (within 2% of the true linear continuation at h=6).
+        assert out.point_forecast[-1] > last
+        slope = (values[-1] - values[0]) / (len(values) - 1)
+        assert out.point_forecast[-1] == pytest.approx(last + 6 * slope, rel=0.02)
+
+
+@pytest.mark.asyncio
+async def test_generation_builds_the_panel_once_and_reuses_it_per_line(
+    skill_context, seed_actuals, monkeypatch
+):
+    """Plan 2.1: fit once across all lines, predict per line from the cached
+    panel. A whole baseline run calls the builder once, and every line's
+    prediction reuses its fitted models (no further fits)."""
+    from sklearn.ensemble import HistGradientBoostingRegressor
+
+    from app.config import settings
+    from app.domain.skills.generate_baseline import GenerateBaselineSkill
+    from app.services import panel_forecast
+
+    monkeypatch.setattr(settings, "enable_global_gbm_model", True)
+    builds: list[int] = []
+    fits = {"n": 0}
+    original_build = panel_forecast.build_global_panel_context
+    original_fit = HistGradientBoostingRegressor.fit
+
+    def counting_build(*args, **kwargs):
+        panel = original_build(*args, **kwargs)
+        builds.append(fits["n"])  # fits done by the build itself
+        return panel
+
+    def counting_fit(self, *args, **kwargs):
+        fits["n"] += 1
+        return original_fit(self, *args, **kwargs)
+
+    monkeypatch.setattr(panel_forecast, "build_global_panel_context", counting_build)
+    monkeypatch.setattr(HistGradientBoostingRegressor, "fit", counting_fit)
+
+    result = await GenerateBaselineSkill().execute({"async_job": False, "skip_plan_check": True}, skill_context)
+
+    assert result.success, result.message
+    assert len(builds) == 1
+    assert fits["n"] == builds[0], "per-line prediction must not refit the panel models"
