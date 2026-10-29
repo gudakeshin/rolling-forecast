@@ -207,3 +207,157 @@ def test_model_preset_global_rows_stay_visible_under_scoping(client):
         assert other_company_preset.id not in visible
     finally:
         db.close()
+
+
+def _make_child_fixtures(fx: dict) -> dict:
+    """One ForecastVersion -> ForecastLineResult -> ModelMetadata chain and
+    one Driver -> DriverValue pair per company, on top of _make_scoped_fixtures."""
+    import uuid
+
+    from app.database import SessionLocal
+    from app.models.driver import Driver, DriverValue
+    from app.models.forecast import ForecastLineResult, ForecastVersion, ModelMetadata
+
+    tag = uuid.uuid4().hex[:8]
+    db = SessionLocal()
+    try:
+        out: dict = {}
+        for side in ("a", "b"):
+            bu_id, li_id = fx[f"bu_{side}_id"], fx[f"li_{side}_id"]
+            version = ForecastVersion(name=f"TenantScopeFV-{side}-{tag}", business_unit_id=bu_id)
+            driver = Driver(key=f"ts_{side}_{tag}", name="Scoped driver", business_unit_id=bu_id)
+            db.add_all([version, driver])
+            db.flush()
+            result = ForecastLineResult(
+                version_id=version.id, line_item_id=li_id, period="2026-01", p50=1.0
+            )
+            value = DriverValue(driver_id=driver.id, period="2026-01", value=1.0)
+            db.add_all([result, value])
+            db.flush()
+            metadata = ModelMetadata(line_result_id=result.id, model_type="linear")
+            db.add(metadata)
+            db.flush()
+            out[f"flr_{side}"] = result.id
+            out[f"meta_{side}"] = metadata.id
+            out[f"dv_{side}"] = value.id
+        db.commit()
+        return out
+    finally:
+        db.close()
+
+
+def _visible_child_ids(scope, cx: dict) -> dict[str, set]:
+    """Raw by-id child queries with no join back to any parent -- the exact
+    shape a parent-only loader criterion would miss."""
+    from app.database import SessionLocal
+    from app.models.driver import DriverValue
+    from app.models.forecast import ForecastLineResult, ModelMetadata
+    from app.services.tenant_scope import push_tenant_scope, reset_tenant_scope
+
+    db = SessionLocal()
+    token = push_tenant_scope(scope) if scope is not None else None
+    try:
+        return {
+            "flr": {
+                r.id
+                for r in db.query(ForecastLineResult)
+                .filter(ForecastLineResult.id.in_([cx["flr_a"], cx["flr_b"]]))
+                .all()
+            },
+            "meta": {
+                r.id
+                for r in db.query(ModelMetadata)
+                .filter(ModelMetadata.id.in_([cx["meta_a"], cx["meta_b"]]))
+                .all()
+            },
+            "dv": {
+                r.id
+                for r in db.query(DriverValue)
+                .filter(DriverValue.id.in_([cx["dv_a"], cx["dv_b"]]))
+                .all()
+            },
+        }
+    finally:
+        if token is not None:
+            reset_tenant_scope(token)
+        db.close()
+
+
+def test_child_tables_hide_another_companys_rows(client):
+    """Child and grandchild rows (no business_unit_id of their own) queried
+    directly by id are still restricted to the scoped company via their
+    owning parent."""
+    from app.database import SessionLocal
+    from app.models.user import User
+    from app.services.tenant_scope import scope_for_user
+
+    fx = _make_scoped_fixtures("child")
+    cx = _make_child_fixtures(fx)
+    db = SessionLocal()
+    try:
+        user_a = db.query(User).filter(User.username == fx["username"]).first()
+        scope = scope_for_user(user_a)
+    finally:
+        db.close()
+
+    seen = _visible_child_ids(scope, cx)
+    assert seen["flr"] == {cx["flr_a"]}
+    assert seen["meta"] == {cx["meta_a"]}
+    assert seen["dv"] == {cx["dv_a"]}
+
+
+def test_child_tables_deny_when_no_scope_pushed(client):
+    fx = _make_scoped_fixtures("child-noscope")
+    cx = _make_child_fixtures(fx)
+    seen = _visible_child_ids(None, cx)
+    assert seen == {"flr": set(), "meta": set(), "dv": set()}
+
+
+def test_child_tables_unrestricted_sees_both_companies(client):
+    from app.services.tenant_scope import UNRESTRICTED
+
+    fx = _make_scoped_fixtures("child-admin")
+    cx = _make_child_fixtures(fx)
+    seen = _visible_child_ids(UNRESTRICTED, cx)
+    assert seen["flr"] == {cx["flr_a"], cx["flr_b"]}
+    assert seen["meta"] == {cx["meta_a"], cx["meta_b"]}
+    assert seen["dv"] == {cx["dv_a"], cx["dv_b"]}
+
+
+def test_child_filtered_by_other_companys_parent_fk_returns_nothing(client):
+    """Knowing another company's version id and filtering the child table on
+    that FK directly -- no join to ForecastVersion -- still returns nothing."""
+    from app.database import SessionLocal
+    from app.models.forecast import ForecastLineResult
+    from app.models.user import User
+    from app.services.tenant_scope import (
+        UNRESTRICTED,
+        push_tenant_scope,
+        reset_tenant_scope,
+        scope_for_user,
+    )
+
+    fx = _make_scoped_fixtures("child-fk")
+    cx = _make_child_fixtures(fx)
+    db = SessionLocal()
+    try:
+        token = push_tenant_scope(UNRESTRICTED)
+        try:
+            b_version_id = db.get(ForecastLineResult, cx["flr_b"]).version_id
+            user_a = db.query(User).filter(User.username == fx["username"]).first()
+        finally:
+            reset_tenant_scope(token)
+        db.expire_all()
+
+        token = push_tenant_scope(scope_for_user(user_a))
+        try:
+            rows = (
+                db.query(ForecastLineResult)
+                .filter(ForecastLineResult.version_id == b_version_id)
+                .all()
+            )
+        finally:
+            reset_tenant_scope(token)
+        assert rows == []
+    finally:
+        db.close()

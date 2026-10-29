@@ -47,6 +47,7 @@ def _add_actuals(db, line: LineItem, periods: list[str], values: list[float]) ->
         period_start=periods[0],
         period_end=periods[-1],
         periods_count=len(periods),
+        business_unit_id=line.business_unit_id,
     )
     db.add(dataset)
     db.flush()

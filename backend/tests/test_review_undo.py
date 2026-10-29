@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from passlib.context import CryptContext
 
+from app.models.business_unit import BusinessUnit
 from app.models.forecast import ForecastVersion, ForecastLineResult
 from app.models.line_item import LineItem
 from app.models.review_undo import ReviewUndoSnapshot
@@ -34,17 +35,45 @@ def client():
         yield c
 
 
+@pytest.fixture(autouse=True)
+def _unrestricted_test_reads():
+    """The test body's own SessionLocal() seeding/verification reads run
+    outside any request, where tenant scoping (app/services/tenant_scope.py)
+    fails closed and hides every scoped row, children included. The test
+    harness is not a tenant: read unrestricted. Requests still push their
+    own user's scope in get_current_user."""
+    from app.services.tenant_scope import UNRESTRICTED, push_tenant_scope, reset_tenant_scope
+
+    token = push_tenant_scope(UNRESTRICTED)
+    yield
+    reset_tenant_scope(token)
+
+
 def _auth_header(client: TestClient, username: str, password: str) -> dict[str, str]:
     r = client.post("/api/auth/login", json={"username": username, "password": password})
     assert r.status_code == 200, r.text
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
+def _demo_bu_id(db) -> str:
+    # The demo analyst's company (see app.main.seed_roles_and_admin).
+    bu = db.query(BusinessUnit).filter(BusinessUnit.name == "North America").first()
+    assert bu is not None, "expected the demo seed business unit to exist"
+    return bu.id
+
+
 def _seed_two_line_items(db, *, prefix: str):
     admin = db.query(User).filter(User.username == "admin").first()
+    bu_id = _demo_bu_id(db)
     unique = uuid.uuid4().hex[:8]
-    li_a = LineItem(name=f"{prefix} Rev A", account_code=f"{prefix}-{unique}-1", category="Revenue")
-    li_b = LineItem(name=f"{prefix} Rev B", account_code=f"{prefix}-{unique}-2", category="Revenue")
+    li_a = LineItem(
+        name=f"{prefix} Rev A", account_code=f"{prefix}-{unique}-1", category="Revenue",
+        business_unit_id=bu_id,
+    )
+    li_b = LineItem(
+        name=f"{prefix} Rev B", account_code=f"{prefix}-{unique}-2", category="Revenue",
+        business_unit_id=bu_id,
+    )
     db.add_all([li_a, li_b])
     db.flush()
 
@@ -55,6 +84,7 @@ def _seed_two_line_items(db, *, prefix: str):
         horizon_months=1,
         created_by=admin.id,
         created_at=datetime.now(timezone.utc),
+        business_unit_id=bu_id,
     )
     db.add(version)
     db.flush()
@@ -192,7 +222,10 @@ def test_undo_review_wrong_user_403(client):
                 role_id=role.id,
             )
             db.add(other)
-            db.commit()
+        # Same company as the version, so the 403 below is the ownership
+        # check, not the tenant scope hiding the snapshot (which 404s).
+        other.business_unit_id = _demo_bu_id(db)
+        db.commit()
     finally:
         db.close()
 
