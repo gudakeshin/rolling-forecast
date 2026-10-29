@@ -4,6 +4,7 @@ import { uploadFile, apiPost } from '../../api/client';
 import { useI18n } from '../../i18n/useI18n';
 import { useComposerStore } from '../../store/composerStore';
 import { searchLineItems, type LineItemSearchResult } from '../../api/dashboard';
+import { loadPromptHistory, rememberPrompt, stepHistory } from '../../utils/promptHistory';
 import type { MessageKey } from '../../i18n';
 
 const ACTUALS_EXTENSIONS = new Set(['.csv', '.xlsx', '.xls']);
@@ -49,6 +50,9 @@ interface Props {
 export function InputBar({ onSend, onStop, isStreaming }: Props) {
   const { t } = useI18n();
   const [input, setInput] = useState('');
+  // ↑/↓ recall of previously sent prompts; historyIndex is null when not browsing.
+  const historyRef = useRef<string[]>(loadPromptHistory());
+  const [historyIndex, setHistoryIndex] = useState<number | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -131,6 +135,8 @@ export function InputBar({ onSend, onStop, isStreaming }: Props) {
     const trimmed = input.trim();
     if (!trimmed || isStreaming) return;
     onSend(trimmed);
+    historyRef.current = rememberPrompt(historyRef.current, trimmed);
+    setHistoryIndex(null);
     setInput('');
     setMentionToken(null);
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
@@ -213,6 +219,19 @@ export function InputBar({ onSend, onStop, isStreaming }: Props) {
       }
     }
 
+    // Prompt history: only from an empty composer or while already browsing,
+    // so the arrows still move the caret inside a draft.
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && (input === '' || historyIndex !== null)) {
+      const history = historyRef.current;
+      const next = stepHistory(history.length, historyIndex, e.key === 'ArrowUp' ? -1 : 1);
+      if (next !== null || historyIndex !== null) {
+        e.preventDefault();
+        setHistoryIndex(next);
+        setInput(next === null ? '' : history[next]);
+      }
+      return;
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -262,6 +281,7 @@ export function InputBar({ onSend, onStop, isStreaming }: Props) {
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value;
     setInput(value);
+    setHistoryIndex(null); // editing a recalled prompt makes it a new draft
     setMenuClosed(false);
     setMentionToken(findMentionToken(value, e.target.selectionStart ?? value.length));
     const textarea = e.target;

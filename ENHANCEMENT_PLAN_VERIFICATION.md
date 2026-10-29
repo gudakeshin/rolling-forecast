@@ -60,7 +60,10 @@ Deviations from the plan text are called out in **Deviation** rows.
 | 4.3 | Frozen column, per-column filters + search, row selection + bulk bar, totals footer, heatmap, keyboard cell navigation, TSV copy, virtualization with expanded rows | `DataTable.test.tsx` (pinning, selection, totals, TSV copy, virtualization, heatmap, per-column filters, arrow-key navigation) |
 | 4.3 | Server-side "export full version" | `test_forecast_export.py` (all rows, filters, formula-injection guard, XLSX, 404 cross-company), e2e export |
 | 4.4 | Undo backed by a real reversal endpoint; preview before batch actions; dialog instead of `window.confirm` | `test_review_undo.py`, e2e "bulk approve shows a preview and can be undone", `confirmStore.test.ts` |
-| 4.5 | ⌘K palette, row approve/flag shortcuts, per-panel code splitting, polls gated on `document.hidden` | e2e "command palette opens a panel", `reviewShortcuts.test.ts`; `React.lazy` panels in `PanelContainer.tsx`; `document.hidden` guards in StatusCard / ForecastTable / Review / Approvals |
+| 4.5 | ⌘K palette | e2e "command palette opens a panel" |
+| 4.5 | Row-level approve/flag shortcuts | `reviewShortcuts.test.ts` (key mapping, ignored while typing or with modifiers) |
+| 4.5 | Per-panel code splitting | **Live:** `npm run build` emits a separate chunk for every `React.lazy` panel in `PanelContainer.tsx` |
+| 4.5 | Polls paused while the tab is hidden | `StatusCard.test.tsx` (2s job poll stops when `document.hidden`, resumes when visible); same guard in ForecastTable / Review / Approvals |
 
 ## Phase 5 — Surface the intelligence
 
@@ -75,14 +78,18 @@ Deviations from the plan text are called out in **Deviation** rows.
 | Item | Criterion (plan) | Evidence |
 |---|---|---|
 | 6.1 | Empty states give the next action; first-run guided path with progress; Comparison disabled with a reason | `GettingStarted.test.tsx`, `useNavItems.test.tsx`, e2e "empty workspace guides the first run" |
-| 6.2 | `/` commands, `@` mentions, prompt history, follow-up chips; panels push prompts into the composer | `InputBar.tsx` (slash menu, mentions, ↑ history), `FollowUpChips.tsx`; `composerStore.test.tsx` |
+| 6.2 | `/` commands | `InputBar.test.tsx` (menu opens on `/`, Enter runs the highlighted command) |
+| 6.2 | `@` mentions for line items | `InputBar.test.tsx` (debounced search, arrow + Enter inserts the name) |
+| 6.2 | Prompt history (↑ recall) | `InputBar.test.tsx` (↑/↓ through sent prompts, drafts untouched, survives remount); added in this pass, it was missing |
+| 6.2 | Follow-up suggestion chips | `InputBar.test.tsx` (context-aware chips, click sends, hidden when the reply has actions) |
+| 6.2 | Panels push a prompt into the composer instead of the clipboard | `composerStore.test.tsx` |
 | 6.3 | Paste-able driver grid, no 30-row cap; TSV both directions | `driverPaste.test.ts`, `DataTable.test.tsx` (TSV copy) |
 | 6.4 | Value dashboard: cycle time trend, FVA vs naive, override rate, review time on flagged lines | `test_value_metrics.py`, `ValueMetrics.test.tsx` |
 
 ## Whole-app gates (plan "Verification")
 
-- `pytest -q --cov=app --cov-fail-under=60`: 700+ passed, coverage 75%.
+- `pytest -q --cov=app --cov-fail-under=60`: 705 passed, coverage 75%.
 - `ruff check app tests alembic` and `mypy app alembic`: clean.
-- `npm run typecheck && npm run lint && npm test`: clean (lint warnings predate this work).
+- `npm run typecheck && npm run lint && npm test`: clean, **0 lint warnings** (the 18 earlier warnings, all from commits dated 2026-02-22 to 2026-09-20, were fixed).
 - `npx playwright test` against a live stack: all e2e pass, in CI and locally on a fresh database.
 - Migrations up/down/up on SQLite and Postgres.
