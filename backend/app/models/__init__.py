@@ -27,6 +27,7 @@ from app.models.model_preset import ModelPreset
 from app.models.tenant_setting import BusinessUnitSetting
 from app.models.company_membership import CompanyMembership
 from app.models.saved_view import SavedView
+from app.models.kpi import KpiDefinition
 
 __all__ = [
     "User",
@@ -72,4 +73,5 @@ __all__ = [
     "BusinessUnitSetting",
     "CompanyMembership",
     "SavedView",
+    "KpiDefinition",
 ]

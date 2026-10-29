@@ -410,6 +410,11 @@ def register_all_skills() -> SkillsRegistry:
     registry.register(GetForecastSettingsSkill())
     registry.register(UpdateForecastSettingsSkill())
 
+    # Custom KPIs (company-defined formulas) evaluated for a version
+    from app.domain.skills.custom_kpis import GetCustomKpisSkill
+
+    registry.register(GetCustomKpisSkill())
+
     # Actuals dataset precedence — visibility/control over manual-upload pins
     from app.domain.skills.manage_actuals_dataset import (
         ListActualsDatasetsSkill,

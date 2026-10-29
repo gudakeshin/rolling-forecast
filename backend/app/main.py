@@ -273,6 +273,7 @@ from app.api.heuristics import router as heuristics_router
 from app.api.notifications import router as notifications_router
 from app.api.model_presets import router as model_presets_router
 from app.api.saved_views import router as saved_views_router
+from app.api.kpis import router as kpis_router
 
 app.include_router(health_router)
 app.include_router(auth_router, prefix="/api")
@@ -297,6 +298,7 @@ app.include_router(heuristics_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 app.include_router(model_presets_router, prefix="/api")
 app.include_router(saved_views_router, prefix="/api")
+app.include_router(kpis_router, prefix="/api")
 
 # Prometheus metrics (skip in tests — instrumentator breaks on Starlette Mount routes)
 if settings.app_env != "test":

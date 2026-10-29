@@ -530,6 +530,7 @@ async def get_executive_dashboard(
     6. Movement bridge with narrative
     """
     from app.models.driver_input import DriverInput
+    from app.services.kpis import evaluate_kpis
 
     version = get_accessible_forecast_version(db, current_user, version_id)
 
@@ -956,6 +957,8 @@ async def get_executive_dashboard(
             "bridge_narrative": bridge_narrative,
             "accuracy": accuracy_kpis,
             "time_series": time_series,
+            "custom_kpis": evaluate_kpis(db, version),
+            "version_business_unit_id": version.business_unit_id,
         },
     )
 

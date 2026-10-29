@@ -16,6 +16,8 @@ import { useCan } from '../../store/authStore';
 import { toast } from '../../store/toastStore';
 import { DataTable, downloadCsv, type DataTableColumn } from '../ui/DataTable';
 import { chartTheme } from '../../theme/chartTheme';
+import { CustomKpis } from './CustomKpis';
+import type { KpiResult } from '../../api/kpis';
 
 const COLORS = {
   green: chartTheme.colors.primary,
@@ -78,6 +80,7 @@ interface OverrideItem {
 interface ExecData {
   version: Record<string, any>;
   empty?: boolean;
+  custom_kpis?: KpiResult[];
   position: {
     total_p50: number;
     total_p10: number;
@@ -618,6 +621,11 @@ export function ExecutiveDashboardPanel({ data, onRefresh: _onRefresh }: { data:
           )}
         </div>
       </div>
+
+      {/* Company-defined KPI formulas */}
+      {d.version?.id && (
+        <CustomKpis key={d.version.id} versionId={d.version.id} initial={d.custom_kpis ?? []} />
+      )}
 
       {/* 3. Priority Actions */}
       <PriorityActions items={d.priority_items} versionId={d.version?.id || ''} />

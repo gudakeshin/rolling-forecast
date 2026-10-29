@@ -108,6 +108,7 @@ def register(session_factory) -> None:
     from app.models.line_item import LineItem
     from app.models.model_preset import ModelPreset
     from app.models.saved_view import SavedView
+    from app.models.kpi import KpiDefinition
     from app.models.actuals import ActualsRecord
     from app.models.anomaly_dismissal import AnomalyDismissal
     from app.models.approval import ApprovalStep
@@ -129,6 +130,7 @@ def register(session_factory) -> None:
         DriverFormConfig,
         IntegrationConnection,
         SavedView,
+        KpiDefinition,
     )
 
     # (child, its owning FK column, the plain scoped parent that FK points at)
