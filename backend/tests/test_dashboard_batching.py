@@ -373,8 +373,12 @@ def test_anomaly_dismissal_persists_across_reloads(
 def test_driver_inputs_endpoint_ok(client):
     """HTTP path shares the app DB (not the in-memory unit-test session)."""
     from app.database import SessionLocal
+    from app.services.tenant_scope import UNRESTRICTED, push_tenant_scope, reset_tenant_scope
 
     db = SessionLocal()
+    # Outside a request the tenant net denies by default, which would hide a
+    # leftover row from a previous run and make the insert below collide.
+    scope_token = push_tenant_scope(UNRESTRICTED)
     try:
         existing = db.query(ForecastVersion).filter(ForecastVersion.id == "drv-api-v1").first()
         if existing:
@@ -392,6 +396,7 @@ def test_driver_inputs_endpoint_ok(client):
         )
         db.commit()
     finally:
+        reset_tenant_scope(scope_token)
         db.close()
 
     login = client.post("/api/auth/login", json={"username": "admin", "password": "admin"})
