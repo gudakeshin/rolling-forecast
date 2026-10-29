@@ -30,7 +30,8 @@ Deviations from the plan text are called out in **Deviation** rows.
 |---|---|---|
 | 2.1 | Global cross-series model, fit once, native asymmetric P10/P50/P90 | `test_global_gbm.py` (round trip, monotone quantiles, 4-4-5 features), `test_panel_forecast.py` (incl. leakage guard on held-out driver columns) |
 | 2.1 | Flows through the two-stage screen and 1-SE Occam tie-break; cannot beat a simpler model inside the band on a tie | `test_model_registry.py::TestGlobalGBMRegistration`, `test_exact_tie_prefers_lower_complexity_rank`, `test_two_stage_screen_gates_expensive_admission` |
-| 2.1 | **Deviation:** `sklearn.HistGradientBoostingRegressor` (quantile loss) instead of `lightgbm`, chosen to avoid a new pinned dependency | `backend/app/domain/engines/global_gbm.py` |
+| 2.1 | Features: lags, rolling stats, fiscal position (4-4-5 aware), category / business unit, driver columns | `test_global_gbm.py` (lag/rolling, 4-4-5 fiscal features), `test_panel_forecast::test_builds_context_for_a_simple_panel` (category columns), `test_held_out_fold_driver_columns_use_origin_restricted_overlay` |
+| 2.1 | **Deviation:** `sklearn.HistGradientBoostingRegressor` (quantile loss) instead of `lightgbm`, to avoid a new pinned dependency; category / business unit / product line are one-hot encoded from the panel's own vocabulary rather than target-encoded, which avoids target leakage across CV folds | `global_gbm.py`, `panel_forecast._category_onehot` |
 | 2.1 | Short/new lines can use it (plan: "new/short lines fall back to linear") | `test_sparse_line_selection.py` |
 | 2.2 | ETS multiplicative error/seasonality and log (Box-Cox λ=0) transform | `test_plan_engine_behaviour::test_ets_grid_offers_multiplicative_and_log_specs_for_positive_data`, `test_ets_picks_a_proportional_spec_on_proportional_seasonality` |
 | 2.2 | Croston/TSB smoothing constants searched, not fixed at 0.1 | `test_croston_alpha_is_searched_not_fixed`, `test_tsb_alpha_beta_are_searched` |
@@ -47,15 +48,23 @@ Deviations from the plan text are called out in **Deviation** rows.
 | 3.1 | One slow forecast must not block everything | Separate task queue: `test_background_tasks::test_worker_queues_are_split` (forecasts 1 slot, tasks 4) |
 | 3.1 | Worker actually starts | `test_worker_startup_hooks_are_awaitable` (the worker crashed at boot from 2026-07-11 until this fix); **live** start |
 | 3.2 | Pulls, document embedding, board-pack email, rescore-all, reflection off the request thread; pull returns a job id | `test_background_tasks.py` (202 + job, inline without a queue, 503 when required but absent, worker success/failure/notification, fail-closed scope); **live:** pull, rescore-all and document indexing returned 202 and completed on the task worker |
-| 3.3 | Notification model + API + header bell; triggers: approval pending, actuals ingested + what moved, driver overdue, anomaly, job finished | `test_notifications.py`, `test_background_tasks::test_worker_runs_task_and_notifies`; kinds `approval_pending`, `actuals_ingested`, `driver_overdue`, `anomaly_detected`, `job_finished`/`job_failed` |
+| 3.3 | Notification model + API + header bell | `test_notifications.py`, `NotificationBell.test.tsx` (unread count, choosing a notification marks it read and opens its panel) |
+| 3.3 | Trigger: approval pending for you | `test_notifications::test_submit_for_approval_notifies_first_level_reviewers`, `test_approving_level_one_notifies_level_two` |
+| 3.3 | Trigger: new actuals ingested + what moved | `test_notifications::test_actuals_ingest_notifies_can_generate_users_with_top_mover` |
+| 3.3 | Trigger: driver input overdue (own company only) | `test_scheduled_sweeps::test_driver_overdue_notifies_only_the_forms_own_company` — also fixed: forms were paired with every company's versions, and recipients were matched by legacy name only |
+| 3.3 | Trigger: anomaly detected | `test_scheduled_sweeps::test_anomaly_sweep_notifies_reviewers_and_survives_unreadable_versions` — also fixed: the sweep now runs as a platform admin and one unreadable version no longer aborts it |
+| 3.3 | Trigger: forecast / background job finished or failed | `test_background_tasks::test_worker_runs_task_and_notifies`, `test_worker_failure_is_recorded_and_notified`; **live:** forecast job notification linked the new version |
 
 ## Phase 4 — Analyst workspace
 
 | Item | Criterion (plan) | Evidence |
 |---|---|---|
-| 4.1 | Two panels side by side + maximize/full width | `driverPaste.test.ts` (panel stack), e2e "two panels side by side" |
+| 4.1 | Two panels side by side | `driverPaste.test.ts` (panel stack), `PanelUrlSync.test.tsx` (pin current panel beside), e2e "two panels side by side" |
+| 4.1 | Maximize mode / full width for grid work | `PanelUrlSync.test.tsx` (maximize a slot and toggle back; wide mode remembered per slot) |
 | 4.1 | Panel data cached by (type, params): switching back doesn't refetch | `panelDataCache.test.ts`; e2e suite passes with the cache in place |
-| 4.2 | Panel params in the URL; named saved views; anomaly dismissals server-side | `PanelUrlSync` (`?pp=`), `test_saved_views.py`, `savedViewsStore.test.ts`, e2e "saved view survives reload", `test_dashboard_batching::test_anomaly_dismissal_persists_across_reloads` |
+| 4.2 | Panel params serialized into the URL; a shared link opens the same panels with the same filters | `PanelUrlSync.test.tsx` (deep link restores both panels + filters, store changes written back, closed panel removed, bad params ignored) |
+| 4.2 | Named saved views | `test_saved_views.py`, `savedViewsStore.test.ts`, e2e "saved view survives reload" |
+| 4.2 | Anomaly dismissals persisted server-side | `test_dashboard_batching::test_anomaly_dismissal_persists_across_reloads` |
 | 4.2 | **Deviation (beyond plan):** saved views are server-side and shareable within a company, not localStorage | migration 031 |
 | 4.3 | Frozen column, per-column filters + search, row selection + bulk bar, totals footer, heatmap, keyboard cell navigation, TSV copy, virtualization with expanded rows | `DataTable.test.tsx` (pinning, selection, totals, TSV copy, virtualization, heatmap, per-column filters, arrow-key navigation) |
 | 4.3 | Server-side "export full version" | `test_forecast_export.py` (all rows, filters, formula-injection guard, XLSX, 404 cross-company), e2e export |
@@ -71,7 +80,7 @@ Deviations from the plan text are called out in **Deviation** rows.
 |---|---|---|
 | 5.1 | "Why this number?": model + runner-up, cleaning/breaks, exog admit/reject reason, reconciliation delta, override history, calibration | `test_why_this_number.py` (all seven cases) |
 | 5.2 | Driver evidence incl. rejected candidates | `test_phase9_discovery.py` (FDR, placebo, sign priors, rejects kept on the run) |
-| 5.3 | Agent's model list generated from the registry | `test_per_company_model_gates::test_agent_prompt_lists_the_companys_models` |
+| 5.3 | Agent's capability text generated from the registry, not hardcoded | `test_per_company_model_gates::test_agent_model_list_is_generated_from_the_registry` (equals the registry's selectable models, excludes benchmark/edge-case models, no "4 algorithms"), `test_agent_prompt_lists_the_companys_models` (follows the company's model switches) |
 
 ## Phase 6 — Time-to-value
 
@@ -84,7 +93,8 @@ Deviations from the plan text are called out in **Deviation** rows.
 | 6.2 | Follow-up suggestion chips | `InputBar.test.tsx` (context-aware chips, click sends, hidden when the reply has actions) |
 | 6.2 | Panels push a prompt into the composer instead of the clipboard | `composerStore.test.tsx` |
 | 6.3 | Paste-able driver grid, no 30-row cap; TSV both directions | `driverPaste.test.ts`, `DataTable.test.tsx` (TSV copy) |
-| 6.4 | Value dashboard: cycle time trend, FVA vs naive, override rate, review time on flagged lines | `test_value_metrics.py`, `ValueMetrics.test.tsx` |
+| 6.4 | Value dashboard: cycle time trend, FVA vs naive, override rate | `test_value_metrics.py`, `ValueMetrics.test.tsx` |
+| 6.4 | **Deviation:** "% of review time on flagged lines" is measured as the share of review *actions* on lines the AI flagged; the app records actions, not time spent | `value_metrics.py` (`flagged_review_share`) |
 
 ## Whole-app gates (plan "Verification")
 

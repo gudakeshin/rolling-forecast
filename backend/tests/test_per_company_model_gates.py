@@ -210,3 +210,27 @@ def test_agent_prompt_lists_the_companys_models(db_session, seed_users, seed_bus
     assert enabled is not default
     assert gbm_label in prompts[-1]
     ma.invalidate_agent_cache()
+
+
+def test_agent_model_list_is_generated_from_the_registry():
+    """Plan 5.3: the agent's capability text lists the registry's selectable
+    models (it once hardcoded "4 algorithms"), excluding benchmark-only and
+    edge-case-only models it never offers the analyst."""
+    from app.orchestration.master_agent import _auto_selectable_model_labels, _build_system_prompt
+
+    registry = get_full_model_registry()
+    expected = [
+        registry.get(n).capabilities.display_label or n
+        for n in registry.list_models()
+        if registry.get(n).capabilities.auto_selectable and not registry.get(n).capabilities.is_benchmark
+    ]
+    labels = _auto_selectable_model_labels(registry)
+    assert labels == expected
+    assert len(labels) > 4
+    for internal in ("naive", "seasonal_naive", "zero", "average"):
+        caps = registry.get(internal).capabilities
+        assert (caps.display_label or internal) not in labels
+
+    prompt = _build_system_prompt(registry)
+    assert all(label in prompt for label in labels)
+    assert "4 algorithms" not in prompt
