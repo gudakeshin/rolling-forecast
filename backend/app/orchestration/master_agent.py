@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.orchestration.context_manager import ContextManager
 from app.domain.registry import get_registry
-from app.domain.engines.model_registry import get_model_registry
+from app.domain.engines.model_registry import ModelRegistry, get_model_registry
 from app.domain.base_skill import (
     SkillContext,
     push_skill_context,
@@ -22,8 +22,9 @@ from app.domain.base_skill import (
 logger = logging.getLogger(__name__)
 
 # Module-level compiled-graph cache:
-# (role, definitions_generation, model, company skill-override fingerprint) → agent
-_agent_cache: dict[tuple[str, int, str, str], Any] = {}
+# (role, definitions_generation, model, company skill-override fingerprint,
+#  company model gates) → agent
+_agent_cache: dict[tuple[str, int, str, str, tuple[bool, bool]], Any] = {}
 
 
 def invalidate_agent_cache() -> None:
@@ -31,14 +32,17 @@ def invalidate_agent_cache() -> None:
     _agent_cache.clear()
 
 
-def _auto_selectable_model_labels() -> list[str]:
+def _auto_selectable_model_labels(registry: ModelRegistry | None = None) -> list[str]:
     """Display labels for models the auto-selection pipeline actually chooses between.
 
-    Excludes benchmark-only models (naive/seasonal-naive) and edge-case-only
-    models (zero/mean), which the pipeline uses internally but never presents
-    as a candidate to the analyst.
+    ``registry`` is the user's company roster (its benchmark / global-GBM
+    gates); omitted, the global-settings roster. Excludes benchmark-only
+    models (naive/seasonal-naive) and edge-case-only models (zero/mean),
+    which the pipeline uses internally but never presents as a candidate to
+    the analyst.
     """
-    registry = get_model_registry()
+    if registry is None:
+        registry = get_model_registry()
     labels = []
     for name in registry.list_models():
         model = registry.get(name)
@@ -109,9 +113,10 @@ Dynamic per-turn context (user session, active version, document excerpts) is pr
 """
 
 
-def _build_system_prompt() -> str:
-    """Render SYSTEM_PROMPT_TEMPLATE against the live model registry."""
-    labels = _auto_selectable_model_labels()
+def _build_system_prompt(registry: ModelRegistry | None = None) -> str:
+    """Render SYSTEM_PROMPT_TEMPLATE against a model registry (the user's
+    company roster, or the global-settings one when omitted)."""
+    labels = _auto_selectable_model_labels(registry)
     return SYSTEM_PROMPT_TEMPLATE.format(
         model_list=", ".join(labels),
         model_count=len(labels),
@@ -158,16 +163,25 @@ class MasterAgent:
         graph, and editing an override yields a new key instead of a stale hit."""
         from app.services.skill_overrides import effective_skill_definitions
 
+        from app.domain.engines.model_registry import registry_for_analysis
+        from app.services.analysis_profile import resolve_analysis_settings
+
         registry = get_registry()
         user = self.context_manager.user
-        definitions, overrides_fp = effective_skill_definitions(
-            self.db, business_unit_id=getattr(user, "business_unit_id", None)
+        bu_id = getattr(user, "business_unit_id", None)
+        definitions, overrides_fp = effective_skill_definitions(self.db, business_unit_id=bu_id)
+        # The prompt lists the company's own model roster (its gates).
+        model_registry = (
+            registry_for_analysis(resolve_analysis_settings(self.db, business_unit_id=bu_id))
+            if self.db is not None
+            else get_model_registry()
         )
         cache_key = (
             self._role_key(),
             registry.definitions_generation,
             settings.anthropic_model,
             overrides_fp,
+            (model_registry.enable_benchmark_models, model_registry.enable_global_gbm_model),
         )
         cached = _agent_cache.get(cache_key)
         if cached is not None:
@@ -189,7 +203,7 @@ class MasterAgent:
         agent = create_react_agent(
             model=llm,
             tools=tools,
-            prompt=_build_system_prompt(),
+            prompt=_build_system_prompt(model_registry),
         )
         _agent_cache[cache_key] = agent
         return agent

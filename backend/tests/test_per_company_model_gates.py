@@ -173,3 +173,40 @@ def test_available_models_endpoint_hides_other_companies(client):
         headers=_analyst_headers(client),
     )
     assert r.status_code == 404
+
+
+def test_agent_prompt_lists_the_companys_models(db_session, seed_users, seed_business_unit, monkeypatch):
+    """The agent's system prompt and graph cache follow the user's company gates."""
+    from app.orchestration import master_agent as ma
+
+    monkeypatch.setattr(settings, "enable_global_gbm_model", False)
+    ma.invalidate_agent_cache()
+    prompts: list[str] = []
+    monkeypatch.setattr(ma, "create_react_agent", lambda **kw: prompts.append(kw["prompt"]) or object())
+    monkeypatch.setattr(ma, "ChatAnthropic", lambda **kw: object())
+
+    class FakeCM:
+        user_id = "u1"
+        user_role = "analyst"
+        conversation_id = "c1"
+        _working_memory: dict = {}
+
+        def __init__(self, user):
+            self.user = user
+
+    user = seed_users["analyst"]
+    user.business_unit_id = seed_business_unit.id
+    db_session.commit()
+    gbm_label = get_full_model_registry().get("global_gbm").capabilities.display_label
+
+    default = ma.MasterAgent(context_manager=FakeCM(user), db=db_session)._get_agent()
+    assert gbm_label not in prompts[-1]
+
+    update_analysis_profile(
+        db_session, business_unit_id=seed_business_unit.id,
+        patch={"enable_global_gbm_model": True}, actor=seed_users["admin"],
+    )
+    enabled = ma.MasterAgent(context_manager=FakeCM(user), db=db_session)._get_agent()
+    assert enabled is not default
+    assert gbm_label in prompts[-1]
+    ma.invalidate_agent_cache()
