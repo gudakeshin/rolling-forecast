@@ -103,3 +103,84 @@ Deviations from the plan text are called out in **Deviation** rows.
 - `npm run typecheck && npm run lint && npm test`: clean, **0 lint warnings** (the 18 earlier warnings, all from commits dated 2026-02-22 to 2026-09-20, were fixed).
 - `npx playwright test` against a live stack: all e2e pass, in CI and locally on a fresh database.
 - Migrations up/down/up on SQLite and Postgres.
+
+## Appendix — line-by-line audit of `ENHANCEMENT_PLAN.md`
+
+Every requirement bullet of the plan, by ID (item number + bullet letter, in
+plan order), with its evidence. `backend/tests/test_plan_audit.py` re-extracts
+the bullets from `ENHANCEMENT_PLAN.md` and fails if any ID is missing here or
+has no evidence, so the plan and this audit cannot drift apart.
+
+<!-- plan-audit:start -->
+| ID | Evidence |
+|---|---|
+| 1.1.a | `test_evaluate_cv_returns_residuals_keyed_by_horizon` |
+| 1.1.b | `test_registry_exposes_residuals_for_the_model_actually_used` |
+| 1.2.a | `interval_calibration.conformal_bands` / `apply_bands`: `test_covers_target_on_held_out_errors`, `test_thin_horizon_borrows_pooled_residuals_and_says_so`, `test_refuses_to_calibrate_on_thin_evidence` |
+| 1.2.b | Wired in `forecast_pipeline` (calibration first, exog inflation compounds on top — see deviation above): `test_pipeline_tags_bounds_method_and_keeps_the_ordering_invariant` |
+| 1.2.c | `test_pipeline_tags_bounds_method_and_keeps_the_ordering_invariant` |
+| 1.2.d | `test_short_history_falls_back_to_the_analytic_band` |
+| 1.3.a | `realized_coverage_by_line` reads `within_p10_p90`: `test_why_this_number::test_realized_coverage_aggregated_across_vintages` |
+| 1.3.b | `test_realized_coverage_corrects_the_cv_band`, `test_rescale_is_clamped_against_noisy_coverage_estimates` |
+| 1.4.a | `test_what_if_band_widens_by_elasticity_estimation_error` |
+| 1.5.a | `calibration_summary` on the table payload (calibrated lines, realized coverage, lines with closed cycles, target): `test_forecast_table_reports_calibration_provenance` |
+| 1.5.b | `CalibrationBanner.test.tsx` |
+| 2.1.a | Deviation: scikit-learn `HistGradientBoostingRegressor` (already pinned) instead of adding `lightgbm` |
+| 2.1.b | `test_global_gbm::test_fit_predict_round_trip`, `test_fit_raises_without_panel` |
+| 2.1.c | Features live in `global_gbm.py` / `panel_forecast.py`: `test_lag_rolling_features_shape_and_values`, `test_fiscal_features_445_period`, `test_builds_context_for_a_simple_panel` (category one-hots), `test_held_out_fold_driver_columns_use_origin_restricted_overlay` |
+| 2.1.d | `test_builds_context_for_a_simple_panel` (one fit, three quantile models), `test_predict_enforces_monotonicity_on_crossed_quantiles` |
+| 2.1.e | `test_two_stage_screen_gates_expensive_admission`, `test_exact_tie_prefers_lower_complexity_rank`; drivers enter as panel feature columns rather than through the per-line exog interface |
+| 2.1.f | Panel built once per generation run and reused per line: `test_builds_context_for_a_simple_panel`, `test_evaluate_one_looks_up_precomputed_panel_cv` |
+| 2.2.a | `test_ets_grid_offers_multiplicative_and_log_specs_for_positive_data`, `test_ets_picks_a_proportional_spec_on_proportional_seasonality` |
+| 2.2.b | `test_croston_alpha_is_searched_not_fixed`, `test_tsb_alpha_beta_are_searched` |
+| 2.3.a | Blending in `generate_baseline`'s pipeline, on by default: `test_blends_top2_when_enabled`, `test_registered_by_default` |
+| 2.3.b | `test_blends_top2_when_enabled`, `test_no_blend_when_disabled`; ship criterion: `scripts/backtest_roster.py` |
+| 2.3.c | `test_run_ensemble_handles_fiscal_periods_and_uses_shared_confidence` |
+| 2.3.d | `test_exog_mase_scale_follows_the_fiscal_calendar` |
+| 3.1.a | `test_scheduled_jobs_are_registered_with_the_worker`; live Redis check (forced nightly sync) |
+| 3.1.b | `test_worker_queues_are_split` |
+| 3.2.a | `test_background_tasks.py` (202 + job id, inline fallback, document indexing, distribute access check); live Redis check |
+| 3.3.a | `test_notifications.py`, `NotificationBell.test.tsx` |
+| 3.3.b | `test_submit_for_approval_notifies_first_level_reviewers`, `test_actuals_ingest_notifies_can_generate_users_with_top_mover`, `test_driver_overdue_notifies_only_the_forms_own_company`, `test_anomaly_sweep_notifies_reviewers_and_survives_unreadable_versions`, `test_worker_runs_task_and_notifies` |
+| 3.3.c | Notifications now go out for the triggers in 3.3.b, not only the board-pack email |
+| 4.1.a | `driverPaste.test.ts` (two panel stores open independently) |
+| 4.1.b | `PanelUrlSync.test.tsx` (maximize toggling, wide mode, pin beside), e2e "two panels side by side" |
+| 4.1.c | `panelDataCache.test.ts` |
+| 4.2.a | `PanelUrlSync.test.tsx` (filters survive in the URL), `test_saved_views.py` |
+| 4.2.b | `PanelUrlSync.test.tsx` |
+| 4.2.c | `PanelUrlSync.test.tsx`, `test_saved_views.py`, `savedViewsStore.test.ts`, e2e saved view across reload |
+| 4.2.d | `test_anomaly_dismissal_persists_across_reloads` |
+| 4.3.a | `DataTable.test.tsx` |
+| 4.3.b | `DataTable.test.tsx` (pinned columns) |
+| 4.3.c | `DataTable.test.tsx` (per-column filters, free-text search) |
+| 4.3.d | `DataTable.test.tsx` (row selection + bulk action bar) |
+| 4.3.e | `DataTable.test.tsx` (totals footer, `heatmapBackground`) |
+| 4.3.f | `DataTable.test.tsx` (arrow-key cell navigation, copy as TSV) |
+| 4.3.g | `DataTable.test.tsx` (still windows when expandable rows exist) |
+| 4.3.h | `test_forecast_export.py`, e2e full export |
+| 4.4.a | `reviewShortcuts.test.ts` (`previewLines`), e2e bulk approve shows a preview |
+| 4.4.b | `test_review_undo.py`, e2e preview then undo |
+| 4.4.c | `confirmStore.test.ts`; `Sidebar.tsx` uses `confirmDialog` |
+| 4.5.a | e2e command palette; palette sections for panels, versions, line items, composer focus; `reviewShortcuts.test.ts` |
+| 4.5.b | Live: production build emits one chunk per lazy panel |
+| 4.5.c | `StatusCard.test.tsx` |
+| 5.1.a | `test_why_this_number.py` |
+| 5.1.b | `test_auto_selection_persists_comparisons_into_model_metadata`, `test_model_selection_and_exog_surfaced_from_metadata_parameters` |
+| 5.1.c | `test_basic_fields_and_no_extras_when_nothing_special_happened`, `test_model_selection_and_exog_surfaced_from_metadata_parameters` |
+| 5.1.d | `test_model_selection_and_exog_surfaced_from_metadata_parameters` |
+| 5.1.e | `test_reconciliation_delta_only_shown_when_mint_actually_moved_it` |
+| 5.1.f | `test_override_history_spans_versions_for_the_same_cell`, `test_realized_coverage_aggregated_across_vintages` |
+| 5.2.a | `test_phase9_discovery.py`; `DriversPanel.tsx` shows t, adjusted p and rejected candidates |
+| 5.3.a | `test_agent_model_list_is_generated_from_the_registry`, `test_agent_prompt_lists_the_companys_models` |
+| 6.1.a | `GettingStarted.test.tsx` (`EmptyForecastState` actions by permission) |
+| 6.1.b | `GettingStarted.test.tsx` (`firstRunSteps`), e2e empty workspace |
+| 6.1.c | `useNavItems.test.tsx` |
+| 6.2.a | `InputBar.test.tsx` (follow-up chips after each reply) |
+| 6.2.b | `InputBar.test.tsx` (slash menu, mentions, ↑ history) |
+| 6.2.c | `InputBar.test.tsx` (a `/` command per permitted registered skill; `@` line items, drivers and versions; chips) |
+| 6.2.d | `composerStore.test.tsx` |
+| 6.3.a | `driverPaste.test.ts` (no 30-row cap) |
+| 6.3.b | `driverPaste.test.ts` (paste in), `DataTable.test.tsx` (copy out as TSV) |
+| 6.4.a | `test_value_metrics.py` (FVA vs naive), Accuracy Tracking FVA tiles |
+| 6.4.b | `test_value_metrics.py`, `ValueMetrics.test.tsx` |
+<!-- plan-audit:end -->
