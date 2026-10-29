@@ -22,7 +22,7 @@ interface QualitySummary {
   total_scored: number;
 }
 
-interface CalibrationSummary {
+export interface CalibrationSummary {
   calibrated_lines: number;
   total_lines: number;
   /** Mean realized coverage across lines with enough closed cycles; null = no claim. */
@@ -421,6 +421,7 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
         // its line name has scrolled off.
         pinned: true,
         width: 260,
+        filterable: true,
         exportValue: (_, row) => String(row.line_item_name ?? ''),
         render: (_, row) => (
           <ForecastLineItemCell
@@ -486,6 +487,7 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
       },
       {
         key: 'review_status',
+        filterable: true,
         label: 'Status',
         align: 'center',
         render: (_, row) => (
@@ -662,7 +664,7 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
 }
 
 // ── Quality Summary Banner ──────────────────
-function CalibrationBanner({ calibration }: { calibration: CalibrationSummary }) {
+export function CalibrationBanner({ calibration }: { calibration: CalibrationSummary }) {
   const { realized_coverage: realized, target_coverage: target } = calibration;
   const targetPct = Math.round((target ?? 0.8) * 100);
 

@@ -138,7 +138,7 @@ describe('DataTable', () => {
   describe('totals', () => {
     it('sums only the columns marked total, over the filtered set', () => {
       renderTable({ showTotals: true, searchable: true });
-      const footer = screen.getByRole('table').querySelector('tfoot')!;
+      const footer = screen.getByRole('grid').querySelector('tfoot')!;
       expect(within(footer).getByText('175')).toBeInTheDocument(); // jan
       expect(within(footer).getByText('185')).toBeInTheDocument(); // feb
 
@@ -148,7 +148,7 @@ describe('DataTable', () => {
 
     it('is absent unless asked for', () => {
       renderTable();
-      expect(screen.getByRole('table').querySelector('tfoot')).toBeNull();
+      expect(screen.getByRole('grid').querySelector('tfoot')).toBeNull();
     });
   });
 
@@ -201,7 +201,7 @@ describe('DataTable', () => {
       render(
         <DataTable<Row> columns={COLUMNS} rows={many} getRowId={(r) => r.id} />,
       );
-      expect(screen.getByRole('table').querySelectorAll('tbody tr').length).toBeLessThan(120);
+      expect(screen.getByRole('grid').querySelectorAll('tbody tr').length).toBeLessThan(120);
     });
 
     it('still windows when expandable rows exist but none are open', () => {
@@ -216,7 +216,7 @@ describe('DataTable', () => {
           renderExpandedRow={(r) => <div>detail {String(r.id)}</div>}
         />,
       );
-      expect(screen.getByRole('table').querySelectorAll('tbody tr').length).toBeLessThan(120);
+      expect(screen.getByRole('grid').querySelectorAll('tbody tr').length).toBeLessThan(120);
     });
 
     it('falls back to full render while a row is expanded, and shows the detail', () => {
@@ -260,5 +260,41 @@ describe('heatmapBackground', () => {
     expect(heatmapBackground(0, 10)).toBeUndefined();
     expect(heatmapBackground('n/a', 10)).toBeUndefined();
     expect(heatmapBackground(3, 0)).toBeUndefined();
+  });
+});
+
+describe('DataTable per-column filters and cell navigation (plan 4.3)', () => {
+  const FILTER_COLUMNS: DataTableColumn<Row>[] = COLUMNS.map((c) =>
+    c.key === 'bu' || c.key === 'account' ? { ...c, filterable: true } : c,
+  );
+
+  it('filters by column, combining columns', () => {
+    renderTable({ columns: FILTER_COLUMNS });
+    fireEvent.change(screen.getByLabelText('Filter: Business Unit'), { target: { value: 'emea' } });
+    expect(screen.queryByText('Services Revenue')).toBeNull();
+    expect(screen.getByText('Product Revenue')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Filter: Account'), { target: { value: 'support' } });
+    expect(screen.queryByText('Product Revenue')).toBeNull();
+    expect(screen.getByText('Support Revenue')).toBeTruthy();
+  });
+
+  it('shows no filter row unless a column opts in', () => {
+    renderTable();
+    expect(screen.queryByLabelText(/^Filter:/)).toBeNull();
+  });
+
+  it('moves between cells with the arrow keys from a single tab stop', () => {
+    const { container } = renderTable();
+    const cells = () => Array.from(container.querySelectorAll<HTMLElement>('td[data-cell]'));
+    expect(cells().filter((c) => c.tabIndex === 0)).toHaveLength(1);
+    const first = cells()[0];
+    first.focus();
+    fireEvent.keyDown(first, { key: 'ArrowRight' });
+    expect(document.activeElement?.getAttribute('data-c')).toBe('1');
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+    expect(document.activeElement?.getAttribute('data-r')).toBe('1');
+    fireEvent.keyDown(document.activeElement!, { key: 'Home' });
+    expect(document.activeElement?.getAttribute('data-c')).toBe('0');
+    expect(cells().filter((c) => c.tabIndex === 0)).toHaveLength(1);
   });
 });

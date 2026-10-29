@@ -17,6 +17,7 @@ import {
 import { useSavedViewsStore } from '../../store/savedViewsStore';
 import { useComposerStore } from '../../store/composerStore';
 import { toast } from '../../store/toastStore';
+import { getCachedPanelData, setCachedPanelData } from '../../utils/panelDataCache';
 import { apiGet } from '../../api/client';
 import { useI18n } from '../../i18n/useI18n';
 import type { MessageKey } from '../../i18n';
@@ -135,6 +136,43 @@ const STATIC_PANELS: Record<
  * (rather than via props) transparently see the secondary slot's state —
  * see store/panelStore.ts for why that's safe for every existing panel.
  */
+/** The panel's data URL, or null for panels that load their own data. */
+function panelDataUrl(panelType: string, panelParams: Record<string, any>): string | null {
+  switch (panelType) {
+    case 'forecast_table': {
+      const qs = new URLSearchParams();
+      if (panelParams.view) qs.set('view', String(panelParams.view));
+      if (panelParams.category) qs.set('category', String(panelParams.category));
+      if (panelParams.confidence_level) qs.set('confidence_level', String(panelParams.confidence_level));
+      qs.set('offset', String(Number(panelParams.offset || 0)));
+      if (panelParams.limit) qs.set('limit', String(panelParams.limit));
+      return `/panel/forecast-table/${panelParams.version_id}?${qs.toString()}`;
+    }
+    case 'review_queue':
+      return `/panel/review-queue/${panelParams.version_id}`;
+    case 'overrides':
+      return `/panel/overrides/${panelParams.version_id}`;
+    case 'comparison':
+      return `/panel/comparison/${panelParams.version_id_a}/${panelParams.version_id_b}`;
+    case 'executive_dashboard':
+      return `/panel/executive-dashboard/${panelParams.version_id}`;
+    case 'review_dashboard':
+      return `/panel/review-dashboard/${panelParams.version_id}`;
+    case 'accuracy_tracking':
+      return `/panel/accuracy-tracking/${panelParams.version_id}`;
+    case 'driver_inputs':
+      return `/panel/driver-inputs/${panelParams.version_id}`;
+    case 'anomaly_dashboard':
+      return `/panel/anomaly-dashboard/${panelParams.version_id}`;
+    case 'document_library':
+      return `/context/document-panel/${panelParams.conversation_id || 'default'}`;
+    case 'why_this_number':
+      return `/panel/why-this-number/${panelParams.result_id}`;
+    default:
+      return null;
+  }
+}
+
 export function PanelContainer({ variant = 'primary' }: { variant?: PanelSlot }) {
   const store = variant === 'secondary' ? useSecondaryPanelStore : usePrimaryPanelStore;
   return (
@@ -217,72 +255,46 @@ function PanelContainerBody({ variant }: { variant: PanelSlot }) {
 
     const controller = new AbortController();
     const append = Boolean(panelParams._append);
-    const offset = Number(panelParams.offset || 0);
 
     const fetchData = async () => {
+      // Reopening a recently viewed panel: show it as it was, no refetch.
+      // Load-more appends and explicit refreshes always go to the server.
+      if (!append && !panelParams._refresh) {
+        const cachedUrl = panelDataUrl(panelType, panelParams);
+        const cached = cachedUrl ? getCachedPanelData<any>(`${panelType}|${cachedUrl}`) : undefined;
+        if (cached) {
+          setLoadError(null);
+          setPanelData(cached);
+          setLoading(false);
+          return;
+        }
+      }
       if (!append) setLoading(true);
       setLoadError(null);
       try {
-        let url = '';
-        switch (panelType) {
-          case 'forecast_table': {
-            const qs = new URLSearchParams();
-            if (panelParams.view) qs.set('view', String(panelParams.view));
-            if (panelParams.category) qs.set('category', String(panelParams.category));
-            if (panelParams.confidence_level) qs.set('confidence_level', String(panelParams.confidence_level));
-            qs.set('offset', String(offset));
-            if (panelParams.limit) qs.set('limit', String(panelParams.limit));
-            url = `/panel/forecast-table/${panelParams.version_id}?${qs.toString()}`;
-            break;
-          }
-          case 'review_queue':
-            url = `/panel/review-queue/${panelParams.version_id}`;
-            break;
-          case 'overrides':
-            url = `/panel/overrides/${panelParams.version_id}`;
-            break;
-          case 'comparison':
-            url = `/panel/comparison/${panelParams.version_id_a}/${panelParams.version_id_b}`;
-            break;
-          case 'executive_dashboard':
-            url = `/panel/executive-dashboard/${panelParams.version_id}`;
-            break;
-          case 'review_dashboard':
-            url = `/panel/review-dashboard/${panelParams.version_id}`;
-            break;
-          case 'accuracy_tracking':
-            url = `/panel/accuracy-tracking/${panelParams.version_id}`;
-            break;
-          case 'driver_inputs':
-            url = `/panel/driver-inputs/${panelParams.version_id}`;
-            break;
-          case 'anomaly_dashboard':
-            url = `/panel/anomaly-dashboard/${panelParams.version_id}`;
-            break;
-          case 'document_library':
-            url = `/context/document-panel/${panelParams.conversation_id || 'default'}`;
-            break;
-          case 'why_this_number':
-            url = `/panel/why-this-number/${panelParams.result_id}`;
-            break;
-          default:
-            setLoading(false);
-            return;
+        const url = panelDataUrl(panelType, panelParams);
+        if (!url) {
+          setLoading(false);
+          return;
         }
+        const cacheKey = `${panelType}|${url}`;
         const data = await apiGet<any>(url, { signal: controller.signal });
         if (append && panelType === 'forecast_table') {
           const current = rawStore.getState().panelData;
           const prevRows = (current?.data?.rows as unknown[]) || [];
           const newRows = data?.data?.rows || [];
-          setPanelData({
+          const merged = {
             ...data,
             data: {
               ...data.data,
               rows: [...prevRows, ...newRows],
             },
-          });
+          };
+          setPanelData(merged);
+          setCachedPanelData(cacheKey, merged);
         } else {
           setPanelData(data);
+          setCachedPanelData(cacheKey, data);
         }
       } catch (error: any) {
         if (error?.name === 'AbortError' || controller.signal.aborted) return;

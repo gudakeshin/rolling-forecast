@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
 import {
   flexRender,
@@ -32,6 +33,8 @@ export interface DataTableColumn<T extends Record<string, unknown> = Record<stri
   total?: boolean;
   /** Override how this cell is serialized for CSV/XLSX/clipboard. */
   exportValue?: (value: unknown, row: T) => string | number | null;
+  /** Show a filter box for this column under the header (contains, case-insensitive). */
+  filterable?: boolean;
   /** Conditional-format tint by size, scaled to the column's largest absolute
    * value. Sign-neutral on purpose: a positive variance is good on revenue and
    * bad on cost, so color shows where the big moves are, not their direction.
@@ -175,6 +178,10 @@ export function DataTable<T extends Record<string, unknown>>({
   const [sorting, setSorting] = useState<SortingState>([]);
   const [exportingXlsx, setExportingXlsx] = useState(false);
   const [query, setQuery] = useState('');
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
+  // Roving tab stop for keyboard cell navigation: one cell is tabbable, the
+  // arrow keys move it.
+  const [activeCell, setActiveCell] = useState<{ r: number; c: number }>({ r: 0, c: 0 });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [copied, setCopied] = useState(false);
   const parentRef = useRef<HTMLDivElement>(null);
@@ -184,19 +191,47 @@ export function DataTable<T extends Record<string, unknown>>({
     [getRowId],
   );
 
-  // Free-text filter runs over the same text the export produces, so what the
-  // analyst searched is what they get when they hit CSV.
+  // Free-text and per-column filters run over the same text the export
+  // produces, so what the analyst filtered is what they get when they hit CSV.
   const filteredRows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((row) =>
-      columns.some((c) =>
-        cellText(c as DataTableColumn, row as Record<string, unknown>)
-          .toLowerCase()
-          .includes(q),
-      ),
+    const perColumn = columns
+      .map((c) => [c, (columnFilters[c.key] ?? '').trim().toLowerCase()] as const)
+      .filter(([, v]) => v !== '');
+    if (!q && perColumn.length === 0) return rows;
+    const text = (c: DataTableColumn<T>, row: T) =>
+      cellText(c as DataTableColumn, row as Record<string, unknown>).toLowerCase();
+    return rows.filter(
+      (row) =>
+        (!q || columns.some((c) => text(c, row).includes(q))) &&
+        perColumn.every(([c, v]) => text(c, row).includes(v)),
     );
-  }, [rows, columns, query]);
+  }, [rows, columns, query, columnFilters]);
+
+  const hasColumnFilters = columns.some((c) => c.filterable);
+
+  const onGridKeyDown = (e: ReactKeyboardEvent<HTMLTableElement>) => {
+    const cell = (e.target as HTMLElement).closest<HTMLElement>('td[data-cell]');
+    if (!cell || (e.target as HTMLElement) !== cell) return; // leave inputs/buttons alone
+    const r = Number(cell.dataset.r);
+    const c = Number(cell.dataset.c);
+    const next =
+      e.key === 'ArrowDown' ? { r: r + 1, c }
+      : e.key === 'ArrowUp' ? { r: r - 1, c }
+      : e.key === 'ArrowRight' ? { r, c: c + 1 }
+      : e.key === 'ArrowLeft' ? { r, c: c - 1 }
+      : e.key === 'Home' ? { r, c: 0 }
+      : e.key === 'End' ? { r, c: columns.length - 1 }
+      : null;
+    if (!next) return;
+    const target = e.currentTarget.querySelector<HTMLElement>(
+      `td[data-cell][data-r="${next.r}"][data-c="${next.c}"]`,
+    );
+    if (!target) return;
+    e.preventDefault();
+    setActiveCell(next);
+    target.focus();
+  };
 
   // Drop selections whose rows are no longer present (filtered out, or the
   // panel reloaded) so a bulk action can never hit a row nobody can see.
@@ -434,6 +469,11 @@ export function DataTable<T extends Record<string, unknown>>({
             return (
               <td
                 key={cell.id}
+                data-cell
+                data-r={index}
+                data-c={cellIndex}
+                tabIndex={activeCell.r === index && activeCell.c === cellIndex ? 0 : -1}
+                onFocus={() => setActiveCell({ r: index, c: cellIndex })}
                 className={pinnedClass(
                   col ?? ({} as DataTableColumn<T>),
                   'px-3 py-1.5 text-surface-200 whitespace-nowrap',
@@ -559,7 +599,13 @@ export function DataTable<T extends Record<string, unknown>>({
       )}
 
       <div ref={parentRef} className="overflow-auto" style={{ maxHeight }}>
-        <table className="w-full text-xs" style={{ fontSize: 12 }}>
+        <table
+          role="grid"
+          aria-label={title}
+          onKeyDown={onGridKeyDown}
+          className="w-full text-xs"
+          style={{ fontSize: 12 }}
+        >
           <thead className="sticky top-0 bg-surface-800 z-10">
             {table.getHeaderGroups().map((hg) => (
               <tr key={hg.id} className="border-b border-surface-700">
@@ -581,6 +627,7 @@ export function DataTable<T extends Record<string, unknown>>({
                   const col = columns[headerIndex];
                   return (
                     <th
+                      scope="col"
                       key={h.id}
                       className={pinnedClass(
                         col ?? ({} as DataTableColumn<T>),
@@ -594,6 +641,31 @@ export function DataTable<T extends Record<string, unknown>>({
                 })}
               </tr>
             ))}
+            {hasColumnFilters && (
+              <tr className="border-b border-surface-700">
+                {selectable && <th style={{ position: 'sticky', left: 0, zIndex: 20 }} className="bg-surface-800" />}
+                {table.getHeaderGroups()[0].headers.map((h, headerIndex) => {
+                  const col = columns[headerIndex];
+                  return (
+                    <th
+                      key={`${h.id}-filter`}
+                      className={pinnedClass(col ?? ({} as DataTableColumn<T>), 'px-2 py-1 font-normal')}
+                      style={col ? pinnedStyle(col, true) : undefined}
+                    >
+                      {col?.filterable && (
+                        <input
+                          value={columnFilters[col.key] ?? ''}
+                          onChange={(e) => setColumnFilters((f) => ({ ...f, [col.key]: e.target.value }))}
+                          placeholder={t('table.filterColumn')}
+                          aria-label={`${t('table.filterColumn')}: ${col.label}`}
+                          className="w-full min-w-[4rem] bg-surface-900/60 border border-surface-700 rounded px-1.5 py-0.5 text-xs text-surface-200 placeholder:text-surface-600"
+                        />
+                      )}
+                    </th>
+                  );
+                })}
+              </tr>
+            )}
           </thead>
           <tbody>
             {useVirtual ? (
