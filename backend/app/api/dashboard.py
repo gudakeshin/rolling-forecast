@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy import false, func
 from sqlalchemy.orm import Session
@@ -1830,6 +1830,24 @@ async def undo_review(
 # Accuracy Tracking
 # ──────────────────────────────────────────────────
 
+@router.get("/value-metrics")
+async def get_value_metrics(
+    business_unit_id: str | None = None,
+    limit: int = Query(12, ge=2, le=50),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Cycle time, override rate, review focus and FVA vs naive across the
+    company's recent versions, with first-to-latest trends (plan 6.4)."""
+    from app.services.permissions import can_access_business_unit
+    from app.services.value_metrics import compute_value_metrics
+
+    bu_id = business_unit_id or current_user.business_unit_id
+    if not bu_id or not can_access_business_unit(current_user, bu_id):
+        raise HTTPException(404, "Business unit not found")
+    return compute_value_metrics(db, business_unit_id=bu_id, limit=limit)
+
+
 @router.get("/accuracy-tracking/{version_id}", response_model=PanelDataResponse)
 async def get_accuracy_tracking(
     version_id: str,
@@ -2459,7 +2477,9 @@ async def rescore_forecasts(
 
 @router.post("/rescore-all")
 async def rescore_all_forecasts(
+    response: Response,
     force: bool = False,
+    async_job: bool | None = Query(None, description="Run in the background (default when a queue is configured)"),
     current_user: User = Depends(require_permission("generate")),
     db: Session = Depends(get_db),
 ):
@@ -2468,85 +2488,12 @@ async def rescore_all_forecasts(
     Skips versions whose pinned ``selection_rule`` disagrees with the live
     rule unless ``force=true`` (audited).
     """
-    from app.services.audit import record_audit
-    from app.domain.engines.model_registry import effective_selection_rule
+    from app.services.background_tasks import dispatch_task
 
-    live_rule = effective_selection_rule()
-    versions = db.query(ForecastVersion).all()
-    total_rescored = 0
-    skipped: list[dict[str, Any]] = []
-    version_ids = [v.id for v in versions]
-    results_by_version: dict[str, list] = {vid: [] for vid in version_ids}
-    if version_ids:
-        for r in (
-            db.query(ForecastLineResult)
-            .join(LineItem)
-            .filter(ForecastLineResult.version_id.in_(version_ids))
-            .all()
-        ):
-            results_by_version.setdefault(r.version_id, []).append(r)
-
-    for version in versions:
-        pinned = version.selection_rule
-        if pinned and pinned != live_rule and not force:
-            skipped.append({"version_id": version.id, "selection_rule": pinned})
-            continue
-        results = results_by_version.get(version.id, [])
-        high = medium = low = 0
-        for r in results:
-            score = _compute_confidence_score(r)
-            level = _classify_confidence(score)
-            r.confidence_score = score
-            r.confidence_level = level
-            if level == "high":
-                high += 1
-            elif level == "medium":
-                medium += 1
-            else:
-                low += 1
-            remed = _generate_remediation(r)
-            r.ai_recommendation = remed["action"]
-            r.ai_reasoning = remed["reason"]
-            r.ai_risk_score = (
-                0.0 if remed["severity"] == "info"
-                else 40.0 if remed["severity"] == "warning"
-                else 75.0
-            )
-        version.high_confidence_count = high
-        version.medium_confidence_count = medium
-        version.low_confidence_count = low
-        total_rescored += len(results)
-
-    record_audit(
-        db,
-        action="forecast.rescore_all",
-        entity_type="forecast_version",
-        entity_id=None,
-        actor_id=current_user.id,
-        actor_username=current_user.username,
-        details={
-            "versions_updated": len(versions) - len(skipped),
-            "versions_skipped": len(skipped),
-            "total_lines_rescored": total_rescored,
-            "forced": force,
-            "live_rule": live_rule,
-            "skipped": skipped[:50],
-        },
+    return await dispatch_task(
+        "rescore_all", {"force": force},
+        db=db, actor=current_user, async_job=async_job, response=response,
     )
-    db.commit()
-
-    return {
-        "success": True,
-        "message": (
-            f"Re-scored {total_rescored} forecast lines across "
-            f"{len(versions) - len(skipped)} versions"
-            + (f" (skipped {len(skipped)} mismatched)" if skipped else "")
-        ),
-        "total_lines_rescored": total_rescored,
-        "versions_skipped": len(skipped),
-        "forced": force,
-        "live_rule": live_rule,
-    }
 
 
 # ──────────────────────────────────────────────────

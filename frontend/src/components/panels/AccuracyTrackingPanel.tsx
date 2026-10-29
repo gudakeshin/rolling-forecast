@@ -6,6 +6,7 @@ import {
 } from 'recharts';
 import { Target, TrendingDown, BarChart3, AlertCircle, ArrowUpRight, ArrowDownRight, RefreshCw, Loader2, ExternalLink } from 'lucide-react';
 import { Tabs } from '../ui/Tabs';
+import { ValueMetrics } from './ValueMetrics';
 import { DataTable, type DataTableColumn } from '../ui/DataTable';
 import { rescoreForecasts } from '../../api/dashboard';
 import { usePanelStore } from '../../store/panelStore';
@@ -248,6 +249,8 @@ export function AccuracyTrackingPanel({ data, onRefresh }: Props) {
           />
         </div>
       )}
+
+      <ValueMetrics />
 
       {/* Tabs */}
       <Tabs
