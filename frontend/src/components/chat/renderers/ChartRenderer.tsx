@@ -89,7 +89,7 @@ export function ChartRenderer({ data }: Props) {
   const tableColumns = useMemo(
     () => [
       { key: x_key, label: x_key },
-      ...y_keys.map((k) => ({ key: k, label: labelFor(k) })),
+      ...y_keys.map((k) => ({ key: k, label: y_labels?.[k] || k.replace(/_/g, ' ') })),
     ],
     [x_key, y_keys, y_labels],
   );

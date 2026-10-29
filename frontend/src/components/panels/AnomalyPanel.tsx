@@ -1,16 +1,15 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import {
-  LineChart, Line, AreaChart, Area,
+  AreaChart, Area,
   XAxis, YAxis, Tooltip, ResponsiveContainer,
-  BarChart, Bar, Cell,
 } from 'recharts';
 import {
   AlertTriangle, AlertOctagon, Info, Shield,
-  ChevronDown, ChevronUp, Filter, TrendingUp,
-  TrendingDown, Activity, Zap, Search, Eye, EyeOff,
+  ChevronDown, ChevronUp, Filter,
+  Activity, Zap, Search, Eye, EyeOff,
   ArrowRight, Edit3, Save, X, Loader2,
   MessageSquare, GitBranch, Clock, Target,
-  ChevronRight, BarChart3, Clipboard, Download,
+  ChevronRight, BarChart3, Download,
 } from 'lucide-react';
 import { apiPost } from '../../api/client';
 import { usePanelStore } from '../../store/panelStore';
@@ -27,12 +26,6 @@ const COLORS = {
   teal: chartTheme.colors.secondary,
   coolGray: chartTheme.colors.tertiary,
   blue: '#3D6E8A',
-};
-
-const SEVERITY_COLORS: Record<string, string> = {
-  critical: COLORS.red,
-  warning: COLORS.amber,
-  info: COLORS.teal,
 };
 
 const SEVERITY_BG: Record<string, string> = {

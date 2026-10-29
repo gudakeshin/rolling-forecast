@@ -5,7 +5,6 @@ import { useVersionStore } from '../../store/versionStore';
 import { useWorkspaceStore } from '../../store/workspaceStore';
 import { apiPost } from '../../api/client';
 import type { TokenResponse } from '../../types/auth';
-import { TrendingUp } from 'lucide-react';
 
 export function LoginForm() {
   const [username, setUsername] = useState('');

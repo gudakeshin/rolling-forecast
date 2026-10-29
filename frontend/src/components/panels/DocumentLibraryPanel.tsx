@@ -231,6 +231,7 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
 
     let successCount = 0;
     let failCount = 0;
+    let lastError = '';
     let ingestedActuals = false;
     const ingestMessages: string[] = [];
     const businessUnitValue =
@@ -256,18 +257,22 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
           const res = await apiPost<any>('/context/upload', formData);
           if (res.status === 'failed') {
             failCount++;
-            setUploadError(res.error_message || `Failed to process ${file.name}`);
+            lastError = res.error_message || `Failed to process ${file.name}`;
           } else {
             successCount++;
           }
         }
       } catch (e: any) {
         failCount++;
-        setUploadError(e.message || 'Upload failed');
+        lastError = `${file.name}: ${e.message || 'Upload failed'}`;
       }
     }
 
     setIsUploading(false);
+    // Report every failure, not just whichever file happened to fail last.
+    if (failCount > 0) {
+      setUploadError(failCount === 1 ? lastError : `${failCount} files failed. Last: ${lastError}`);
+    }
     if (successCount > 0) {
       setUploadSuccess(
         ingestMessages.length > 0
@@ -399,10 +404,14 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
         <div className="space-y-3">
           {canViewAllBus ? (
             <div className="bg-surface-800/40 border border-surface-700/50 rounded-lg p-3 space-y-2">
-              <label className="block text-xs text-surface-400 uppercase tracking-wider font-semibold">
+              <label
+                htmlFor="document-upload-workspace"
+                className="block text-xs text-surface-400 uppercase tracking-wider font-semibold"
+              >
                 Workspace (for CSV/XLSX actuals)
               </label>
               <select
+                id="document-upload-workspace"
                 value={businessUnitChoice}
                 onChange={e => setBusinessUnitChoice(e.target.value)}
                 className="w-full bg-surface-900/60 border border-surface-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-deloitte-green/50"

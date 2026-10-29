@@ -1,13 +1,13 @@
 import { useMemo, useState } from 'react';
 import {
   BarChart, Bar, AreaChart, Area,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell,
 } from 'recharts';
 import {
   TrendingUp, TrendingDown, Shield, Clock, FileText,
   Download, Loader2, AlertTriangle, Target, Activity,
-  CheckCircle, XCircle, Eye,
+  CheckCircle,
   ArrowUpRight, ArrowDownRight, Zap, Users, GitBranch,
   AlertOctagon, Lightbulb, ChevronRight,
 } from 'lucide-react';

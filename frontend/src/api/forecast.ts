@@ -1,5 +1,5 @@
 import { apiDelete, apiGet, apiPost, apiPut } from './client';
-import type { ForecastVersion, ForecastLineResult } from '../types/forecast';
+import type { ForecastVersion } from '../types/forecast';
 
 // ─── Forecast Versions ───────────────────────────────────
 
