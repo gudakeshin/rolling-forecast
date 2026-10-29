@@ -21,8 +21,9 @@ from app.domain.base_skill import (
 
 logger = logging.getLogger(__name__)
 
-# Module-level compiled-graph cache: (role, definitions_generation, model) → agent
-_agent_cache: dict[tuple[str, int, str], Any] = {}
+# Module-level compiled-graph cache:
+# (role, definitions_generation, model, company skill-override fingerprint) → agent
+_agent_cache: dict[tuple[str, int, str, str], Any] = {}
 
 
 def invalidate_agent_cache() -> None:
@@ -149,9 +150,24 @@ class MasterAgent:
         return self.context_manager.user_role or "analyst"
 
     def _get_agent(self):
-        """Return a cached LangGraph react agent; rebuild on role/model/skill change."""
+        """Return a cached LangGraph react agent; rebuild on role/model/skill change.
+
+        Tool descriptions use the user's company's skill overrides, so their
+        fingerprint is part of the key: companies without overrides share one
+        graph, and editing an override yields a new key instead of a stale hit."""
+        from app.services.skill_overrides import effective_skill_definitions
+
         registry = get_registry()
-        cache_key = (self._role_key(), registry.definitions_generation, settings.anthropic_model)
+        user = self.context_manager.user
+        definitions, overrides_fp = effective_skill_definitions(
+            self.db, business_unit_id=getattr(user, "business_unit_id", None)
+        )
+        cache_key = (
+            self._role_key(),
+            registry.definitions_generation,
+            settings.anthropic_model,
+            overrides_fp,
+        )
         cached = _agent_cache.get(cache_key)
         if cached is not None:
             return cached
@@ -165,7 +181,9 @@ class MasterAgent:
         )
 
         skill_context = self._build_skill_context()
-        tools = registry.as_langchain_tools(skill_context)
+        tools = registry.as_langchain_tools(
+            skill_context, definitions=definitions if overrides_fp else None
+        )
 
         agent = create_react_agent(
             model=llm,

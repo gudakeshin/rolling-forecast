@@ -327,6 +327,10 @@ async def put_business_unit_analysis_profile(
 ):
     if not db.query(BusinessUnit).filter(BusinessUnit.id == bu_id).first():
         raise HTTPException(404, "Business unit not found")
+    # A company admin edits their own company's profile only (GET above
+    # applies the same check).
+    if not can_access_business_unit(current_user, bu_id):
+        raise HTTPException(404, "Business unit not found")
     try:
         settings_view = update_analysis_profile(
             db, business_unit_id=bu_id, patch=body.patch, actor=current_user

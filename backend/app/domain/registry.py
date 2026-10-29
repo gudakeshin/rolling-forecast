@@ -134,6 +134,11 @@ class SkillsRegistry:
         """Retrieve the .md definition for a skill."""
         return self._definitions.get(name)
 
+    def definitions_snapshot(self) -> dict[str, SkillDefinition]:
+        """A copy of the global definitions, safe for a caller to layer
+        company overrides onto (see app/services/skill_overrides.py)."""
+        return dict(self._definitions)
+
     def list_all(self) -> list[BaseSkill]:
         """List all registered skills."""
         return list(self._skills.values())
@@ -192,13 +197,19 @@ class SkillsRegistry:
                 result.append(skill)
         return result
 
-    def as_langchain_tools(self, context: SkillContext | None = None) -> list[StructuredTool]:
+    def as_langchain_tools(
+        self,
+        context: SkillContext | None = None,
+        definitions: dict[str, SkillDefinition] | None = None,
+    ) -> list[StructuredTool]:
         """
         Convert role-filtered skills into LangChain tools.
 
         Tools resolve SkillContext at invoke time via ContextVar so the compiled
         agent graph can be cached across turns. ``context`` is only used to pick
-        which skills to expose for the caller's role.
+        which skills to expose for the caller's role. ``definitions`` replaces
+        the global .md definitions for tool descriptions -- e.g. a company's
+        with its overrides applied.
         """
         from app.domain.base_skill import get_active_skill_context
 
@@ -209,19 +220,21 @@ class SkillsRegistry:
         skills = self.get_for_role(role_key)
         tools = []
         for skill in skills:
-            tool = self._skill_to_tool(skill, get_active_skill_context)
+            tool = self._skill_to_tool(
+                skill, get_active_skill_context, (definitions or self._definitions).get(skill.name)
+            )
             tools.append(tool)
         return tools
 
-    def _skill_to_tool(self, skill: BaseSkill, get_context) -> StructuredTool:
+    def _skill_to_tool(
+        self, skill: BaseSkill, get_context, defn: SkillDefinition | None
+    ) -> StructuredTool:
         """Convert a single skill to a LangChain StructuredTool.
         
         Uses the .md definition's enriched description if available.
         Dynamically creates a Pydantic args_schema so the LLM's structured
         arguments are correctly routed to the skill's execute() method.
         """
-        defn = self._definitions.get(skill.name)
-
         # Use .md enriched description if available (includes When to Use + Examples)
         if defn:
             tool_description = defn.full_description

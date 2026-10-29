@@ -498,7 +498,7 @@ def test_agent_cache_reuses_compiled_graph(monkeypatch):
     class FakeRegistry:
         definitions_generation = 0
 
-        def as_langchain_tools(self, ctx=None):
+        def as_langchain_tools(self, ctx=None, definitions=None):
             return []
 
     monkeypatch.setattr(ma, "get_registry", lambda: FakeRegistry())

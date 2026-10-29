@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { apiGet, apiPost, fetchApi } from '../../api/client';
+import { apiDelete, apiGet, apiPost, apiPut, fetchApi } from '../../api/client';
+import { useAuthStore } from '../../store/authStore';
 
 interface SkillInfo {
   name: string;
@@ -26,6 +27,13 @@ interface SkillDetail {
 
 interface SkillsListResponse {
   skills: SkillInfo[];
+}
+
+interface SkillOverrideView {
+  name: string;
+  business_unit_id: string;
+  content: string | null;
+  effective: { description: string; when_to_use: string; examples: string[] };
 }
 
 export function SkillEditorPanel() {
@@ -237,6 +245,8 @@ export function SkillEditorPanel() {
                 )}
               </div>
 
+              <CompanyOverride skillName={detail.name} baseDescription={detail.description} />
+
               {/* Metadata */}
               <div className="grid grid-cols-3 gap-3">
                 <MetaCard label="Version" value={detail.version} />
@@ -342,6 +352,137 @@ export function SkillEditorPanel() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** This company's override of the skill's LLM-facing text, layered over the
+ * global .md (backend: app/services/skill_overrides.py). Company admins can
+ * edit it; parameters and required role always stay global. */
+function CompanyOverride({ skillName, baseDescription }: { skillName: string; baseDescription: string }) {
+  const canEdit = useAuthStore((s) => Boolean(s.user?.can_admin));
+  const [view, setView] = useState<SkillOverrideView | null>(null);
+  const [draft, setDraft] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      setView(await apiGet<SkillOverrideView>(`/skills/${skillName}/override`));
+    } catch (e: any) {
+      // No company (e.g. an unassigned platform admin): nothing to show.
+      setView(null);
+      if (e?.message && e.message !== 'Business unit not found') setError(e.message);
+    }
+  }, [skillName]);
+
+  useEffect(() => {
+    setDraft(null);
+    load();
+  }, [load]);
+
+  const save = async () => {
+    if (draft === null) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setView(await apiPut<SkillOverrideView>(`/skills/${skillName}/override`, { content: draft }));
+      setDraft(null);
+    } catch (e: any) {
+      setError(e?.message || 'Failed to save override');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await apiDelete(`/skills/${skillName}/override`);
+      await load();
+    } catch (e: any) {
+      setError(e?.message || 'Failed to remove override');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!view && !error) return null;
+
+  // JSON string syntax is valid YAML, so a description containing ": " or
+  // quotes still yields a template that parses.
+  const template = `---\ndescription: ${JSON.stringify(baseDescription.replace(/\s+/g, ' ').trim())}\n---\n`;
+
+  return (
+    <div className="px-3 py-2.5 bg-surface-800 rounded border border-surface-700 space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <h4 className="text-xs font-semibold text-surface-400 uppercase tracking-wider">
+          Company override
+        </h4>
+        {view && canEdit && draft === null && (
+          <div className="flex gap-2">
+            <button
+              onClick={() => setDraft(view.content ?? template)}
+              disabled={busy}
+              className="px-2 py-1 text-xs bg-deloitte-green/10 border border-deloitte-green/25 text-deloitte-green rounded hover:bg-deloitte-green/20 disabled:opacity-50"
+            >
+              {view.content ? 'Edit override' : 'Add override'}
+            </button>
+            {view.content && (
+              <button
+                onClick={remove}
+                disabled={busy}
+                className="px-2 py-1 text-xs bg-surface-700 hover:bg-surface-600 text-surface-300 rounded disabled:opacity-50"
+              >
+                Remove
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {error && <p className="text-xs text-red-400">{error}</p>}
+
+      {draft !== null ? (
+        <div className="space-y-2">
+          <p className="text-xs text-surface-400">
+            Frontmatter may set <code>description</code> and <code>tags</code>; a markdown body replaces the
+            whole global body. Parameters and required role can&apos;t be overridden.
+          </p>
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            aria-label={`Company override for ${skillName}`}
+            rows={8}
+            className="w-full p-2 bg-black text-surface-200 font-mono text-xs rounded resize-y focus:outline-none"
+            spellCheck={false}
+          />
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => setDraft(null)}
+              disabled={busy}
+              className="px-3 py-1 text-xs bg-surface-700 hover:bg-surface-600 text-surface-300 rounded"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={save}
+              disabled={busy}
+              className="px-3 py-1 text-xs bg-deloitte-green text-white font-semibold rounded hover:bg-deloitte-green/90 disabled:opacity-50"
+            >
+              {busy ? 'Saving...' : 'Save override'}
+            </button>
+          </div>
+        </div>
+      ) : view?.content ? (
+        <p className="text-sm text-surface-300">
+          Your company&apos;s assistant uses: <span className="italic">{view.effective.description}</span>
+        </p>
+      ) : (
+        view && <p className="text-xs text-surface-400">Using the global definition.</p>
+      )}
     </div>
   );
 }

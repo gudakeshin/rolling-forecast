@@ -33,11 +33,18 @@ Each skill is defined by a SKILL.md file with this structure:
 
 Users can edit the .md files to customize skill behavior, descriptions,
 and parameter definitions without touching Python code.
+
+A company can also layer its own override on top of a definition (see
+``apply_skill_override`` and app/services/skill_overrides.py). An override
+uses the same format but may only change the LLM-facing text -- description,
+tags, and the markdown body (When to Use / Examples / instructions). The
+parameter list and ``required_role`` stay global: they are bound to the
+Python implementation and to permission checks, not to wording.
 """
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -104,22 +111,25 @@ class SkillDefinition:
         return " ".join(parts)
 
 
-def parse_skill_md(content: str, file_path: str = "") -> SkillDefinition:
-    """Parse a SKILL.md file into a SkillDefinition."""
-    # Split YAML frontmatter from markdown body
-    frontmatter_match = re.match(r'^---\s*\n(.*?)\n---\s*\n(.*)', content, re.DOTALL)
+def _split_frontmatter(content: str, file_path: str = "") -> tuple[dict[str, Any], str]:
+    """(YAML frontmatter as a dict, stripped markdown body)."""
+    frontmatter_match = re.match(r'^---\s*\n(.*?)\n---\s*\n?(.*)', content, re.DOTALL)
 
     if not frontmatter_match:
         raise ValueError(f"Invalid skill file: missing YAML frontmatter in {file_path}")
 
-    yaml_text = frontmatter_match.group(1)
-    markdown_body = frontmatter_match.group(2).strip()
-
-    # Parse YAML
     try:
-        meta = yaml.safe_load(yaml_text) or {}
+        meta = yaml.safe_load(frontmatter_match.group(1)) or {}
     except yaml.YAMLError as e:
         raise ValueError(f"Invalid YAML frontmatter in {file_path}: {e}")
+    if not isinstance(meta, dict):
+        raise ValueError(f"Invalid YAML frontmatter in {file_path}: expected a mapping")
+    return meta, frontmatter_match.group(2).strip()
+
+
+def parse_skill_md(content: str, file_path: str = "") -> SkillDefinition:
+    """Parse a SKILL.md file into a SkillDefinition."""
+    meta, markdown_body = _split_frontmatter(content, file_path)
 
     # Extract sections from markdown body
     when_to_use = _extract_section(markdown_body, "When to Use")
@@ -138,6 +148,53 @@ def parse_skill_md(content: str, file_path: str = "") -> SkillDefinition:
         examples=examples,
         file_path=file_path,
     )
+
+
+# Frontmatter keys a company override may set. Anything else (notably
+# `parameters` and `required_role`) is rejected rather than silently ignored,
+# so an admin is never misled into thinking they changed permissions.
+OVERRIDABLE_FRONTMATTER = frozenset({"name", "description", "tags", "version"})
+
+
+def apply_skill_override(base: SkillDefinition, override_md: str) -> SkillDefinition:
+    """Layer a company's override .md on top of the global definition.
+
+    Frontmatter ``description``/``tags`` replace the base values when given.
+    A non-empty markdown body replaces the whole base body (instructions, When
+    to Use and Examples are re-derived from it); an empty body keeps the base
+    body. Raises ValueError for malformed content, a different ``name``, or a
+    key outside OVERRIDABLE_FRONTMATTER.
+    """
+    meta, body = _split_frontmatter(override_md, f"{base.name} override")
+    forbidden = sorted(set(meta) - OVERRIDABLE_FRONTMATTER)
+    if forbidden:
+        raise ValueError(
+            f"A company override can't set {forbidden}; only "
+            f"{sorted(OVERRIDABLE_FRONTMATTER)} and the markdown body are overridable."
+        )
+    if meta.get("name") not in (None, base.name):
+        raise ValueError(f"Override name '{meta['name']}' doesn't match skill '{base.name}'")
+    tags = meta.get("tags", base.tags)
+    if not isinstance(tags, list):
+        raise ValueError("Override 'tags' must be a list")
+    description = meta.get("description")
+    if description is not None and not isinstance(description, str):
+        raise ValueError("Override 'description' must be text")
+
+    updated = replace(
+        base,
+        description=(description or "").strip() or base.description,
+        tags=tags,
+        version=str(meta.get("version", base.version)),
+    )
+    if body:
+        updated = replace(
+            updated,
+            instructions=body,
+            when_to_use=_extract_section(body, "When to Use"),
+            examples=_parse_examples(_extract_section(body, "Examples")),
+        )
+    return updated
 
 
 def _extract_section(markdown: str, heading: str) -> str:

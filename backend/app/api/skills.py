@@ -14,7 +14,17 @@ from app.domain.skill_loader import (
     SKILLS_DIR,
 )
 from app.models.user import User
-from app.services.permissions import require_platform_admin
+from app.services.permissions import (
+    can_access_business_unit,
+    require_permission,
+    require_platform_admin,
+)
+from app.services.skill_overrides import (
+    delete_skill_override,
+    effective_skill_definitions,
+    get_skill_override,
+    set_skill_override,
+)
 from app.services.audit import record_audit
 from app.database import get_db
 from sqlalchemy.orm import Session
@@ -30,6 +40,32 @@ class SkillUpdateRequest(BaseModel):
 class SkillCreateRequest(BaseModel):
     name: str
     content: str
+
+
+class SkillOverrideRequest(BaseModel):
+    content: str  # Override .md: frontmatter (description/tags) + optional body
+    business_unit_id: str | None = None
+
+
+def _override_company(user: User, business_unit_id: str | None) -> str:
+    """The company an override call acts on: the one named, if the caller can
+    reach it, else the caller's own. 404 (not 403) for an inaccessible one,
+    so company ids can't be probed."""
+    bu_id = business_unit_id or user.business_unit_id
+    if not bu_id or not can_access_business_unit(user, bu_id):
+        raise HTTPException(status_code=404, detail="Business unit not found")
+    return bu_id
+
+
+def _definition_view(defn) -> dict:
+    return {
+        "description": defn.description,
+        "tags": defn.tags,
+        "version": defn.version,
+        "when_to_use": defn.when_to_use,
+        "examples": defn.examples,
+        "instructions": defn.instructions,
+    }
 
 
 @router.get("/")
@@ -175,6 +211,69 @@ async def create_skill_definition(
         "file": str(md_file),
         "message": f"Skill definition '{req.name}' created. Add a Python class to enable execution.",
     }
+
+
+@router.get("/{skill_name}/override")
+async def get_skill_override_view(
+    skill_name: str,
+    business_unit_id: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """A company's override of a skill (if any) and the resulting definition."""
+    if get_registry().get_definition(skill_name) is None:
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+    bu_id = _override_company(current_user, business_unit_id)
+    definitions, _ = effective_skill_definitions(db, business_unit_id=bu_id)
+    return {
+        "name": skill_name,
+        "business_unit_id": bu_id,
+        "content": get_skill_override(db, business_unit_id=bu_id, skill_name=skill_name),
+        "effective": _definition_view(definitions[skill_name]),
+    }
+
+
+@router.put("/{skill_name}/override")
+async def put_skill_override(
+    skill_name: str,
+    req: SkillOverrideRequest,
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+):
+    """Set a company's override of a skill's LLM-facing text (company admin)."""
+    bu_id = _override_company(current_user, req.business_unit_id)
+    try:
+        effective = set_skill_override(
+            db, business_unit_id=bu_id, skill_name=skill_name,
+            content=req.content, actor=current_user,
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    db.commit()
+    return {
+        "name": skill_name,
+        "business_unit_id": bu_id,
+        "content": req.content,
+        "effective": _definition_view(effective),
+    }
+
+
+@router.delete("/{skill_name}/override", status_code=204)
+async def remove_skill_override(
+    skill_name: str,
+    business_unit_id: str | None = None,
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+):
+    """Drop a company's override, reverting it to the global definition."""
+    bu_id = _override_company(current_user, business_unit_id)
+    if not delete_skill_override(
+        db, business_unit_id=bu_id, skill_name=skill_name, actor=current_user
+    ):
+        raise HTTPException(status_code=404, detail="No override to remove")
+    db.commit()
 
 
 @router.post("/reload")
