@@ -2,7 +2,11 @@
 
 Selection uses either legacy MAPE or multi-metric (MASE → pinball → complexity)
 controlled by ``settings.selection_metric``. Benchmark models (naive /
-seasonal_naive) are gated by ``settings.enable_benchmark_models``.
+seasonal_naive) are gated by ``enable_benchmark_models`` and the global
+cross-series model by ``enable_global_gbm_model``. Both gates are
+per-company (``AnalysisProfile``): ``get_model_registry`` keeps one registry
+per gate combination, so a company's own flags decide which models exist
+for its runs, falling back to the global settings when none are passed.
 """
 
 from __future__ import annotations
@@ -346,12 +350,28 @@ def _pick_best(
 class ModelRegistry:
     """Registry of available forecast models with auto-selection."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        enable_benchmark_models: bool | None = None,
+        enable_global_gbm_model: bool | None = None,
+    ):
+        from app.config import settings
+
+        self.enable_benchmark_models = (
+            settings.enable_benchmark_models
+            if enable_benchmark_models is None
+            else enable_benchmark_models
+        )
+        self.enable_global_gbm_model = (
+            settings.enable_global_gbm_model
+            if enable_global_gbm_model is None
+            else enable_global_gbm_model
+        )
         self._models: dict[str, IForecastModel] = {}
         self._register_defaults()
 
     def _register_defaults(self) -> None:
-        from app.config import settings
 
         self.register(LinearTrendModel())
         self.register(ETSModel())
@@ -369,13 +389,13 @@ class ModelRegistry:
 
         self.register(ZeroModel())
         self.register(MeanModel())
-        if settings.enable_benchmark_models:
+        if self.enable_benchmark_models:
             from app.domain.engines.naive import NaiveModel
             from app.domain.engines.seasonal_naive import SeasonalNaiveModel
 
             self.register(NaiveModel())
             self.register(SeasonalNaiveModel())
-        if settings.enable_global_gbm_model:
+        if self.enable_global_gbm_model:
             try:
                 from app.domain.engines.global_gbm import GlobalGBMModel
 
@@ -741,18 +761,48 @@ class ModelRegistry:
         return model.predict(params, horizon, dates[-1])
 
 
-_model_registry: ModelRegistry | None = None
+_model_registries: dict[tuple[bool, bool], ModelRegistry] = {}
 
 
-def get_model_registry() -> ModelRegistry:
-    """Get the global model registry singleton."""
-    global _model_registry
-    if _model_registry is None:
-        _model_registry = ModelRegistry()
-    return _model_registry
+def get_model_registry(
+    *,
+    enable_benchmark_models: bool | None = None,
+    enable_global_gbm_model: bool | None = None,
+) -> ModelRegistry:
+    """The registry for one combination of the optional-model gates.
+
+    ``None`` for a gate means the global ``app.config.settings`` value, read
+    at call time -- so a settings flip picks a different cached registry
+    rather than needing a reset. Pass a company's resolved values (see
+    ``registry_for_analysis``) to get that company's model roster."""
+    from app.config import settings
+
+    key = (
+        settings.enable_benchmark_models if enable_benchmark_models is None else enable_benchmark_models,
+        settings.enable_global_gbm_model if enable_global_gbm_model is None else enable_global_gbm_model,
+    )
+    registry = _model_registries.get(key)
+    if registry is None:
+        registry = ModelRegistry(enable_benchmark_models=key[0], enable_global_gbm_model=key[1])
+        _model_registries[key] = registry
+    return registry
+
+
+def registry_for_analysis(analysis: Any) -> ModelRegistry:
+    """The registry for a company's resolved ``AnalysisSettings``."""
+    return get_model_registry(
+        enable_benchmark_models=analysis.enable_benchmark_models,
+        enable_global_gbm_model=analysis.enable_global_gbm_model,
+    )
+
+
+def get_full_model_registry() -> ModelRegistry:
+    """Every model registered, regardless of gates -- for capability lookups
+    on a model name that some company's run may have used (e.g. base
+    confidence for ``global_gbm`` when the global default has it off)."""
+    return get_model_registry(enable_benchmark_models=True, enable_global_gbm_model=True)
 
 
 def reset_model_registry() -> None:
-    """Clear singleton (tests / settings flips)."""
-    global _model_registry
-    _model_registry = None
+    """Drop every cached registry (tests)."""
+    _model_registries.clear()

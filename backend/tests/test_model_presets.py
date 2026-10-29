@@ -182,10 +182,12 @@ class TestSkillLayer:
 
 class TestGenerateBaselinePresetWiring:
     @pytest.mark.asyncio
-    async def test_unresolvable_preset_fails_fast(self, skill_context, seed_users, monkeypatch):
-        """A preset pinned to a disabled/unregistered model must fail closed,
-        never silently fall back to auto — and it should fail before any
-        dataset/line-item lookups (no fixtures needed for those here)."""
+    async def test_unresolvable_preset_fails_closed(
+        self, skill_context, seed_users, seed_actuals, monkeypatch
+    ):
+        """A preset pinned to a model disabled for the running company must
+        fail closed, never silently fall back to auto. The gate is
+        per-company, so this is decided once the company is known."""
         monkeypatch.setattr(settings, "enable_global_gbm_model", False)
         preset = create_preset(
             skill_context.db,
@@ -199,7 +201,7 @@ class TestGenerateBaselinePresetWiring:
             skill_context,
         )
         assert result.success is False
-        assert "not currently registered" in result.message
+        assert "disabled for this company" in result.message
 
     @pytest.mark.asyncio
     async def test_unknown_preset_name_fails(self, skill_context):

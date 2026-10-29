@@ -7,16 +7,11 @@ fall through to the global `app.config.settings` default whenever no
 per-business-unit override exists. No new table or migration -- the existing
 generic key/value override table is typed enough for this.
 
-Deliberately excluded (a named, deferred gap -- not silently skipped):
-`enable_benchmark_models` and `enable_global_gbm_model` gate which models get
-*registered* inside `ModelRegistry.__init__` (app/domain/engines/model_registry.py),
-a process-wide singleton built once per process, not read at selection time.
-Making those two per-company means moving the gate from construction-time to
-selection-time (or building a registry per scope) -- a distinct, riskier
-change left for a follow-up pass. Every field below is read per-call (or
-already accepts a per-call override, e.g. `selection_rule` /
-`wall_clock_budget_seconds` on `ModelRegistry.compare_models`), so it wires
-through cleanly today.
+Every field is read per-call. `enable_benchmark_models` and
+`enable_global_gbm_model` decide which models a registry *contains*, so they
+are applied by picking that company's registry
+(`app.domain.engines.model_registry.registry_for_analysis`), one cached
+registry per gate combination.
 """
 
 from __future__ import annotations
@@ -51,6 +46,8 @@ ANALYSIS_PROFILE_FIELDS: dict[str, type] = {
     "conformal_min_residuals_total": int,
     "conformal_realized_min_cycles": int,
     "enable_ensemble_blending": bool,
+    "enable_benchmark_models": bool,
+    "enable_global_gbm_model": bool,
 }
 
 _KEY_PREFIX = "analysis."
@@ -77,6 +74,8 @@ class AnalysisSettings:
     conformal_min_residuals_total: int
     conformal_realized_min_cycles: int
     enable_ensemble_blending: bool
+    enable_benchmark_models: bool
+    enable_global_gbm_model: bool
 
 
 def _decode(field_type: type, raw: str) -> Any:

@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.domain.engines.model_registry import get_model_registry, reset_model_registry
+from app.domain.engines.model_registry import registry_for_analysis
 from app.models.model_preset import ModelPreset
 from app.models.user import User
 from app.services.model_presets import (
@@ -18,7 +18,8 @@ from app.services.model_presets import (
     run_forecast_with_preset,
     update_preset,
 )
-from app.services.permissions import require_permission
+from app.services.analysis_profile import resolve_analysis_settings
+from app.services.permissions import can_access_business_unit, require_permission
 
 router = APIRouter(prefix="/model-presets", tags=["model-presets"])
 
@@ -75,11 +76,19 @@ def _serialize(preset: ModelPreset) -> dict:
 
 @router.get("/available-models")
 async def available_models(
+    business_unit_id: str | None = None,
     current_user: User = Depends(require_permission("generate")),
+    db: Session = Depends(get_db),
 ):
-    """Registry models a preset can pin/restrict to, for the preset-builder UI."""
-    reset_model_registry()
-    registry = get_model_registry()
+    """Registry models a preset can pin/restrict to, for the preset-builder UI.
+
+    The roster is per-company (benchmark / global-GBM gates live in its
+    AnalysisProfile): `business_unit_id` when given and accessible, else the
+    caller's own company, else the global defaults."""
+    bu_id = business_unit_id or current_user.business_unit_id
+    if business_unit_id and not can_access_business_unit(current_user, business_unit_id):
+        raise HTTPException(status_code=404, detail="Business unit not found")
+    registry = registry_for_analysis(resolve_analysis_settings(db, business_unit_id=bu_id))
     out = []
     for name in registry.list_models():
         model = registry.get(name)

@@ -55,9 +55,9 @@ def _base_confidence(model_type: str | None) -> float:
     """Prefer registry capabilities; fall back to static map for average/zero."""
     key = model_type or "linear"
     try:
-        from app.domain.engines.model_registry import get_model_registry
+        from app.domain.engines.model_registry import get_full_model_registry
 
-        model = get_model_registry().get(key)
+        model = get_full_model_registry().get(key)
         if model is not None:
             return float(model.capabilities.base_confidence)
     except Exception:

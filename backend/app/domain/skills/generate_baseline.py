@@ -24,8 +24,8 @@ from sqlalchemy.orm import Session
 from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.domain.engines.model_registry import (
     effective_selection_rule,
-    get_model_registry,
-    reset_model_registry,
+    get_full_model_registry,
+    registry_for_analysis,
 )
 from app.models.actuals import ActualsRecord
 from app.models.line_item import LineItem
@@ -394,11 +394,15 @@ class GenerateBaselineSkill(BaseSkill):
         models_to_test = params.get("models_to_test", None)  # None = all models
         random_seed = params.get("random_seed", 42)
 
+
         # Saved model preset: fills in model_type/models_to_test/horizon_months
         # gaps only — an explicit param always wins over the preset's defaults,
         # so "use my Conservative preset but 6 months" works in one call.
+        # Checked here against every model (fail fast on a bad name); the
+        # company's own roster is applied once the company is known, below.
         model_preset_id = params.get("model_preset_id")
         preset_warnings: list[str] = []
+        models_from_preset = False
         model_preset_ref = params.get("model_preset")
         if model_preset_ref:
             from app.services.model_presets import resolve_preset as resolve_model_preset
@@ -410,6 +414,7 @@ class GenerateBaselineSkill(BaseSkill):
                     model_preset_ref,
                     override_horizon=params.get("horizon_months"),
                     actor=_resolve_skill_user(context),
+                    registry=get_full_model_registry(),
                 )
             except ValueError as e:
                 return SkillResult.fail(str(e))
@@ -419,28 +424,11 @@ class GenerateBaselineSkill(BaseSkill):
                 model_type = resolved_preset["model_type"]
             if "models_to_test" not in params:
                 models_to_test = resolved_preset["models_to_test"]
+                models_from_preset = True
             if resolved_preset["horizon_months"] is not None:
                 horizon = resolved_preset["horizon_months"]
             for w in preset_warnings:
                 logger.warning("model_preset resolution: %s", w)
-
-        # Settings flips (benchmarks / metric) must refresh the singleton
-        reset_model_registry()
-        model_registry = get_model_registry()
-        registered = set(model_registry.list_models())
-        if model_type != "auto" and model_type not in registered:
-            return SkillResult.fail(
-                f"Unknown model_type '{model_type}'. Registered: {sorted(registered)}"
-            )
-        if models_to_test:
-            unknown = [m for m in models_to_test if m not in registered]
-            if unknown:
-                return SkillResult.fail(
-                    f"Unknown models_to_test {unknown}. Registered: {sorted(registered)}"
-                )
-        # selection_rule is resolved further down, once business_unit_id is
-        # known, so it can reflect that company's AnalysisProfile override of
-        # selection_metric rather than always the global default.
 
         # Soft gate: prefer plan_forecast before baseline (warn, do not hard-block)
         plan_done = context.context_manager.get_memory("last_plan_id") or context.context_manager.get_memory("plan_forecast_complete")
@@ -518,6 +506,38 @@ class GenerateBaselineSkill(BaseSkill):
 
         analysis = resolve_analysis_settings(db, business_unit_id=business_unit_id)
         selection_rule = effective_selection_rule(analysis.selection_metric)
+        # This company's model roster: its own benchmark / global-GBM gates.
+        model_registry = registry_for_analysis(analysis)
+
+        registered = set(model_registry.list_models())
+        if model_type != "auto" and model_type not in registered:
+            return SkillResult.fail(
+                f"Unknown model_type '{model_type}' (or disabled for this company). "
+                f"Registered: {sorted(registered)}"
+            )
+        if models_to_test and models_from_preset:
+            # A preset's candidate pool is a restriction, not a demand: drop
+            # what this company has switched off, as resolve_preset does for
+            # globally missing models.
+            dropped = [m for m in models_to_test if m not in registered]
+            if dropped:
+                models_to_test = [m for m in models_to_test if m in registered]
+                preset_warnings.append(
+                    f"Preset candidate model(s) {dropped} are disabled for this company "
+                    f"and were skipped."
+                )
+                logger.warning("model_preset resolution: %s", preset_warnings[-1])
+                if not models_to_test:
+                    return SkillResult.fail(
+                        f"None of the preset's candidate models {dropped} are enabled "
+                        f"for this company. Registered: {sorted(registered)}"
+                    )
+        if models_to_test:
+            unknown = [m for m in models_to_test if m not in registered]
+            if unknown:
+                return SkillResult.fail(
+                    f"Unknown models_to_test {unknown}. Registered: {sorted(registered)}"
+                )
 
         # Get non-calculated line items in the caller's BU scope
         line_items = scoped_line_items(
@@ -608,7 +628,9 @@ class GenerateBaselineSkill(BaseSkill):
             "driver_forecasts_written": 0,
             "drivers_forecasted": 0,
         }
-        all_warnings: list[str] = []
+        # Preset-resolution warnings (e.g. candidates disabled for this
+        # company) belong in the run's own warnings, not only the log.
+        all_warnings: list[str] = list(preset_warnings)
         all_flags: list[dict] = []
         pending_line_rows: list[dict[str, Any]] = []
         pending_metadata: list[ModelMetadata] = []
@@ -659,7 +681,7 @@ class GenerateBaselineSkill(BaseSkill):
         # Never allowed to fail a run — any exception here just leaves panel
         # None and every line falls back to the per-series roster as before.
         panel: Any = None
-        if settings.enable_global_gbm_model:
+        if analysis.enable_global_gbm_model:
             try:
                 from app.services.forecast_pipeline import compute_effective_series
                 from app.services.panel_forecast import build_global_panel_context

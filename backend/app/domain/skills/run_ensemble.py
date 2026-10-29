@@ -8,7 +8,7 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
-from app.domain.engines.model_registry import get_model_registry
+from app.domain.engines.model_registry import registry_for_analysis
 from app.models.forecast import ForecastVersion, ForecastLineResult
 from app.models.actuals import ActualsDataset, ActualsRecord
 from app.models.line_item import LineItem
@@ -83,7 +83,11 @@ class RunEnsembleSkill(BaseSkill):
 
         weighting = params.get("weighting_method", "inverse_mape")
         top_k = params.get("top_k", 3)
-        model_registry = get_model_registry()
+        from app.services.analysis_profile import resolve_analysis_settings
+
+        model_registry = registry_for_analysis(
+            resolve_analysis_settings(db, business_unit_id=version.business_unit_id)
+        )
         model_names = params.get("models")
         if not model_names:
             # Prefer cheap/moderate cost classes — skip expensive (prophet) by default

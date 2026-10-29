@@ -18,7 +18,7 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
-from app.domain.engines.model_registry import get_model_registry
+from app.domain.engines.model_registry import effective_selection_rule, registry_for_analysis
 from app.models.actuals import ActualsRecord
 from app.models.line_item import LineItem
 from app.services.period_calendar import get_calendar_config, period_to_date
@@ -199,18 +199,19 @@ class PlanForecastSkill(BaseSkill):
             )
             sample_items.extend([remaining[i] for i in extra])
 
-        model_registry = get_model_registry()
-        from app.domain.engines.model_registry import effective_selection_rule
+        from app.services.analysis_profile import resolve_analysis_settings
 
-        selection_rule = effective_selection_rule()
+        # The company's own roster and selection metric, same as generate_baseline,
+        # so the plan compares exactly what the run will choose between.
+        analysis = resolve_analysis_settings(db, business_unit_id=business_unit_id)
+        model_registry = registry_for_analysis(analysis)
+        selection_rule = effective_selection_rule(analysis.selection_metric)
         comparison_results: list[dict] = []
         model_win_counts: dict[str, int] = {}
         model_avg_mape: dict[str, list[float]] = {}
         cal_cfg = get_calendar_config(db, business_unit_id=business_unit_id)
 
         # Materiality vs sample CoA (same gate generate_baseline uses)
-        from app.services.analysis_profile import resolve_analysis_settings
-
         trailing = {item["name"]: abs(float(item.get("mean", 0) or 0)) * max(int(item["n_points"]), 1)
                     for item in sample_items}
         # Fall back: use n_points * rough scale from data_summary mean if present
@@ -218,9 +219,7 @@ class PlanForecastSkill(BaseSkill):
             if d["name"] in trailing and trailing[d["name"]] == 0:
                 trailing[d["name"]] = float(d.get("n_points") or 0)
         grand = sum(trailing.values()) or 1.0
-        materiality_share = float(
-            resolve_analysis_settings(db, business_unit_id=business_unit_id).materiality_share
-        )
+        materiality_share = float(analysis.materiality_share)
 
         for item in sample_items:
             # Get the data for this line item

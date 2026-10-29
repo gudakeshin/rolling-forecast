@@ -3,9 +3,9 @@
 A preset is purely a convenience layer: it never changes the forecasting
 engine, and its model_type/candidate_models are validated against the live
 model registry only at *resolution* time (when a run actually uses it), not
-at create/update time, since registry membership is env-flag-dependent
-(e.g. ``global_gbm`` only exists when ``settings.enable_global_gbm_model``
-is on).
+at create/update time, since registry membership is flag-dependent and
+per-company (e.g. ``global_gbm`` only exists for a company whose
+``enable_global_gbm_model`` is on).
 
 Company scoping: ``business_unit_id`` is nullable. ``NULL`` means "global,
 usable by every company" (the admin-curated catalog every preset predating
@@ -25,7 +25,7 @@ from typing import Any
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from app.domain.engines.model_registry import get_model_registry, reset_model_registry
+from app.domain.engines.model_registry import ModelRegistry, get_model_registry
 from app.models.model_preset import ModelPreset
 from app.models.user import User
 from app.services.audit import record_audit
@@ -265,13 +265,14 @@ def resolve_preset(
     *,
     override_horizon: int | None = None,
     actor: User | None = None,
+    registry: ModelRegistry | None = None,
 ) -> dict[str, Any]:
     """Resolve a saved preset into generate_baseline kwargs.
 
-    Validates against the *live* model registry (rebuilt fresh, same as
-    generate_baseline does before every run) — never at create/update time,
-    since registry membership depends on settings flags that can change
-    independently of when a preset was saved.
+    Validates against `registry` -- the running company's roster (see
+    ``registry_for_analysis``), or the global-settings roster when omitted --
+    never at create/update time, since registry membership depends on flags
+    that can change independently of when a preset was saved.
     """
     preset = find_preset(db, preset_id_or_name, actor=actor)
     if preset is None:
@@ -279,8 +280,8 @@ def resolve_preset(
     if not preset.is_active:
         raise ValueError(f"Model preset '{preset.name}' has been deactivated")
 
-    reset_model_registry()
-    registry = get_model_registry()
+    if registry is None:
+        registry = get_model_registry()
     registered = set(registry.list_models())
 
     warnings: list[str] = []
