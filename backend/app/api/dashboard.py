@@ -30,6 +30,7 @@ from app.services.permissions import (
 )
 
 # Scoring lives in services.confidence; remediation stays on the skill module.
+from app.services.quantile_aggregation import DEFAULT_PERIOD_RHO, aggregate_quantiles
 from app.services.confidence import (
     compute_confidence_score as _compute_confidence_score,
     classify_confidence as _classify_confidence,
@@ -392,6 +393,122 @@ def _build_driver_context(
     return context
 
 
+def _executive_risk_envelope(
+    db: Session, version: ForecastVersion, results: list[ForecastLineResult]
+) -> dict[str, Any]:
+    """Risk envelope for the executive dashboard without summing quantiles.
+
+    P50s are summed as before. Downside/upside are quantiles of *net income*
+    (revenue lines +, cost lines sign-flipped) aggregated with
+    ``services.quantile_aggregation``: line-to-line correlation comes from
+    ``reconciliation.estimate_leaf_correlation`` (actuals shrunk toward a
+    same-category prior, or the prior alone), month-to-month from an AR(1)
+    default. Category rows aggregate one category's lines and report the
+    downside in net-income terms (a cost overrun for cost categories).
+    """
+    from app.services.driver_discovery import line_family
+    from app.services.reconciliation import (
+        _category_block_correlation,
+        estimate_leaf_correlation,
+    )
+
+    leaves = [r for r in results if r.line_item and not r.line_item.is_subtotal]
+    line_ids = sorted({r.line_item_id for r in leaves})
+    periods = sorted({r.period for r in leaves})
+    li_pos = {lid: i for i, lid in enumerate(line_ids)}
+    p_pos = {p: t for t, p in enumerate(periods)}
+    lines: dict[int, LineItem] = {}
+
+    grid = {q: np.full((len(line_ids), len(periods)), np.nan) for q in ("p10", "p50", "p90")}
+    for r in leaves:
+        lines[r.line_item_id] = r.line_item
+        i, t = li_pos[r.line_item_id], p_pos[r.period]
+        for q in grid:
+            v = getattr(r, q)
+            if v is not None:
+                grid[q][i, t] = float(v)
+    P10, P50, P90 = grid["p10"], grid["p50"], grid["p90"]
+
+    def _line_type(li: LineItem) -> str:
+        fam = line_family(li)
+        if fam == "expense" or (fam is None and (li.sign_convention or "") == "negative"):
+            return "cost"
+        return "revenue" if fam == "revenue" else "other"
+
+    types = np.array([_line_type(lines[lid]) for lid in line_ids], dtype=object)
+    signs = np.where(types == "cost", -1.0, 1.0)
+
+    categories = {lid: lines[lid].category for lid in line_ids}
+    R_line = estimate_leaf_correlation(
+        db, line_ids, dataset_id=version.actuals_dataset_id, categories=categories
+    )
+    corr_source = (
+        "category_prior"
+        if np.allclose(R_line, _category_block_correlation(line_ids, categories))
+        else "actuals_shrunk"
+    )
+
+    def _agg(rows: np.ndarray, cols: slice = slice(None), net: bool = False):
+        idx = np.flatnonzero(rows)
+        return aggregate_quantiles(
+            P10[idx][:, cols], P50[idx][:, cols], P90[idx][:, cols],
+            signs=signs[idx] if net else None,
+            line_corr=R_line[np.ix_(idx, idx)],
+        )
+
+    all_rows = np.ones(len(line_ids), dtype=bool)
+    net = _agg(all_rows, net=True)
+    total_p50 = float(np.nansum(P50))
+
+    risk_by_type: dict[str, dict[str, float]] = {}
+    for kind in ("revenue", "cost", "other"):
+        rows = types == kind
+        if rows.any():
+            q = _agg(rows)
+            risk_by_type[kind] = {
+                "p10": round(q.p10, 2), "p50": round(q.p50, 2), "p90": round(q.p90, 2),
+            }
+
+    cat_totals: dict[str, dict[str, Any]] = {}
+    cat_arr = np.array([categories[lid] for lid in line_ids], dtype=object)
+    for cat in dict.fromkeys(cat_arr):
+        rows = cat_arr == cat
+        q = _agg(rows)
+        is_cost = bool((types[rows] == "cost").all())
+        cat_totals[cat] = {
+            "p10": q.p10, "p50": q.p50, "p90": q.p90,
+            "line_type": "cost" if is_cost else str(types[rows][0]),
+            "downside_risk": q.upside if is_cost else q.downside,
+            "upside_opportunity": q.downside if is_cost else q.upside,
+        }
+
+    time_series = []
+    for t, period in enumerate(periods):
+        q = _agg(all_rows, slice(t, t + 1), net=True)
+        p50 = float(np.nansum(P50[:, t]))
+        time_series.append({
+            "period": period,
+            "p10": round(p50 - q.downside, 2),
+            "p50": round(p50, 2),
+            "p90": round(p50 + q.upside, 2),
+        })
+
+    return {
+        "total_p50": total_p50,
+        "net_income_p50": net.p50,
+        "downside_risk": net.downside,
+        "upside_opportunity": net.upside,
+        "categories": cat_totals,
+        "risk_by_type": risk_by_type,
+        "time_series": time_series,
+        "risk_method": {
+            "line_correlation": corr_source,
+            "period_correlation": f"ar1_rho_{DEFAULT_PERIOD_RHO}",
+            "interval": "p10_p90",
+        },
+    }
+
+
 # ──────────────────────────────────────────────────
 # Executive Dashboard
 # ──────────────────────────────────────────────────
@@ -445,22 +562,14 @@ async def get_executive_dashboard(
         li_groups.setdefault(r.line_item_id, []).append(r)
 
     # ─── 2. Forecast Position ─────────────────────────
-    total_p10, total_p50, total_p90 = 0.0, 0.0, 0.0
-    cat_totals: dict[str, dict[str, float]] = {}
-    for r in all_results:
-        if r.line_item and not r.line_item.is_subtotal:
-            total_p10 += float(r.p10 or 0)
-            total_p50 += float(r.p50 or 0)
-            total_p90 += float(r.p90 or 0)
-            cat = r.line_item.category
-            if cat not in cat_totals:
-                cat_totals[cat] = {"p10": 0, "p50": 0, "p90": 0}
-            cat_totals[cat]["p10"] += float(r.p10 or 0)
-            cat_totals[cat]["p50"] += float(r.p50 or 0)
-            cat_totals[cat]["p90"] += float(r.p90 or 0)
-
-    downside_risk = total_p50 - total_p10
-    upside_opportunity = total_p90 - total_p50
+    # P50s add; P10/P90 do not (see _executive_risk_envelope).
+    envelope = _executive_risk_envelope(db, version, all_results)
+    total_p50 = envelope["total_p50"]
+    downside_risk = envelope["downside_risk"]
+    upside_opportunity = envelope["upside_opportunity"]
+    total_p10 = total_p50 - downside_risk
+    total_p90 = total_p50 + upside_opportunity
+    cat_totals: dict[str, dict[str, Any]] = envelope["categories"]
 
     # Delta vs prior version
     prior_total = None
@@ -606,13 +715,13 @@ async def get_executive_dashboard(
     # ─── 5. Risk & Opportunity by Category ────────────
     risk_opportunity: list[dict[str, Any]] = []
     for cat, totals in sorted(cat_totals.items(), key=lambda x: -abs(x[1]["p50"])):
-        downside = totals["p50"] - totals["p10"]
-        upside = totals["p90"] - totals["p50"]
         risk_opportunity.append({
             "category": cat,
+            "line_type": totals["line_type"],
             "forecast": round(totals["p50"], 2),
-            "downside_risk": round(downside, 2),
-            "upside_opportunity": round(upside, 2),
+            # Net-income terms: for a cost category the downside is an overrun.
+            "downside_risk": round(totals["downside_risk"], 2),
+            "upside_opportunity": round(totals["upside_opportunity"], 2),
             "range_pct": round((totals["p90"] - totals["p10"]) / abs(totals["p50"]) * 100, 1) if abs(totals["p50"]) > 1e-10 else 0,
         })
 
@@ -695,7 +804,7 @@ async def get_executive_dashboard(
         insights.append({
             "type": "risk",
             "title": "Significant downside exposure",
-            "detail": f"The P10 scenario is {formatCurrency(downside_risk)} below the base forecast, a {downside_risk / abs(total_p50) * 100:.0f}% gap. Key drivers: {', '.join(c['category'] for c in risk_opportunity[:3] if c['downside_risk'] > 0)}.",
+            "detail": f"The P10 scenario is {formatCurrency(downside_risk)} below the base forecast on a net-income basis, a {downside_risk / abs(total_p50) * 100:.0f}% gap. Key drivers: {', '.join(c['category'] for c in risk_opportunity[:3] if c['downside_risk'] > 0)}.",
             "action": "Review line items with widest confidence intervals and consider risk mitigation.",
         })
 
@@ -783,24 +892,7 @@ async def get_executive_dashboard(
             bridge_narrative = movements[:5]
 
     # ─── 9. Monthly time series ───────────────────────
-    monthly_totals = (
-        db.query(
-            ForecastLineResult.period,
-            func.sum(ForecastLineResult.p10).label("p10"),
-            func.sum(ForecastLineResult.p50).label("p50"),
-            func.sum(ForecastLineResult.p90).label("p90"),
-        )
-        .filter(ForecastLineResult.version_id == version_id)
-        .group_by(ForecastLineResult.period)
-        .order_by(ForecastLineResult.period)
-        .all()
-    )
-    time_series = [{
-        "period": r.period,
-        "p10": round(float(r.p10 or 0), 2),
-        "p50": round(float(r.p50 or 0), 2),
-        "p90": round(float(r.p90 or 0), 2),
-    } for r in monthly_totals]
+    time_series = envelope["time_series"]
 
     # ─── 10. Accuracy KPIs ────────────────────────────
     accuracy_kpis: dict[str, Any] = {"avg_mape": 0, "avg_bias": 0, "bias_direction": "neutral", "hit_rate": 0, "comparisons": 0}
@@ -845,6 +937,10 @@ async def get_executive_dashboard(
                 "total_p90": round(total_p90, 2),
                 "downside_risk": round(downside_risk, 2),
                 "upside_opportunity": round(upside_opportunity, 2),
+                "risk_basis": "net_income",
+                "net_income_p50": round(envelope["net_income_p50"], 2),
+                "risk_by_type": envelope["risk_by_type"],
+                "risk_method": envelope["risk_method"],
                 "prior_total": round(prior_total, 2) if prior_total else None,
                 "delta_vs_prior": round(delta_vs_prior, 2) if delta_vs_prior is not None else None,
                 "delta_pct": round(delta_pct, 1) if delta_pct is not None else None,

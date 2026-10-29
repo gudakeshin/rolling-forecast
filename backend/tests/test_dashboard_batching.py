@@ -250,6 +250,19 @@ def test_review_executive_anomaly_with_seeded_results(
     assert executive.panel_type == "executive_dashboard"
     assert executive.data["version"]["id"] == version.id
 
+    # Risk envelope: P50 still sums; the band is a net-income quantile that is
+    # narrower than the naive sum of per-line P10s, and stays consistent.
+    pos = executive.data["position"]
+    n_cells = sum(1 for li in seed_line_items.values() if not li.is_calculated) * 3
+    naive_downside = 20_000 * (1.0 + 1.05 + 1.1) * n_cells / 3
+    assert pos["risk_basis"] == "net_income"
+    assert pos["total_p50"] == pytest.approx(100_000 * (1.0 + 1.05 + 1.1) * n_cells / 3)
+    assert 0 < pos["downside_risk"] < naive_downside
+    assert pos["total_p10"] == pytest.approx(pos["total_p50"] - pos["downside_risk"], abs=0.02)
+    assert set(pos["risk_by_type"]) >= {"revenue", "cost"}
+    for row in executive.data["time_series"]:
+        assert row["p10"] < row["p50"] < row["p90"]
+
     anomaly = asyncio.run(
         get_anomaly_dashboard(version_id=version.id, current_user=admin, db=db_session)
     )
