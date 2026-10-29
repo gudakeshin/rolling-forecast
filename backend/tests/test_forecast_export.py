@@ -139,3 +139,38 @@ def test_other_company_gets_404_and_bad_format_422(client, data):
     url = f"/api/panel/forecast-table/{data['version']}/export"
     assert client.get(url, headers=_h(client, data["users"]["B"])).status_code == 404
     assert client.get(url, params={"format": "pdf"}, headers=_h(client, data["users"]["A"])).status_code == 422
+
+
+def test_forecast_table_reports_calibration_provenance(client, data):
+    """Plan 1.5: the table payload says how many lines have calibrated bands.
+    Counted from model metadata (MinT may re-stamp bounds_method)."""
+    from app.database import SessionLocal
+    from app.models.forecast import ForecastLineResult, ModelMetadata
+    from app.services.tenant_scope import UNRESTRICTED, push_tenant_scope, reset_tenant_scope
+
+    token = push_tenant_scope(UNRESTRICTED)
+    db = SessionLocal()
+    try:
+        first_line = (
+            db.query(ForecastLineResult.line_item_id)
+            .filter(ForecastLineResult.version_id == data["version"])
+            .order_by(ForecastLineResult.line_item_id)
+            .first()[0]
+        )
+        for r in db.query(ForecastLineResult).filter_by(version_id=data["version"], line_item_id=first_line):
+            db.add(ModelMetadata(
+                line_result_id=r.id, model_type="linear",
+                parameters={"interval_calibration": {"method": "conformal_per_horizon"}},
+            ))
+        db.commit()
+    finally:
+        db.close()
+        reset_tenant_scope(token)
+
+    r = client.get(f"/api/panel/forecast-table/{data['version']}", headers=_h(client, data["users"]["A"]))
+    assert r.status_code == 200, r.text
+    summary = r.json()["data"]["calibration_summary"]
+    assert summary["calibrated_lines"] == 1
+    assert summary["total_lines"] == N_LINES
+    assert summary["target_coverage"] == pytest.approx(0.8)
+    assert summary["realized_coverage"] is None  # no closed cycles: no claim

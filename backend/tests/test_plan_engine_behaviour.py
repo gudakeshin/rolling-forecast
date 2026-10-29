@@ -61,3 +61,88 @@ def test_scheduled_jobs_are_registered_with_the_worker():
         "cron:scheduled_driver_overdue_sweep",
         "cron:scheduled_anomaly_sweep",
     } <= names
+
+
+# ── Plan 2.3: run_ensemble respects the fiscal calendar and the single
+# confidence source of truth; the exog MASE scale follows the calendar. ──────
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture
+def fiscal_version(db_session):
+    from app.models.actuals import ActualsDataset, ActualsRecord
+    from app.models.forecast import ForecastLineResult, ForecastVersion
+    from app.models.line_item import LineItem
+
+    li = LineItem(account_code="FY-REV-1", name="Fiscal Revenue", category="Revenue")
+    db_session.add(li)
+    db_session.flush()
+    labels = [f"FY{2024 + i // 12}-P{i % 12 + 1:02d}" for i in range(24)]
+    ds = ActualsDataset(
+        source_type="csv", source_name="fy.csv", file_hash="fyhash", row_count=24,
+        period_start=labels[0], period_end=labels[-1], periods_count=24,
+    )
+    db_session.add(ds)
+    db_session.flush()
+    rng = np.random.default_rng(3)
+    for i, p in enumerate(labels):
+        db_session.add(ActualsRecord(
+            dataset_id=ds.id, line_item_id=li.id, period=p,
+            value=float(1000 + 20 * i + rng.normal(0, 15)), currency="USD",
+        ))
+    v = ForecastVersion(
+        name="FY-v1", status="draft", version_type="scheduled", actuals_dataset_id=ds.id,
+        horizon_months=3, base_period=labels[-1],
+    )
+    db_session.add(v)
+    db_session.flush()
+    for h, p in enumerate(["FY2026-P01", "FY2026-P02", "FY2026-P03"]):
+        db_session.add(ForecastLineResult(
+            version_id=v.id, line_item_id=li.id, period=p, p10=1400, p50=1500 + h, p90=1600,
+            confidence_score=40, confidence_level="low", model_type="linear", model_mape=9.0,
+        ))
+    db_session.commit()
+    return v
+
+
+@pytest.mark.asyncio
+async def test_run_ensemble_handles_fiscal_periods_and_uses_shared_confidence(
+    db_session, context_manager, fiscal_version
+):
+    from app.domain.base_skill import SkillContext
+    from app.domain.skills.run_ensemble import RunEnsembleSkill
+    from app.models.forecast import ForecastLineResult
+    from app.services.confidence import compute_confidence_score
+    from app.services.period_calendar import CalendarType, FiscalCalendarConfig, push_calendar, reset_calendar
+
+    token = push_calendar(FiscalCalendarConfig(CalendarType.FISCAL_445))
+    try:
+        ctx = SkillContext(
+            db=db_session, context_manager=context_manager, user_id="t",
+            user_role="admin", conversation_id="c",
+        )
+        result = await RunEnsembleSkill().execute(
+            {"version_id": fiscal_version.id, "weighting_method": "equal", "top_k": 2}, ctx
+        )
+    finally:
+        reset_calendar(token)
+
+    # The old `pd.Timestamp(p + "-01")` raised on "FY2024-P01"-style labels.
+    assert result.success, result.message
+    rows = db_session.query(ForecastLineResult).filter_by(version_id=fiscal_version.id).all()
+    assert rows
+    for r in rows:
+        # No ad-hoc "+10 ensemble bonus": confidence is exactly the shared score.
+        assert r.confidence_score == pytest.approx(compute_confidence_score(r))
+
+
+def test_exog_mase_scale_follows_the_fiscal_calendar(monkeypatch):
+    """forecast_pipeline used a hardcoded m = 12 for the MASE denominator."""
+    import inspect
+
+    from app.services import forecast_pipeline
+
+    src = inspect.getsource(forecast_pipeline)
+    assert "m = 12" not in src
+    assert "seasonal_period_length()" in src
