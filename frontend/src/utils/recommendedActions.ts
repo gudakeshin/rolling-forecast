@@ -1,3 +1,4 @@
+import { useComposerStore } from '../store/composerStore';
 import { usePanelStore } from '../store/panelStore';
 
 export interface RecommendedAction {
@@ -97,16 +98,12 @@ export async function dispatchRecommendedAction(
     return true;
   }
 
-  // Fallback: copy a chat prompt for the user
+  // Fallback: put a chat prompt in the composer for the user to review and send
   if (opts?.lineItemName || action.detail) {
     const prompt =
       action.detail ||
       `${action.label}${opts?.lineItemName ? ` for "${opts.lineItemName}"` : ''}`;
-    try {
-      await navigator.clipboard.writeText(prompt);
-    } catch {
-      /* ignore */
-    }
+    useComposerStore.getState().prefill(prompt);
     return true;
   }
 

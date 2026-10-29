@@ -25,6 +25,8 @@ export interface NavItem {
   labelKey: MessageKey;
   icon: typeof Table;
   show: boolean;
+  /** Visible but not usable yet; the reason is shown instead of hiding the item. */
+  disabledReason?: MessageKey;
   onClick: () => void;
 }
 
@@ -88,7 +90,9 @@ export function useNavItems(): NavGroup[] {
           key: 'comparison',
           labelKey: 'nav.comparison',
           icon: GitCompare,
-          show: (canGenerate || canReview) && Boolean(activeVersionId && compareTargetId),
+          show: canGenerate || canReview,
+          disabledReason:
+            activeVersionId && compareTargetId ? undefined : 'nav.comparison.needsTwo',
           onClick: open('comparison', {
             version_id_a: activeVersionId,
             version_id_b: compareTargetId,

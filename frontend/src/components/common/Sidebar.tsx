@@ -51,6 +51,23 @@ export function Sidebar() {
               </div>
               {visible.map((item) => {
                 const active = isPanelTypeOpen(item.key);
+                if (item.disabledReason) {
+                  const reason = t(item.disabledReason);
+                  return (
+                    <button
+                      key={item.key}
+                      type="button"
+                      aria-disabled="true"
+                      title={reason}
+                      onClick={() => toast.info(reason)}
+                      className="w-full flex items-center gap-2 px-2.5 py-[7px] rounded-lg text-xs mb-0.5 text-left text-surface-500 cursor-not-allowed font-medium"
+                    >
+                      <item.icon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                      <span className="truncate">{t(item.labelKey)}</span>
+                      <span className="sr-only">: {reason}</span>
+                    </button>
+                  );
+                }
                 return (
                   <button
                     key={item.key}

@@ -1,6 +1,7 @@
 import { useRef, useEffect } from 'react';
 import { useChatStore } from '../../store/chatStore';
 import { useVersionStore } from '../../store/versionStore';
+import { GettingStarted } from './GettingStarted';
 import { MessageList } from './MessageList';
 import { InputBar } from './InputBar';
 import { getConversations, sendMessage } from '../../api/chat';
@@ -273,6 +274,7 @@ function WelcomeScreen({ onSuggestion }: { onSuggestion: (s: string) => void }) 
         <p className="text-surface-400 mb-8 sm:mb-10 text-sm leading-relaxed max-w-md mx-auto">
           {t('app.empty.subtitle')}
         </p>
+        <GettingStarted />
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {suggestions.map((s, i) => (
             <button

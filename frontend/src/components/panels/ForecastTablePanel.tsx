@@ -1,15 +1,17 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   AlertTriangle, CheckCircle2, XCircle, ChevronDown, ChevronRight,
-  Edit3, ShieldCheck, Eye, Filter, BarChart3, TrendingDown, TrendingUp,
+  Edit3, ShieldCheck, Eye, Filter, TrendingDown, TrendingUp,
   Bot, Sparkles, Info, MessageSquare, Upload, RefreshCw, ArrowRightLeft,
   UserCheck, Search, Zap, CircleDot, Save, X, GitBranch, Activity,
   Loader2, Target, Lightbulb,
 } from 'lucide-react';
-import { apiPost } from '../../api/client';
+import { apiDownload, apiPost } from '../../api/client';
 import { usePanelStore } from '../../store/panelStore';
+import { useComposerStore } from '../../store/composerStore';
 import { toast } from '../../store/toastStore';
 import { DataTable, type DataTableColumn } from '../ui/DataTable';
+import { EmptyForecastState } from './EmptyForecastState';
 
 // ── Types ────────────────────────────────────
 interface QualitySummary {
@@ -172,6 +174,54 @@ interface Props {
 type ForecastTableRow = ForecastRow & Record<string, unknown>;
 
 // ── Main Component ───────────────────────────
+/** The table's own CSV/XLSX buttons export only the loaded page; this asks the
+ * server for every line x period of the version under the current filters. */
+function FullVersionExport({
+  versionId,
+  versionName,
+  category,
+  confidence,
+}: {
+  versionId: string;
+  versionName: string;
+  category: string;
+  confidence: string;
+}) {
+  const [busy, setBusy] = useState<'csv' | 'xlsx' | null>(null);
+
+  const download = async (format: 'csv' | 'xlsx') => {
+    const qs = new URLSearchParams({ format });
+    if (category !== 'all') qs.set('category', category);
+    if (['high', 'medium', 'low'].includes(confidence)) qs.set('confidence_level', confidence);
+    setBusy(format);
+    try {
+      const safe = versionName.replace(/[^A-Za-z0-9_-]+/g, '_');
+      await apiDownload(`/panel/forecast-table/${versionId}/export?${qs.toString()}`, `${safe}.${format}`);
+    } catch (e: any) {
+      toast.error(e?.message || 'Export failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2 text-xs text-surface-400">
+      <span>Export full version:</span>
+      {(['csv', 'xlsx'] as const).map((f) => (
+        <button
+          key={f}
+          type="button"
+          onClick={() => download(f)}
+          disabled={busy !== null}
+          className="px-2 py-0.5 rounded border border-surface-700 hover:text-surface-200 disabled:opacity-50"
+        >
+          {busy === f ? 'Preparing…' : f.toUpperCase()}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
   const rows = data.data.rows || data.data.items || [];
   const version = data.data.version;
@@ -450,12 +500,7 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
   }, [isSummaryView, expandedRows, toggleExpand, onRefresh]);
 
   if (rows.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-12 gap-3">
-        <BarChart3 className="w-8 h-8 text-surface-600" />
-        <p className="text-surface-500 text-sm">No forecast data to display</p>
-      </div>
-    );
+    return <EmptyForecastState />;
   }
 
   return (
@@ -589,6 +634,14 @@ export function ForecastTablePanel({ data, onRefresh, enablePolling }: Props) {
       />
 
       <div className="flex flex-col items-center gap-2">
+        {version?.id && (
+          <FullVersionExport
+            versionId={version.id}
+            versionName={version.name || 'forecast'}
+            category={filterCategory}
+            confidence={filterConfidence}
+          />
+        )}
         <p className="text-xs text-surface-500 text-center">
           Showing {rows.length} items
           {data.data.total_count != null ? ` of ${data.data.total_count} total` : ''}
@@ -1210,6 +1263,7 @@ function ExpandedRemediation({
 }) {
   const { openPanel } = usePanelStore();
   const [copiedAction, setCopiedAction] = useState<string | null>(null);
+  const prefillComposer = useComposerStore((st) => st.prefill);
 
   const handleActionClick = useCallback(async (action: AIAction) => {
     if (action.type === 'confirm_zero' || action.type === 'approve') {
@@ -1226,10 +1280,10 @@ function ExpandedRemediation({
       return;
     }
     if (action.type === 'override' || action.type === 'switch_model' || action.type === 'review_override') {
-      // Stay on forecast table — copy chat command so the user can act via agent
+      // Stay on forecast table — put the chat command in the composer so the user can act via the agent
       const chatCmd = chatCommandForAction(action, row);
       if (chatCmd) {
-        await navigator.clipboard.writeText(chatCmd);
+        prefillComposer(chatCmd);
         setCopiedAction(action.type);
         setTimeout(() => setCopiedAction(null), 2000);
       }
@@ -1239,7 +1293,7 @@ function ExpandedRemediation({
       openPanel(action.type === 'compare_peers' ? 'accuracy_tracking' : 'anomaly_dashboard', {});
       const chatCmd = chatCommandForAction(action, row);
       if (chatCmd) {
-        await navigator.clipboard.writeText(chatCmd);
+        prefillComposer(chatCmd);
         setCopiedAction(action.type);
         setTimeout(() => setCopiedAction(null), 2000);
       }
@@ -1248,11 +1302,11 @@ function ExpandedRemediation({
 
     const chatCmd = chatCommandForAction(action, row);
     if (chatCmd) {
-      await navigator.clipboard.writeText(chatCmd);
+      prefillComposer(chatCmd);
       setCopiedAction(action.type);
       setTimeout(() => setCopiedAction(null), 2000);
     }
-  }, [row, onAction, openPanel]);
+  }, [row, onAction, openPanel, prefillComposer]);
 
   const aiActions = row.ai_actions || [];
   const recommendation = row.ai_recommendation;
@@ -1424,7 +1478,7 @@ function ExpandedRemediation({
                       {copiedAction === action.type ? (
                         <>
                           <CheckCircle2 className="w-3 h-3" />
-                          Copied
+                          In chat
                         </>
                       ) : (
                         <>
@@ -1434,7 +1488,7 @@ function ExpandedRemediation({
                             : (
                               <>
                                 <MessageSquare className="w-2.5 h-2.5 opacity-50" />
-                                Copy to Chat
+                                Ask in chat
                               </>
                             )}
                         </>

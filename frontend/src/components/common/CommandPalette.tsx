@@ -88,7 +88,7 @@ export function CommandPalette() {
     const items: PaletteItem[] = [];
     for (const group of navGroups) {
       for (const navItem of group.items) {
-        if (!navItem.show) continue;
+        if (!navItem.show || navItem.disabledReason) continue;
         items.push({
           id: `panel:${navItem.key}`,
           section: t('palette.section.panels'),

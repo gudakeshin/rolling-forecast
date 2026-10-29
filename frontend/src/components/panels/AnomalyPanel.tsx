@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { apiPost } from '../../api/client';
 import { usePanelStore } from '../../store/panelStore';
+import { useComposerStore } from '../../store/composerStore';
 import { toast } from '../../store/toastStore';
 import { DataTable, downloadCsv, type DataTableColumn } from '../ui/DataTable';
 import { chartTheme } from '../../theme/chartTheme';
@@ -394,9 +395,7 @@ function AnomalyRow({
   const [overrideApplied, setOverrideApplied] = useState(false);
 
   const topFinding = item.findings[0];
-  const actionCopied = useCallback((text: string) => {
-    navigator.clipboard.writeText(text);
-  }, []);
+  const askInChat = useComposerStore((s) => s.prefill);
 
   const handleSaveOverride = async () => {
     if (!editValue || editReason.length < 10) return;
@@ -604,7 +603,7 @@ function AnomalyRow({
                   item={item}
                   onDismiss={onDismiss}
                   onOverride={onOverride}
-                  onCopy={actionCopied}
+                  onAskInChat={askInChat}
                 />
               ))}
             </div>
@@ -631,13 +630,13 @@ function ActionButton({
   item,
   onDismiss,
   onOverride,
-  onCopy,
+  onAskInChat,
 }: {
   action: AnomalyAction;
   item: AnomalyItem;
   onDismiss: (id: string) => void;
   onOverride: (item: AnomalyItem) => void;
-  onCopy: (text: string) => void;
+  onAskInChat: (text: string) => void;
 }) {
   const openPanel = usePanelStore((s) => s.openPanel);
 
@@ -653,7 +652,7 @@ function ActionButton({
         onDismiss(item.id);
         return;
       case 'investigate':
-        onCopy(`Investigate anomaly for ${item.line_item_name}: ${action.detail}`);
+        onAskInChat(`Investigate anomaly for ${item.line_item_name}: ${action.detail}`);
         openPanel('anomaly_dashboard', {});
         return;
       default:

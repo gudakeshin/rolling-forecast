@@ -5,7 +5,7 @@ import {
   ResponsiveContainer, Cell,
 } from 'recharts';
 import {
-  TrendingUp, TrendingDown, DollarSign, Shield, Clock, FileText,
+  TrendingUp, TrendingDown, Shield, Clock, FileText,
   Download, Loader2, AlertTriangle, Target, Activity,
   CheckCircle, XCircle, Eye,
   ArrowUpRight, ArrowDownRight, Zap, Users, GitBranch,
@@ -17,6 +17,7 @@ import { toast } from '../../store/toastStore';
 import { DataTable, downloadCsv, type DataTableColumn } from '../ui/DataTable';
 import { chartTheme } from '../../theme/chartTheme';
 import { CustomKpis } from './CustomKpis';
+import { EmptyForecastState } from './EmptyForecastState';
 import type { KpiResult } from '../../api/kpis';
 
 const COLORS = {
@@ -535,12 +536,7 @@ export function ExecutiveDashboardPanel({ data, onRefresh: _onRefresh }: { data:
   const canGenerate = useCan('can_generate');
 
   if (d.empty) {
-    return (
-      <div className="flex flex-col items-center justify-center h-48 gap-3">
-        <DollarSign className="w-10 h-10 text-surface-600" />
-        <p className="text-sm text-surface-400">No forecast data available.</p>
-      </div>
-    );
+    return <EmptyForecastState />;
   }
 
   const ChartTooltip = ({ active, payload, label }: any) => {

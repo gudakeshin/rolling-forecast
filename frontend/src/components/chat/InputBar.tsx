@@ -54,6 +54,7 @@ export function InputBar({ onSend, onStop, isStreaming }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const focusRequestId = useComposerStore((s) => s.focusRequestId);
+  const prefillId = useComposerStore((s) => s.prefillId);
 
   const [menuClosed, setMenuClosed] = useState(false);
   const [slashHighlight, setSlashHighlight] = useState(0);
@@ -65,6 +66,19 @@ export function InputBar({ onSend, onStop, isStreaming }: Props) {
   useEffect(() => {
     if (focusRequestId > 0) textareaRef.current?.focus();
   }, [focusRequestId]);
+
+  // A panel action pushed a prompt: put it in the composer for review (not sent).
+  useEffect(() => {
+    if (prefillId === 0) return;
+    const text = useComposerStore.getState().prefillText;
+    setInput(text);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(text.length, text.length);
+    });
+  }, [prefillId]);
 
   const slashMatch = !menuClosed && /^\/([a-z]*)$/i.exec(input);
   const slashQuery = slashMatch ? slashMatch[1].toLowerCase() : null;
