@@ -672,6 +672,7 @@ def forecast_line_item(
                 is_material=ctx.is_material,
                 panel=ctx.panel,
                 line_item_id=li.id,
+                forecast_horizon=horizon,
             )
             selection_result = comparison
             out.comparison = comparison.to_dict()

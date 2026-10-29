@@ -104,6 +104,7 @@ def forecast_driver_at_origin(
             models_to_test=candidate_models or None,
             two_stage=True,
             is_material=False,
+            forecast_horizon=horizon,
         )
         if not best:
             empty = pd.Series(dtype=float)

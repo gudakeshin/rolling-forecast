@@ -212,6 +212,7 @@ def forecast_linked_drivers(
                 selection_rule=effective_selection_rule(),
                 two_stage=True,
                 is_material=True,
+                forecast_horizon=horizon + max_lag,
             )
             if not best_model:
                 warnings.append(f"driver {driver_id}: no eligible model")
