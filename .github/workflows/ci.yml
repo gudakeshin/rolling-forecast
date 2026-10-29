@@ -17,7 +17,10 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install lint tools
-        run: pip install ruff mypy
+        # From the lock, not bare `pip install ruff mypy`: mypy needs the real
+        # alembic/sqlalchemy packages (otherwise `alembic` resolves to our own
+        # alembic/ migrations dir and has no `op`), and the lock pins both tools.
+        run: pip install --require-hashes -r requirements.lock
       - name: Ruff
         run: ruff check app tests alembic
       - name: Mypy
