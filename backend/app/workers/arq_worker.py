@@ -2,6 +2,8 @@
 
 Start with:
   cd backend && REDIS_URL=redis://localhost:6379 arq app.workers.arq_worker.WorkerSettings
+and, for short background tasks on their own queue:
+  cd backend && REDIS_URL=redis://localhost:6379 arq app.workers.arq_worker.TaskWorkerSettings
 """
 
 from __future__ import annotations
@@ -12,6 +14,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from arq import cron
+
+from app.services.background_tasks import TASK_QUEUE
 
 logger = logging.getLogger(__name__)
 
@@ -508,7 +512,23 @@ async def scheduled_anomaly_sweep(ctx: dict) -> dict:
         db.close()
 
 
+async def run_background_task(
+    ctx: dict,
+    job_id: str,
+    kind: str,
+    params: dict[str, Any],
+    user_id: str | None,
+) -> dict[str, Any]:
+    """A slow request moved off the request thread (app/services/background_tasks.py)."""
+    from app.services.background_tasks import execute_task
+
+    return await execute_task(job_id, kind, params, user_id)
+
+
 class WorkerSettings:
+    """Forecast generation + scheduled sweeps. One slot: a baseline run is
+    heavy enough that two at once would starve each other."""
+
     functions = [run_generate_baseline]
     cron_jobs = [
         cron(scheduled_integration_sync, hour={2}, minute=0, run_at_startup=False),
@@ -528,7 +548,8 @@ class WorkerSettings:
     max_jobs = 1
 
     @staticmethod
-    def on_startup(ctx: dict) -> None:
+    async def on_startup(ctx: dict) -> None:
+        # arq awaits this hook; a plain function crashed every worker at boot.
         from app.config import settings
 
         # Prefer settings so env can override without editing this module
@@ -541,6 +562,19 @@ class WorkerSettings:
         )
 
 
+class TaskWorkerSettings:
+    """Short background tasks (pulls, document indexing, board-pack email,
+    rescore, reflection) on their own queue, so a long forecast on the
+    single-slot WorkerSettings queue never blocks them. Run as a second
+    worker: ``arq app.workers.arq_worker.TaskWorkerSettings``."""
+
+    functions = [run_background_task]
+    queue_name = TASK_QUEUE
+    redis_settings: Any = None
+    job_timeout = 900
+    max_jobs = 4
+
+
 def _configure_redis() -> None:
     from app.config import settings
 
@@ -550,6 +584,7 @@ def _configure_redis() -> None:
 
     WorkerSettings.redis_settings = RedisSettings.from_dsn(settings.redis_url)
     WorkerSettings.job_timeout = int(settings.job_timeout_seconds)
+    TaskWorkerSettings.redis_settings = WorkerSettings.redis_settings
 
 
 _configure_redis()
