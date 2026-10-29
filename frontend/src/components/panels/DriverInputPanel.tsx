@@ -9,6 +9,38 @@ import { DataTable, downloadCsv, type DataTableColumn } from '../ui/DataTable';
 import { usePanelStore } from '../../store/panelStore';
 import { toast } from '../../store/toastStore';
 
+/** Form updates for an Excel/CSV range pasted into the grid: an
+ * "account_code<TAB>value" block (matched by code, any order) or a single
+ * value column (filled downward from the line the paste landed on). Returns
+ * null for a single cell, which the browser should paste normally. */
+export function pastedGridUpdates(
+  text: string,
+  lineItems: { id: number; account_code: string }[],
+  startLineId: number,
+): Record<string, string> | null {
+  const clean = text.replace(/\r/g, '');
+  if (!clean) return null;
+  const rows = clean.split('\n').filter((r, i, arr) => !(i === arr.length - 1 && r === ''));
+  const parsed = rows.map((r) => r.split('\t').map((c) => c.trim()));
+  if (parsed.length <= 1 && (parsed[0]?.length ?? 0) <= 1) return null;
+
+  const updates: Record<string, string> = {};
+  if (parsed.every((cols) => cols.length >= 2 && cols[0] !== '')) {
+    const byCode = new Map(lineItems.map((li) => [li.account_code, li]));
+    for (const [code, value] of parsed) {
+      const li = byCode.get(code);
+      if (li && value !== '') updates[`li_${li.id}`] = value;
+    }
+  } else {
+    const startIdx = lineItems.findIndex((li) => li.id === startLineId);
+    parsed.forEach((cols, i) => {
+      const li = lineItems[startIdx + i];
+      if (li && cols[0] !== '') updates[`li_${li.id}`] = cols[0];
+    });
+  }
+  return updates;
+}
+
 interface LineItemInput {
   id: number;
   name: string;
@@ -100,30 +132,13 @@ export function DriverInputPanel({ data }: Props) {
   // single-cell paste is left to the browser's default behavior.
   const handleGridPaste = useCallback(
     (e: React.ClipboardEvent<HTMLInputElement>, startLi: LineItemInput) => {
-      const text = e.clipboardData.getData('text/plain').replace(/\r/g, '');
-      if (!text) return;
-      const rows = text.split('\n').filter((r, i, arr) => !(i === arr.length - 1 && r === ''));
-      const parsed = rows.map((r) => r.split('\t').map((c) => c.trim()));
-      if (parsed.length <= 1 && (parsed[0]?.length ?? 0) <= 1) return;
-
+      const updates = pastedGridUpdates(
+        e.clipboardData.getData('text/plain'),
+        filteredLineItems,
+        startLi.id,
+      );
+      if (updates === null) return; // a single cell: let the browser paste it
       e.preventDefault();
-      const updates: Record<string, string> = {};
-      const isTwoColumn = parsed.every((cols) => cols.length >= 2 && cols[0] !== '');
-
-      if (isTwoColumn) {
-        const byCode = new Map(filteredLineItems.map((li) => [li.account_code, li]));
-        for (const [code, value] of parsed) {
-          const li = byCode.get(code);
-          if (li && value !== '') updates[`li_${li.id}`] = value;
-        }
-      } else {
-        const startIdx = filteredLineItems.findIndex((li) => li.id === startLi.id);
-        parsed.forEach((cols, i) => {
-          const li = filteredLineItems[startIdx + i];
-          const value = cols[0];
-          if (li && value !== '') updates[`li_${li.id}`] = value;
-        });
-      }
 
       const count = Object.keys(updates).length;
       if (count > 0) {
