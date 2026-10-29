@@ -4,6 +4,9 @@
 #
 #   ./scripts/lock-deps.sh             # keep current pins, pick up new deps
 #   ./scripts/lock-deps.sh --upgrade   # deliberately re-resolve to latest
+#   ./scripts/lock-deps.sh --upgrade-package pillow --upgrade-package urllib3
+#                                      # move only these (e.g. for pip-audit),
+#                                      # holding every other pin
 #
 # Resolution targets the Docker image (linux/x86_64, CPython 3.11), not the
 # machine running this script, so a lock generated on macOS still installs in
@@ -24,7 +27,18 @@ PLATFORM="x86_64-manylinux_2_28"
 PY_VERSION="3.11"
 ARGS=(--python-platform "$PLATFORM" --python-version "$PY_VERSION" --generate-hashes)
 
-if [[ "${1:-}" == "--upgrade" ]]; then
+UPGRADE_ALL=0
+UPGRADE_PKGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --upgrade) UPGRADE_ALL=1 ;;
+    --upgrade-package) shift; UPGRADE_PKGS+=("$(echo "$1" | tr '[:upper:]_' '[:lower:]-')") ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+if [[ "$UPGRADE_ALL" == 1 ]]; then
   echo "Re-resolving to latest compatible versions (no constraints)."
 else
   if [[ -f requirements.lock ]]; then
@@ -32,6 +46,12 @@ else
     trap 'rm -f "$CONSTRAINTS"' EXIT
     # Strip hashes and comments -> plain name==version constraint lines
     grep -oE '^[A-Za-z0-9._-]+==[A-Za-z0-9._+!-]+' requirements.lock > "$CONSTRAINTS"
+    # Release the pins being upgraded; everything else stays held.
+    for pkg in "${UPGRADE_PKGS[@]+"${UPGRADE_PKGS[@]}"}"; do
+      grep -viE "^${pkg//-/[-_.]}==" "$CONSTRAINTS" > "$CONSTRAINTS.tmp" || true
+      mv "$CONSTRAINTS.tmp" "$CONSTRAINTS"
+      ARGS+=(--upgrade-package "$pkg")
+    done
     echo "Holding $(wc -l < "$CONSTRAINTS" | tr -d ' ') existing pins."
     ARGS+=(--constraint "$CONSTRAINTS")
   fi
