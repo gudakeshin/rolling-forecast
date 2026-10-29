@@ -71,3 +71,6 @@ htmlcov/
 
 frontend/test-results/
 frontend/playwright-report/
+
+# Design reference mockup (not source)
+Rolling Forecast UI Reimagine.zip
