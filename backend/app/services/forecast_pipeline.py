@@ -313,7 +313,7 @@ def _evaluate_arima_exog_modes(
             if bundle_f is not None
             else []
         )
-        if not common:
+        if bundle_f is None or not common:
             mase_forecast.append(float("inf"))
         else:
             try:

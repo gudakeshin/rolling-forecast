@@ -37,7 +37,7 @@ def upgrade() -> None:
         sa.Column("token_hash", sa.String(64), nullable=False, unique=True),
         sa.Column("family_id", sa.String(36), nullable=False),
         sa.Column("expires_at", sa.DateTime(), nullable=False),
-        sa.Column("revoked", sa.Boolean(), server_default=sa.text("0"), nullable=False),
+        sa.Column("revoked", sa.Boolean(), server_default=sa.false(), nullable=False),
         sa.Column("replaced_by", sa.String(36), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=True),
     )

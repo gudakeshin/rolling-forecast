@@ -77,7 +77,7 @@ async def persist_pulled_actuals(
     *,
     actor_id: str | None,
     actor_username: str,
-    business_unit_id: str,
+    business_unit_id: str | None,
     integration_connection_id: str | None = None,
 ) -> dict:
     """Persist a successful `IngestionResult` and run accuracy-snapshot matching.

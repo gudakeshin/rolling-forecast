@@ -17,7 +17,7 @@ injected into every company's chat prompt. They are re-keyed to the company
 of the user who last wrote them; rows whose author has no company stay NULL,
 which the new read rule treats as unreachable (fail closed).
 
-Revision ID: 030_platform_admin_and_oidc_identity
+Revision ID: 030_platform_admin_oidc
 Revises: 029_heuristic_and_memory_scoping
 Create Date: 2026-10-27
 """
@@ -40,7 +40,7 @@ from migration_helpers import (  # noqa: E402
     table_exists,
 )
 
-revision: str = "030_platform_admin_and_oidc_identity"
+revision: str = "030_platform_admin_oidc"
 down_revision: Union[str, None] = "029_heuristic_and_memory_scoping"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

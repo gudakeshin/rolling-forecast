@@ -194,16 +194,16 @@ def _backfill() -> None:
             )
         ).fetchall()
         for version_id, dataset_id in version_rows:
-            bu_id = None
+            version_bu_id: str | None = None
             if dataset_id and table_exists("actuals_datasets"):
                 row = bind.execute(
                     sa.text("SELECT business_unit_id FROM actuals_datasets WHERE id = :id"),
                     {"id": dataset_id},
                 ).first()
-                bu_id = row[0] if row else None
+                version_bu_id = row[0] if row else None
             bind.execute(
                 sa.text("UPDATE forecast_versions SET business_unit_id = :bu_id WHERE id = :id"),
-                {"bu_id": bu_id or default_id, "id": version_id},
+                {"bu_id": version_bu_id or default_id, "id": version_id},
             )
 
 
@@ -221,8 +221,11 @@ def _fix_account_code_uniqueness() -> None:
             old_name = uc["name"] or "uq_line_items_account_code"
             break
     naming_convention = {"uq": "uq_%(table_name)s_%(column_0_name)s"}
+    # "auto": SQLite still gets the copy-and-move it needs to change a
+    # constraint; Postgres gets plain ALTERs instead of a table rebuild, which
+    # would have to drop line_items_pkey out from under every FK pointing at it.
     with op.batch_alter_table(
-        "line_items", recreate="always", naming_convention=naming_convention
+        "line_items", recreate="auto", naming_convention=naming_convention
     ) as batch_op:
         if old_name:
             batch_op.drop_constraint(old_name, type_="unique")

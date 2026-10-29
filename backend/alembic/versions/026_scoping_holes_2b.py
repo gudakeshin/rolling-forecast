@@ -83,8 +83,9 @@ def _fix_model_preset_uniqueness() -> None:
             old_name = uc["name"] or "uq_model_presets_name"
             break
     naming_convention = {"uq": "uq_%(table_name)s_%(column_0_name)s"}
+    # "auto", not "always": see 025_business_unit._fix_account_code_uniqueness.
     with op.batch_alter_table(
-        "model_presets", recreate="always", naming_convention=naming_convention
+        "model_presets", recreate="auto", naming_convention=naming_convention
     ) as batch_op:
         if old_name:
             batch_op.drop_constraint(old_name, type_="unique")

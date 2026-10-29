@@ -253,7 +253,7 @@ class RunEnsembleSkill(BaseSkill):
             weights = self._compute_weights(selected_mapes, weighting)
 
             # Weighted average
-            ensemble_forecast = np.zeros(horizon)
+            ensemble_forecast: np.ndarray = np.zeros(horizon)
             for model_name, forecast in selected.items():
                 w = weights.get(model_name, 0)
                 ensemble_forecast += w * np.array(forecast[:horizon])

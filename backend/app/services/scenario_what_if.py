@@ -43,11 +43,12 @@ def _elasticity_se(link: DriverLink) -> float | None:
     ``None`` when the ratio is not recoverable — no opinion beats a fabricated
     error bar.
     """
-    if link.coefficient_se is None or link.elasticity is None:
+    elasticity, coefficient = link.elasticity, link.coefficient
+    if link.coefficient_se is None or elasticity is None:
         return None
-    if link.coefficient in (None, 0.0):
+    if coefficient is None or coefficient == 0.0:
         return None
-    ratio = abs(float(link.elasticity) / float(link.coefficient))
+    ratio = abs(float(elasticity) / float(coefficient))
     if not math.isfinite(ratio):
         return None
     return abs(float(link.coefficient_se)) * ratio

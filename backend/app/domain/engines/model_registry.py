@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -192,11 +192,11 @@ def _round_fold(v: float | None, digits: int) -> float | None:
     return round(v, digits) if v is not None and np.isfinite(v) else None
 
 
-def _finite_folds(fold_scores: list[float | None]) -> list[float]:
+def _finite_folds(fold_scores: Sequence[float | None]) -> list[float]:
     return [float(s) for s in fold_scores if s is not None and np.isfinite(s)]
 
 
-def _selection_band(fold_scores: list[float | None], n_folds: int) -> float:
+def _selection_band(fold_scores: Sequence[float | None], n_folds: int) -> float:
     """1-SE band from ONE model's own fold scores (unpaired).
 
     Model selection uses ``_paired_band`` instead; this remains for callers

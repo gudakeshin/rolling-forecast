@@ -17,10 +17,11 @@ from app.models.business_unit import BusinessUnit
 from app.models.company import Company
 from app.models.company_membership import CompanyMembership
 from app.models.user import Role, User
+from app.schemas.auth import CompanyMembershipInfo
 from app.services.audit import record_audit
 
 
-def list_memberships(db: Session, user: User) -> list[dict]:
+def list_memberships(db: Session, user: User) -> list[CompanyMembershipInfo]:
     """This user's companies, joined with company/role names, for /auth/me."""
     rows = (
         db.query(CompanyMembership, Company, Role)
@@ -33,12 +34,12 @@ def list_memberships(db: Session, user: User) -> list[dict]:
     out = []
     for membership, company, role in rows:
         bu = db.query(BusinessUnit).filter(BusinessUnit.company_id == company.id).first()
-        out.append({
-            "company_id": company.id,
-            "business_unit_id": bu.id if bu else None,
-            "name": company.name,
-            "role_name": role.name,
-        })
+        out.append(CompanyMembershipInfo(
+            company_id=company.id,
+            business_unit_id=bu.id if bu else None,
+            name=company.name,
+            role_name=role.name,
+        ))
     return out
 
 

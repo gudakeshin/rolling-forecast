@@ -164,7 +164,7 @@ class ARIMAModel(IForecastModel):
 
         if params.get("_failed") or "_params" not in params:
             values = np.asarray(params.get("_values", [0]), dtype=float)
-            forecast = np.full(horizon, values[-1] if len(values) else 0.0)
+            forecast: np.ndarray = np.full(horizon, values[-1] if len(values) else 0.0)
             std = float(np.std(values)) if len(values) > 1 else 1.0
             lower = forecast - 1.28 * std
             upper = forecast + 1.28 * std

@@ -39,7 +39,7 @@ def test_single_base_and_single_head():
     bases = script.get_bases()
     heads = script.get_heads()
     assert bases == ["001_initial"], f"expected single base, got {bases}"
-    assert heads == ["030_platform_admin_and_oidc_identity"], f"expected single head, got {heads}"
+    assert heads == ["030_platform_admin_oidc"], f"expected single head, got {heads}"
 
 
 def test_linear_chain_reachable():
@@ -51,6 +51,14 @@ def test_linear_chain_reachable():
     assert "001_initial" in ids
     rev_001 = script.get_revision("001")
     assert rev_001.down_revision == "001_initial"
+
+
+def test_revision_ids_fit_alembic_version_column():
+    """alembic_version.version_num is VARCHAR(32). SQLite ignores the length;
+    Postgres rejects the stamp and fails the whole upgrade."""
+    script = ScriptDirectory.from_config(Config(str(ALEMBIC_INI)))
+    too_long = [r.revision for r in script.walk_revisions() if len(r.revision) > 32]
+    assert not too_long, f"revision ids over 32 chars: {too_long}"
 
 
 @pytest.fixture

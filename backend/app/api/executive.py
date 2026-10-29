@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import case, false, func
@@ -352,7 +352,7 @@ async def driver_drilldown(
     from app.models.driver_input import DriverInput
     from app.services.variance_attribution import attribute_variance
 
-    version = get_accessible_forecast_version(db, current_user, version_id)
+    get_accessible_forecast_version(db, current_user, version_id)  # 404s if not visible
 
     allowed_ids = allowed_line_item_ids(db, current_user)
     overrides = db.query(Override).filter(

@@ -183,17 +183,18 @@ def _repair_line_items() -> None:
 
     # sign_convention: Integer(B) → String(A/model)
     if column_exists("line_items", "sign_convention"):
-        # Best-effort: if values look numeric, remap. SQLite stores loosely.
+        # Best-effort: if values look numeric, remap. Compare as text so the
+        # same SQL works on SQLite (loose types) and Postgres (varchar = int errors).
         op.execute(
             sa.text(
                 "UPDATE line_items SET sign_convention = 'positive' "
-                "WHERE sign_convention IN ('1', '1.0', 1)"
+                "WHERE CAST(sign_convention AS TEXT) IN ('1', '1.0')"
             )
         )
         op.execute(
             sa.text(
                 "UPDATE line_items SET sign_convention = 'negative' "
-                "WHERE sign_convention IN ('-1', '-1.0', -1)"
+                "WHERE CAST(sign_convention AS TEXT) IN ('-1', '-1.0')"
             )
         )
 

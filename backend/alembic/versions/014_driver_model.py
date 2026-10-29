@@ -38,16 +38,15 @@ def upgrade() -> None:
         sa.Column("can_manage_drivers", sa.Boolean(), nullable=False, server_default=sa.false()),
     )
     # Seed admin + analyst (and reviewer/publisher who already can_override)
-    bind = op.get_bind()
-    try:
-        bind.execute(
-            text(
-                "UPDATE roles SET can_manage_drivers = 1 "
-                "WHERE name IN ('admin', 'analyst', 'reviewer', 'publisher')"
-            )
-        )
-    except Exception:
-        pass
+    # Bound boolean, not a literal 1: Postgres rejects boolean = integer, and a
+    # swallowed failure here aborts the rest of the transaction.
+    op.get_bind().execute(
+        text(
+            "UPDATE roles SET can_manage_drivers = :t "
+            "WHERE name IN ('admin', 'analyst', 'reviewer', 'publisher')"
+        ),
+        {"t": True},
+    )
 
     create_table_if_missing(
         "drivers",

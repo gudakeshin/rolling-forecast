@@ -61,9 +61,9 @@ def set_tenant_setting(
         db.flush()
         return
 
-    row = db.query(SystemSetting).filter(SystemSetting.key == key).first()
-    if row:
-        row.value = value
+    sys_row = db.query(SystemSetting).filter(SystemSetting.key == key).first()
+    if sys_row:
+        sys_row.value = value
     else:
         db.add(SystemSetting(key=key, value=value))
     db.flush()

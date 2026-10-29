@@ -204,6 +204,8 @@ async def grant_user_membership(
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
     target = db.query(User).filter(User.id == user_id).first()
+    if target is None:
+        raise HTTPException(404, "User not found")
     return list_memberships(db, target)
 
 

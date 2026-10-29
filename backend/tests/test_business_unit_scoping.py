@@ -794,9 +794,9 @@ def test_grant_membership_and_list(db_session, two_companies, seed_roles):
         actor=admin,
     )
 
-    memberships = {m["name"]: m for m in list_memberships(db_session, user_a)}
+    memberships = {m.name: m for m in list_memberships(db_session, user_a)}
     assert set(memberships) == {"Company A", "Company B"}
-    assert memberships["Company A"]["role_name"] == "analyst"
-    assert memberships["Company B"]["role_name"] == "admin"
-    assert memberships["Company A"]["business_unit_id"] == two_companies["company_a"].id
-    assert memberships["Company B"]["business_unit_id"] == two_companies["company_b"].id
+    assert memberships["Company A"].role_name == "analyst"
+    assert memberships["Company B"].role_name == "admin"
+    assert memberships["Company A"].business_unit_id == two_companies["company_a"].id
+    assert memberships["Company B"].business_unit_id == two_companies["company_b"].id

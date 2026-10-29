@@ -214,7 +214,7 @@ class ETSModel(IForecastModel):
 
         if params.get("_fallback") or "_params" not in params:
             level = float(params.get("last_level", values[-1] if len(values) else 0.0))
-            forecast = np.full(horizon, level, dtype=float)
+            forecast: np.ndarray = np.full(horizon, level, dtype=float)
             sd = float(params.get("residual_std") or 0.0)
             widths = 1.28 * sd * np.sqrt(np.arange(1, horizon + 1))
             return ForecastOutput(
