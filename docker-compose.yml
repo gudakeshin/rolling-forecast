@@ -99,6 +99,31 @@ services:
     profiles: ["redis"]
     restart: unless-stopped
 
+  # Short background tasks (integration pulls, document indexing, board-pack
+  # email, rescore, reflection) on their own queue, so a long forecast on the
+  # single-slot worker above never blocks them.
+  task-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: forecast-task-worker
+    env_file:
+      - ./backend/.env
+    environment:
+      - APP_ENV=development
+      - DATABASE_URL=sqlite:///./rolling_forecast.db
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    volumes:
+      - ./backend/app:/app/app
+      - forecast-db:/app/data
+      - forecast-uploads:/app/uploads
+    command: arq app.workers.arq_worker.TaskWorkerSettings
+    depends_on:
+      redis:
+        condition: service_healthy
+    profiles: ["redis"]
+    restart: unless-stopped
+
   frontend:
     build:
       context: ./frontend

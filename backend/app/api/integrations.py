@@ -6,7 +6,7 @@ import csv
 import io
 import logging
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -16,11 +16,9 @@ from app.models.integration import IntegrationConnection
 from app.models.line_item import LineItem
 from app.models.user import User
 from app.rate_limit import limiter
-from app.services.actuals_ingest import persist_pulled_actuals
 from app.services.audit import record_audit
-from app.services.ingestion.erp_adapter import get_actuals_provider
+from app.services.background_tasks import dispatch_task
 from app.services.permissions import require_permission
-from app.services.secret_box import decrypt_secret
 
 logger = logging.getLogger(__name__)
 
@@ -58,44 +56,18 @@ def _load_connection(db: Session, connection_id: str, kind: str) -> IntegrationC
 @limiter.limit("20/minute")
 async def pull_warehouse(
     request: Request,
+    response: Response,
     body: WarehousePullRequest,
+    async_job: bool | None = Query(None, description="Run in the background (default when a queue is configured)"),
     current_user: User = Depends(require_permission("generate")),
     db: Session = Depends(get_db),
 ):
     _ = request  # required by slowapi
-    conn = _load_connection(db, body.connection_id, "warehouse")
-    try:
-        url = decrypt_secret(conn.encrypted_url)
-    except ValueError as e:
-        raise HTTPException(500, str(e)) from e
-
-    provider = get_actuals_provider("warehouse", connection_url=url)
-    result = await provider.pull_actuals({
-        "query": body.query,
-        "source_name": body.source_name,
-    })
-    if not result.success and result.error and "Only SELECT" in result.error:
-        raise HTTPException(400, result.error)
-    if not result.success and result.error and "single SELECT" in result.error:
-        raise HTTPException(400, result.error)
-    if not result.success and result.error and "Forbidden SQL" in result.error:
-        raise HTTPException(400, result.error)
-
-    record_audit(
-        db,
-        action="integrations.warehouse_pull",
-        entity_type="integration_connection",
-        entity_id=conn.id,
-        actor_id=current_user.id,
-        actor_username=current_user.username,
-        details={"connection_name": conn.name, "success": result.success},
-        commit=False,
-    )
-    return await persist_pulled_actuals(
-        db, result, "warehouse", body.source_name,
-        actor_id=current_user.id, actor_username=current_user.username,
-        integration_connection_id=conn.id,
-        business_unit_id=conn.business_unit_id,
+    _load_connection(db, body.connection_id, "warehouse")
+    return await dispatch_task(
+        "integration_pull",
+        {"kind": "warehouse", **body.model_dump()},
+        db=db, actor=current_user, async_job=async_job, response=response,
     )
 
 
@@ -103,38 +75,18 @@ async def pull_warehouse(
 @limiter.limit("20/minute")
 async def pull_erp(
     request: Request,
+    response: Response,
     body: ERPPullRequest,
+    async_job: bool | None = Query(None, description="Run in the background (default when a queue is configured)"),
     current_user: User = Depends(require_permission("generate")),
     db: Session = Depends(get_db),
 ):
     _ = request  # required by slowapi
-    conn = _load_connection(db, body.connection_id, "erp")
-    try:
-        base_url = decrypt_secret(conn.encrypted_url)
-        token = decrypt_secret(conn.encrypted_token) if conn.encrypted_token else None
-    except ValueError as e:
-        raise HTTPException(500, str(e)) from e
-
-    provider = get_actuals_provider("erp", base_url=base_url, token=token)
-    result = await provider.pull_actuals({
-        "relative_path": body.relative_path,
-        "source_name": body.source_name,
-    })
-    record_audit(
-        db,
-        action="integrations.erp_pull",
-        entity_type="integration_connection",
-        entity_id=conn.id,
-        actor_id=current_user.id,
-        actor_username=current_user.username,
-        details={"connection_name": conn.name, "path": body.relative_path, "success": result.success},
-        commit=False,
-    )
-    return await persist_pulled_actuals(
-        db, result, "erp", body.source_name,
-        actor_id=current_user.id, actor_username=current_user.username,
-        integration_connection_id=conn.id,
-        business_unit_id=conn.business_unit_id,
+    _load_connection(db, body.connection_id, "erp")
+    return await dispatch_task(
+        "integration_pull",
+        {"kind": "erp", **body.model_dump()},
+        db=db, actor=current_user, async_job=async_job, response=response,
     )
 
 

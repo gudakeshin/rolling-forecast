@@ -361,3 +361,48 @@ def test_child_filtered_by_other_companys_parent_fk_returns_nothing(client):
         assert rows == []
     finally:
         db.close()
+
+
+def test_scope_without_a_company_sees_no_company_less_rows(client):
+    """A user assigned to no company must see nothing company-owned. Comparing
+    business_unit_id to None used to compile to IS NULL and expose every
+    legacy row that has no company."""
+    import uuid
+
+    from app.database import SessionLocal
+    from app.models.forecast import ForecastLineResult, ForecastVersion
+    from app.models.line_item import LineItem
+    from app.models.model_preset import ModelPreset
+    from app.services.tenant_scope import (
+        UNRESTRICTED,
+        TenantScope,
+        push_tenant_scope,
+        reset_tenant_scope,
+    )
+
+    tag = uuid.uuid4().hex[:8]
+    db = SessionLocal()
+    token = push_tenant_scope(UNRESTRICTED)
+    try:
+        li = LineItem(account_code=f"NOCO-{tag}", name="No company", category="Revenue")
+        version = ForecastVersion(name=f"No company {tag}")
+        preset = ModelPreset(name=f"Global {tag}", model_type="auto")
+        db.add_all([li, version, preset])
+        db.flush()
+        db.add(ForecastLineResult(version_id=version.id, line_item_id=li.id, period="2026-01", p50=1.0))
+        db.commit()
+        ids = (li.id, version.id, preset.id)
+    finally:
+        reset_tenant_scope(token)
+
+    token = push_tenant_scope(TenantScope(unrestricted=False, business_unit_id=None))
+    try:
+        db.expire_all()
+        assert db.query(LineItem).filter(LineItem.id == ids[0]).first() is None
+        assert db.query(ForecastVersion).filter(ForecastVersion.id == ids[1]).first() is None
+        assert db.query(ForecastLineResult).filter(ForecastLineResult.version_id == ids[1]).all() == []
+        # The global preset catalog stays visible.
+        assert db.query(ModelPreset).filter(ModelPreset.id == ids[2]).first() is not None
+    finally:
+        reset_tenant_scope(token)
+        db.close()

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -21,7 +21,6 @@ from app.services.reflection import (
     influences_selection,
     promote_heuristic,
     reject_heuristic,
-    run_reflection_pass,
 )
 
 router = APIRouter(prefix="/heuristics", tags=["heuristics"])
@@ -116,7 +115,9 @@ async def list_heuristics(
 
 @router.post("/run")
 async def run_reflection(
+    response: Response,
     body: ReflectionRunRequest | None = None,
+    async_job: bool | None = Query(None, description="Run in the background (default when a queue is configured)"),
     current_user: User = Depends(_require_reviewer),
     db: Session = Depends(get_db),
 ):
@@ -126,16 +127,18 @@ async def run_reflection(
         invalid = [k for k in kinds if k not in HEURISTIC_KINDS]
         if invalid:
             raise HTTPException(400, f"Invalid kinds: {invalid}")
-    business_unit_id = _resolve_run_business_unit(current_user, payload.business_unit_id)
-    summary = run_reflection_pass(
-        db,
-        actor=current_user,
-        business_unit_id=business_unit_id,
-        min_cycles=payload.min_cycles,
-        max_candidates=payload.max_candidates,
-        kinds=kinds,
+    from app.services.background_tasks import dispatch_task
+
+    return await dispatch_task(
+        "reflection_run",
+        {
+            "business_unit_id": _resolve_run_business_unit(current_user, payload.business_unit_id),
+            "min_cycles": payload.min_cycles,
+            "max_candidates": payload.max_candidates,
+            "kinds": kinds,
+        },
+        db=db, actor=current_user, async_job=async_job, response=response,
     )
-    return summary
 
 
 @router.post("/{heuristic_id}/promote")

@@ -458,54 +458,17 @@ class DistributeRequest(BaseModel):
 @router.post("/distribute")
 async def distribute_pack(
     body: DistributeRequest,
+    response: Response,
+    async_job: bool | None = Query(None, description="Render and send in the background (default when a queue is configured)"),
     current_user: User = Depends(require_permission("publish")),
     db: Session = Depends(get_db),
 ):
-    """Email board pack to recipients (SMTP). Records audit even if SMTP not configured."""
-    version = get_accessible_forecast_version(db, current_user, body.version_id)
+    """Email the board pack to recipients (SMTP). Audited even if SMTP is not configured."""
+    from app.services.background_tasks import dispatch_task
 
-    if body.format == "pptx":
-        data = build_board_pack_pptx(db, version)
-        filename = f"{version.name}_board_pack.pptx"
-    else:
-        data = build_board_pack_pdf(db, version)
-        filename = f"{version.name}_board_pack.pdf"
-
-    sent = False
-    error = None
-    if settings.smtp_host:
-        try:
-            import smtplib
-            from email.message import EmailMessage
-
-            msg = EmailMessage()
-            msg["Subject"] = body.subject or f"Forecast Board Pack: {version.name}"
-            msg["From"] = settings.distribution_from_email
-            msg["To"] = ", ".join(body.recipients)
-            msg.set_content(body.message or f"Attached is the board pack for {version.name}.")
-            maintype = "application"
-            subtype = "pdf" if body.format == "pdf" else "vnd.openxmlformats-officedocument.presentationml.presentation"
-            msg.add_attachment(data, maintype=maintype, subtype=subtype, filename=filename)
-
-            with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as smtp:
-                smtp.starttls()
-                if settings.smtp_user:
-                    smtp.login(settings.smtp_user, settings.smtp_password)
-                smtp.send_message(msg)
-            sent = True
-        except Exception as e:
-            error = str(e)
-    else:
-        error = "SMTP not configured; pack generated but not emailed"
-
-    record_audit(
-        db,
-        action="executive.distribute",
-        entity_type="forecast_version",
-        entity_id=body.version_id,
-        actor_id=current_user.id,
-        actor_username=current_user.username,
-        details={"recipients": body.recipients, "sent": sent, "error": error},
-        commit=True,
+    get_accessible_forecast_version(db, current_user, body.version_id)  # 404 before queuing
+    return await dispatch_task(
+        "board_pack_distribute",
+        body.model_dump(mode="json"),
+        db=db, actor=current_user, async_job=async_job, response=response,
     )
-    return {"success": sent, "filename": filename, "error": error, "bytes": len(data)}

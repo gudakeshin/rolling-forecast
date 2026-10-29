@@ -164,16 +164,20 @@ def register(session_factory) -> None:
         # deliberately NOT the same as unrestricted -- it must deny, not
         # allow, or an unscoped context (e.g. a background job that forgot
         # to push a scope) would see everything instead of nothing.
+        #
+        # A pushed scope with no company (a user assigned to none) denies
+        # too. Comparing to None would compile to `IS NULL` and hand that
+        # user every company-less legacy row instead of nothing.
+        bu = scope.business_unit_id if scope is not None else None
+        denied = bu is None
         for cls in plain_scoped_models:
-            criteria = false() if scope is None else cls.business_unit_id == scope.business_unit_id
+            criteria = false() if denied else cls.business_unit_id == bu
             orm_execute_state.statement = orm_execute_state.statement.options(
                 with_loader_criteria(cls, criteria, include_aliases=True)
             )
 
         for child, fk, parent in child_scoped_models:
-            criteria = (
-                false() if scope is None else fk.in_(_owned_ids(parent, scope.business_unit_id))
-            )
+            criteria = false() if denied else fk.in_(_owned_ids(parent, bu))
             orm_execute_state.statement = orm_execute_state.statement.options(
                 with_loader_criteria(child, criteria, include_aliases=True)
             )
@@ -181,12 +185,10 @@ def register(session_factory) -> None:
         # ModelMetadata is a grandchild: line result -> version -> company.
         metadata_criteria = (
             false()
-            if scope is None
+            if denied
             else ModelMetadata.line_result_id.in_(
                 select(ForecastLineResult.id).where(
-                    ForecastLineResult.version_id.in_(
-                        _owned_ids(ForecastVersion, scope.business_unit_id)
-                    )
+                    ForecastLineResult.version_id.in_(_owned_ids(ForecastVersion, bu))
                 )
             )
         )
@@ -197,15 +199,17 @@ def register(session_factory) -> None:
         # ModelPreset: NULL business_unit_id is the global catalog, visible
         # to every company -- see app/services/model_presets.py. Still
         # deny-all (not "show only globals") when scope is None, matching
-        # every other scoped model's fail-closed default.
-        preset_criteria = (
-            false()
-            if scope is None
-            else or_(
-                ModelPreset.business_unit_id == scope.business_unit_id,
+        # every other scoped model's fail-closed default; a company-less
+        # user sees only the globals.
+        if scope is None:
+            preset_criteria = false()
+        elif bu is None:
+            preset_criteria = ModelPreset.business_unit_id.is_(None)
+        else:
+            preset_criteria = or_(
+                ModelPreset.business_unit_id == bu,
                 ModelPreset.business_unit_id.is_(None),
             )
-        )
         orm_execute_state.statement = orm_execute_state.statement.options(
             with_loader_criteria(ModelPreset, preset_criteria, include_aliases=True)
         )

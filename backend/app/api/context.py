@@ -3,7 +3,7 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -38,15 +38,21 @@ class SearchRequest(BaseModel):
 
 @router.post("/upload")
 async def upload_document(
+    response: Response,
     file: UploadFile = File(...),
     scope: str = Form("user"),
     conversation_id: Optional[str] = Form(None),
     tags: str = Form(""),
+    async_job: Optional[bool] = Query(None, description="Index in the background (default when a queue is configured)"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Upload a document to the context engine for RAG indexing.
-    
+
+    The file is saved straight away; indexing (extract, chunk, embed) runs in
+    the background when a queue is configured, leaving the document in
+    ``processing`` with a ``job_id`` to poll.
+
     Supports: PDF, DOCX, PPTX, XLSX, CSV, TXT, HTML, MD
     """
     allowed_extensions = {
@@ -64,7 +70,9 @@ async def upload_document(
 
     tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
 
-    doc = await context_engine.upload_document(
+    from app.services.background_tasks import dispatch_task
+
+    doc, file_path = await context_engine.save_uploaded_document(
         db=db,
         file=file,
         user_id=current_user.id,
@@ -72,8 +80,22 @@ async def upload_document(
         conversation_id=conversation_id,
         tags=tag_list,
     )
+    try:
+        job = await dispatch_task(
+            "document_embedding",
+            {"document_id": doc.id, "file_path": file_path},
+            db=db, actor=current_user, async_job=async_job, response=response,
+        )
+    except HTTPException as e:
+        # Never leave a saved document stuck in "processing" with nothing to process it.
+        doc.status = "failed"
+        doc.error_message = str(e.detail)[:500]
+        db.commit()
+        raise
+    db.refresh(doc)
 
     return {
+        **({"job_id": job["job_id"]} if "job_id" in job else {}),
         "id": doc.id,
         "original_name": doc.original_name,
         "file_type": doc.file_type,

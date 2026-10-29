@@ -227,6 +227,8 @@ def test_effective_selection_rule(monkeypatch):
 @pytest.mark.asyncio
 async def test_rescore_all_skips_mismatched_rule(db_session, seed_users, seed_line_items, monkeypatch):
     from app.config import settings
+    from fastapi import Response
+
     from app.api.dashboard import rescore_all_forecasts
     from app.domain.engines.model_registry import effective_selection_rule
 
@@ -273,12 +275,16 @@ async def test_rescore_all_skips_mismatched_rule(db_session, seed_users, seed_li
         )
     db_session.commit()
 
-    result = await rescore_all_forecasts(force=False, current_user=admin, db=db_session)
+    result = await rescore_all_forecasts(
+        response=Response(), force=False, async_job=False, current_user=admin, db=db_session
+    )
     assert result["versions_skipped"] >= 1
     old = db_session.query(ForecastLineResult).filter_by(id="flr-sel-old").one()
     assert old.confidence_score == 0.0
 
-    result_force = await rescore_all_forecasts(force=True, current_user=admin, db=db_session)
+    result_force = await rescore_all_forecasts(
+        response=Response(), force=True, async_job=False, current_user=admin, db=db_session
+    )
     assert result_force["forced"] is True
     db_session.refresh(old)
     assert old.confidence_score > 0

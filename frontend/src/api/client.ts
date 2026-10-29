@@ -133,6 +133,35 @@ export async function uploadFile(url: string, file: File): Promise<any> {
   return response.json();
 }
 
+interface QueuedJob {
+  job_id: string;
+  status: 'queued';
+  kind?: string;
+}
+
+function isQueuedJob(value: unknown): value is QueuedJob {
+  return Boolean(value && typeof value === 'object' && 'job_id' in value && (value as QueuedJob).status === 'queued');
+}
+
+/** Endpoints that may hand slow work to the background queue answer either
+ * with their result (inline) or `{job_id, status: 'queued'}` (HTTP 202). This
+ * returns the result either way, polling GET /jobs/{id} until it settles. */
+export async function awaitJob<T>(
+  response: T | QueuedJob,
+  opts: { intervalMs?: number; timeoutMs?: number } = {},
+): Promise<T> {
+  if (!isQueuedJob(response)) return response as T;
+  const interval = opts.intervalMs ?? 1500;
+  const deadline = Date.now() + (opts.timeoutMs ?? 10 * 60_000);
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, interval));
+    const job = await apiGet<{ status: string; result?: T; error?: string }>(`/jobs/${response.job_id}`);
+    if (job.status === 'completed') return job.result as T;
+    if (job.status === 'failed') throw new Error(job.error || 'Background job failed');
+  }
+  throw new Error('Background job is still running; check notifications for the result');
+}
+
 /** Download an authenticated file response (e.g. a server-side export) by name. */
 export async function apiDownload(url: string, filename: string): Promise<void> {
   const response = await fetchApi(url);

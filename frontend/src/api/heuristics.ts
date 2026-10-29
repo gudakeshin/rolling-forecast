@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from './client';
+import { apiGet, apiPost, awaitJob } from './client';
 
 export type HeuristicStatus = 'candidate' | 'active' | 'rejected' | 'superseded';
 export type HeuristicKind = 'error_bias' | 'override_pattern';
@@ -59,7 +59,7 @@ export async function runReflectionPass(payload?: {
   max_candidates?: number;
   kinds?: HeuristicKind[];
 }): Promise<ReflectionRunSummary> {
-  return apiPost('/heuristics/run', payload || {});
+  return awaitJob<ReflectionRunSummary>(await apiPost('/heuristics/run', payload || {}));
 }
 
 export async function promoteHeuristic(id: number): Promise<LearnedHeuristic> {

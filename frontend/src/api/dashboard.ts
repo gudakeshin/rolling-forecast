@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from './client';
+import { apiGet, apiPost, awaitJob } from './client';
 
 // ─── Dashboard API Module ────────────────────────────────
 
@@ -87,7 +87,7 @@ export async function rescoreForecasts(versionId: string): Promise<any> {
 }
 
 export async function rescoreAll(): Promise<any> {
-  return apiPost('/panel/rescore-all', {});
+  return awaitJob(await apiPost('/panel/rescore-all', {}));
 }
 
 // ─── Accuracy Tracking ───────────────────────────────────
