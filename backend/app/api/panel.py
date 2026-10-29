@@ -180,6 +180,49 @@ async def delete_version(
     return {"id": version_id, "status": "deleted"}
 
 
+@router.get("/forecast-table/{version_id}/export")
+async def export_forecast_version(
+    version_id: str,
+    format: str = Query("csv", pattern="^(csv|xlsx)$"),
+    category: str | None = Query(None),
+    confidence_level: str | None = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Every line x period of a version (not just the loaded page), as CSV or XLSX."""
+    from fastapi.responses import Response
+
+    from app.services.forecast_export import export_rows, to_csv, to_xlsx
+
+    version = get_accessible_forecast_version(db, current_user, version_id)
+    rows = export_rows(
+        db, version, current_user, category=category, confidence_level=confidence_level
+    )
+    safe_name = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in version.name) or "forecast"
+    if format == "xlsx":
+        content = to_xlsx(rows, sheet_title=version.name)
+        media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    else:
+        content = to_csv(rows)
+        media = "text/csv; charset=utf-8"
+    record_audit(
+        db,
+        action="forecast.export",
+        entity_type="forecast_version",
+        entity_id=version.id,
+        actor_id=current_user.id,
+        actor_username=current_user.username,
+        details={"format": format, "rows": len(rows), "category": category,
+                 "confidence_level": confidence_level},
+        commit=True,
+    )
+    return Response(
+        content=content,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}.{format}"'},
+    )
+
+
 @router.get("/forecast-table/{version_id}", response_model=PanelDataResponse)
 async def get_forecast_table(
     version_id: str,

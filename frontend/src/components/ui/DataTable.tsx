@@ -32,6 +32,27 @@ export interface DataTableColumn<T extends Record<string, unknown> = Record<stri
   total?: boolean;
   /** Override how this cell is serialized for CSV/XLSX/clipboard. */
   exportValue?: (value: unknown, row: T) => string | number | null;
+  /** Conditional-format tint by size, scaled to the column's largest absolute
+   * value. Sign-neutral on purpose: a positive variance is good on revenue and
+   * bad on cost, so color shows where the big moves are, not their direction.
+   * Ignored on pinned columns. */
+  heatmap?: boolean;
+}
+
+const HEAT_MAX_ALPHA = 0.28;
+
+function heatValue(value: unknown): number {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string' && value.trim() !== '') return Number(value);
+  return Number.NaN;
+}
+
+/** Background for a heatmapped cell, or undefined for non-numeric / zero. */
+export function heatmapBackground(value: unknown, maxAbs: number): string | undefined {
+  const n = heatValue(value);
+  if (!Number.isFinite(n) || n === 0 || !(maxAbs > 0)) return undefined;
+  const alpha = (Math.min(Math.abs(n) / maxAbs, 1) * HEAT_MAX_ALPHA).toFixed(3);
+  return `rgba(184, 121, 46, ${alpha})`; // chartTheme warning
 }
 
 interface Props<T extends Record<string, unknown>> {
@@ -188,6 +209,21 @@ export function DataTable<T extends Record<string, unknown>>({
       return next.size === prev.size ? prev : next;
     });
   }, [filteredRows, selectable, rowKey]);
+
+  // Per-column scale for heatmapped columns, over the rows currently shown.
+  const heatmapMax = useMemo(() => {
+    const out = new Map<string, number>();
+    for (const col of columns) {
+      if (!col.heatmap || col.pinned) continue;
+      let max = 0;
+      for (const row of filteredRows) {
+        const v = heatValue((row as Record<string, unknown>)[col.key]);
+        if (Number.isFinite(v)) max = Math.max(max, Math.abs(v));
+      }
+      out.set(col.key, max);
+    }
+    return out;
+  }, [columns, filteredRows]);
 
   const pinnedOffsets = useMemo(() => {
     const offsets = new Map<string, number>();
@@ -402,7 +438,19 @@ export function DataTable<T extends Record<string, unknown>>({
                   col ?? ({} as DataTableColumn<T>),
                   'px-3 py-1.5 text-surface-200 whitespace-nowrap',
                 )}
-                style={col ? pinnedStyle(col, false) : undefined}
+                style={
+                  col?.heatmap && !col.pinned
+                    ? {
+                        ...pinnedStyle(col, false),
+                        backgroundColor: heatmapBackground(
+                          (original as Record<string, unknown>)[col.key],
+                          heatmapMax.get(col.key) ?? 0,
+                        ),
+                      }
+                    : col
+                      ? pinnedStyle(col, false)
+                      : undefined
+                }
               >
                 {flexRender(cell.column.columnDef.cell, cell.getContext())}
               </td>

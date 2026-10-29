@@ -133,4 +133,19 @@ export async function uploadFile(url: string, file: File): Promise<any> {
   return response.json();
 }
 
+/** Download an authenticated file response (e.g. a server-side export) by name. */
+export async function apiDownload(url: string, filename: string): Promise<void> {
+  const response = await fetchApi(url);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Download failed' }));
+    throw new Error(error.detail || 'Download failed');
+  }
+  const blobUrl = URL.createObjectURL(await response.blob());
+  const a = document.createElement('a');
+  a.href = blobUrl;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(blobUrl);
+}
+
 export { fetchApi, tryRefreshAccessToken };

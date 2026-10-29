@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
 import { axe } from 'vitest-axe';
-import { DataTable, type DataTableColumn } from './DataTable';
+import { DataTable, heatmapBackground, type DataTableColumn } from './DataTable';
 
 interface Row extends Record<string, unknown> {
   id: string;
@@ -249,5 +249,16 @@ describe('DataTable', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
     await waitFor(() => expect(writeText).toHaveBeenCalled());
     expect(writeText.mock.calls[0][0]).toContain('$100');
+  });
+});
+
+describe('heatmapBackground', () => {
+  it('scales by magnitude regardless of sign and skips non-numbers', () => {
+    expect(heatmapBackground(10, 10)).toBe('rgba(184, 121, 46, 0.280)');
+    expect(heatmapBackground(-5, 10)).toBe('rgba(184, 121, 46, 0.140)');
+    expect(heatmapBackground('5', 10)).toBe('rgba(184, 121, 46, 0.140)');
+    expect(heatmapBackground(0, 10)).toBeUndefined();
+    expect(heatmapBackground('n/a', 10)).toBeUndefined();
+    expect(heatmapBackground(3, 0)).toBeUndefined();
   });
 });

@@ -102,7 +102,9 @@ def test_budget_bridge_attribute_returns_explained_pct(client):
 
     headers = _auth(client)
     r = client.get(
-        f"/api/executive/budget-bridge/{version_id}?attribute=true&page_size=50&materiality_pct=0",
+        # One page for every line: the bridge lists all line items the admin can
+        # see, and other tests share this DB, so this line may not be in the first 50.
+        f"/api/executive/budget-bridge/{version_id}?attribute=true&page_size=100000&materiality_pct=0",
         headers=headers,
     )
     assert r.status_code == 200, r.text

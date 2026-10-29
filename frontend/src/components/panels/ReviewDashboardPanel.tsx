@@ -17,6 +17,7 @@ import { batchReview, undoReview } from '../../api/dashboard';
 import { usePanelStore } from '../../store/panelStore';
 import { useCan } from '../../store/authStore';
 import { toast } from '../../store/toastStore';
+import { confirmDialog } from '../../store/confirmStore';
 import { downloadCsv } from '../ui/DataTable';
 import { dispatchRecommendedAction } from '../../utils/recommendedActions';
 import { chartTheme } from '../../theme/chartTheme';
@@ -454,6 +455,53 @@ function BusinessAnalysisSummary({ buckets }: {
 
 // ─── Review Item Row ───────────────────────────────
 
+/** "A, B, C and 4 more" — what a batch action is about to touch, for its preview. */
+export function previewLines(names: string[], max = 6): string {
+  if (names.length <= max) return names.join(', ');
+  return `${names.slice(0, max).join(', ')} and ${names.length - max} more`;
+}
+
+export type ReviewShortcut = 'approve' | 'reject' | 'select' | 'next' | 'prev';
+
+/** Row-level review shortcuts. None fire while typing in a field or with a
+ * modifier held, so ⌘K and browser shortcuts keep working. */
+export function reviewShortcutFor(e: {
+  key: string;
+  target: EventTarget | null;
+  metaKey?: boolean;
+  ctrlKey?: boolean;
+  altKey?: boolean;
+}): ReviewShortcut | null {
+  if (e.metaKey || e.ctrlKey || e.altKey) return null;
+  const el = e.target as HTMLElement | null;
+  const tag = el?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable) return null;
+  switch (e.key) {
+    case 'a':
+      return 'approve';
+    case 'r':
+      return 'reject';
+    case 'x':
+      return 'select';
+    case 'j':
+    case 'ArrowDown':
+      return 'next';
+    case 'k':
+    case 'ArrowUp':
+      return 'prev';
+    default:
+      return null;
+  }
+}
+
+/** Move focus to the previous/next row's main button within the same list. */
+function focusSiblingRow(from: HTMLElement, step: 1 | -1) {
+  const rows = Array.from(
+    from.closest('[data-review-list]')?.querySelectorAll<HTMLElement>('[data-review-row]') ?? [],
+  );
+  rows[rows.indexOf(from) + step]?.focus();
+}
+
 function ReviewItemRow({
   item,
   onAction,
@@ -485,6 +533,12 @@ function ReviewItemRow({
   const [isSaving, setIsSaving] = useState(false);
   const [savedValue, setSavedValue] = useState<number | null>(null);
   const editRef = useRef<HTMLInputElement>(null);
+  const commentRef = useRef<HTMLInputElement>(null);
+
+  // The reason box only opens on an explicit reject (click or R), so take focus.
+  useEffect(() => {
+    if (commenting) commentRef.current?.focus();
+  }, [commenting]);
 
   useEffect(() => {
     if (autoExpand) setExpanded(true);
@@ -535,6 +589,22 @@ function ReviewItemRow({
   const displayValue = savedValue ?? item.avg_p50;
   const wasOverridden = savedValue !== null;
   const driverCtx = item.driver_context;
+  const isReviewed = item.review_status === 'approved' || item.review_status === 'rejected';
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
+    const shortcut = reviewShortcutFor(e);
+    if (!shortcut) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (shortcut === 'next' || shortcut === 'prev') {
+      focusSiblingRow(e.currentTarget, shortcut === 'next' ? 1 : -1);
+    } else if (shortcut === 'select') {
+      if (selectable) onToggleSelect?.(item.id);
+    } else if (!isReviewed && !isLoading) {
+      if (shortcut === 'approve') onAction(item.id, 'approve');
+      else setCommenting(true);
+    }
+  };
 
   return (
     <div
@@ -555,8 +625,11 @@ function ReviewItemRow({
         )}
         <button
           type="button"
-          className="flex items-center gap-2 flex-1 min-w-0 text-left"
+          className="flex items-center gap-2 flex-1 min-w-0 text-left rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-deloitte-green/50"
           onClick={() => setExpanded(!expanded)}
+          onKeyDown={handleKeyDown}
+          data-review-row
+          aria-keyshortcuts="A R X J K ArrowDown ArrowUp"
           aria-expanded={expanded}
         >
           <span className="flex-shrink-0 text-surface-500" aria-hidden="true">
@@ -929,6 +1002,8 @@ function ReviewItemRow({
               value={comment}
               onChange={(e) => setComment(e.target.value)}
               placeholder="Rejection reason..."
+              ref={commentRef}
+              aria-label={`Rejection reason for ${item.line_item_name}`}
               className="flex-1 px-2 py-1 bg-surface-800 border border-surface-600 rounded text-xs text-white placeholder-surface-500 focus:outline-none focus:border-amber-500/50"
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && comment.trim()) {
@@ -1082,6 +1157,16 @@ export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props
   }, [moveItemsToReviewed, handleUndo]);
 
   const handleAcceptAll = useCallback(async () => {
+    const pending = localBuckets.ai_approved;
+    const ok = await confirmDialog(
+      `${previewLines(pending.items.map((i: ReviewItem) => i.line_item_name))}. ` +
+        'You can undo this for a few seconds afterwards.',
+      {
+        title: `Accept ${pending.total} AI-approved line${pending.total === 1 ? '' : 's'}?`,
+        confirmLabel: `Approve ${pending.total}`,
+      },
+    );
+    if (!ok) return;
     setIsAcceptingAll(true);
     try {
       const res = await apiPost<{ undo_token?: string; approved_count?: number }>(
@@ -1116,7 +1201,7 @@ export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props
     } finally {
       setIsAcceptingAll(false);
     }
-  }, [version.id, handleUndo]);
+  }, [version.id, handleUndo, localBuckets.ai_approved]);
 
   const selectableBucket = activeBucket === 'flagged' || activeBucket === 'needs_review';
   const activeItems = localBuckets[activeBucket].items;
@@ -1165,6 +1250,19 @@ export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props
     }
     const ids = Array.from(selectedIds);
     if (!ids.length) return;
+    const verb = action === 'approve' ? 'Approve' : 'Reject';
+    const names = displayItems
+      .filter((i: ReviewItem) => selectedIds.has(i.id))
+      .map((i: ReviewItem) => i.line_item_name);
+    const ok = await confirmDialog(
+      `${previewLines(names)}. You can undo this for a few seconds afterwards.`,
+      {
+        title: `${verb} ${ids.length} line${ids.length === 1 ? '' : 's'}?`,
+        confirmLabel: `${verb} ${ids.length}`,
+        danger: action === 'reject',
+      },
+    );
+    if (!ok) return;
     setBatchBusy(true);
     try {
       const res = await batchReview(version.id, ids, action, batchComment.trim() || undefined);
@@ -1454,7 +1552,13 @@ export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props
           </div>
         )}
 
-        <div className="max-h-[320px] overflow-y-auto">
+        {displayItems.length > 0 && (
+          <p className="px-3 pt-1.5 text-[10px] text-surface-500">
+            Keyboard: <kbd>J</kbd>/<kbd>K</kbd> move · <kbd>A</kbd> approve · <kbd>R</kbd> reject
+            {selectableBucket ? <> · <kbd>X</kbd> select</> : null}
+          </p>
+        )}
+        <div className="max-h-[320px] overflow-y-auto" data-review-list>
           {displayItems.length > 0 ? (
             displayItems.map((item: ReviewItem) => {
               const isFocus =

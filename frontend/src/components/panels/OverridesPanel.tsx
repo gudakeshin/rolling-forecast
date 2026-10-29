@@ -143,6 +143,7 @@ export function OverridesPanel({ data, onRefresh }: Props) {
         key: 'change_pct',
         label: 'Change',
         align: 'right',
+        heatmap: true,
         render: (v) => <ChangeIndicator pct={Number(v) || 0} />,
       },
       {

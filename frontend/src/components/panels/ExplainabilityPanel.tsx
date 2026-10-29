@@ -121,12 +121,14 @@ export function ExplainabilityPanel() {
       key: 'variance_vs_prior',
       label: t('explain.col.prior'),
       align: 'right',
+      heatmap: true,
       render: (v) => formatNum(Number(v)),
     },
     {
       key: 'variance_vs_budget',
       label: t('explain.col.budget'),
       align: 'right',
+      heatmap: true,
       render: (v) => formatNum(Number(v)),
     },
     {
