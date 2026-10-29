@@ -169,6 +169,11 @@ def main() -> None:
     parser.add_argument("csv", nargs="+", type=Path)
     parser.add_argument("--holdout", type=int, default=6)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--group-part", type=int, default=None,
+        help="Also break results down by this '-'-separated part of the account code "
+        "(e.g. 1 for SYN-<shape>-<n> from synthetic_panel.py)",
+    )
     args = parser.parse_args()
 
     frames = []
@@ -191,6 +196,11 @@ def main() -> None:
     summary["ships"] = (summary["mase_vs_base"] < 0) & (summary["pinball_vs_base"] <= 0)
     pd.set_option("display.width", 160)
     print(summary.round(4).to_string())
+    if args.group_part is not None:
+        df["group"] = df["series"].str.split("-").str[args.group_part]
+        by = df.pivot_table(index="group", columns="config", values=["mase", "pinball"], aggfunc="mean")
+        print("\nby group (mean scaled MASE / pinball):")
+        print(by.round(3).to_string())
     print("\nselected models (+blend+gbm):")
     print(df[df.config == "+blend+gbm"]["model"].value_counts().to_string())
 

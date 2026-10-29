@@ -39,6 +39,7 @@ Deviations from the plan text are called out in **Deviation** rows.
 | 2.3 | `run_ensemble` handles 4-4-5 periods; no ad-hoc +10 confidence bonus | `test_plan_engine_behaviour::test_run_ensemble_handles_fiscal_periods_and_uses_shared_confidence` |
 | 2.3 | MASE denominator follows the fiscal calendar, not `m = 12` | `test_exog_mase_scale_follows_the_fiscal_calendar` |
 | 2 | Ship criterion: new roster wins on MASE and does not regress pinball | `backend/scripts/backtest_roster.py` on the three seed datasets: blend+GBM MASE −11.8% / −8.8%, pinball −8.8% / −3.4% (passes); blending alone regresses pinball on two of three (fails). **Shipped:** both on by default, together (`config.py`); per-company switch in the AnalysisProfile |
+| 2 | Stress test beyond the seed data | `backend/scripts/synthetic_panel.py` (80 series, 8 shapes: trend, additive/multiplicative seasonal, level shift, intermittent, random walk, short, heavy-tailed) through `backtest_roster.py --group-part 1`: blend+GBM MASE −16.7%, pinball −53%, 80% coverage 0.54 → 0.61 (passes); GBM alone fails (+1.4% MASE). **Known weak spot:** clean linear trends regress (scaled MASE 0.37 → 0.62) because the tree model flattens extrapolated trend; every other shape improves or holds. Companies dominated by steady trends can switch the GBM off in their AnalysisProfile |
 
 ## Phase 3 — Scheduling and notifications
 
