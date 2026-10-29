@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
-from jose import jwt
+import jwt
 
 from app.config import settings
 from app.models.forecast import ForecastVersion

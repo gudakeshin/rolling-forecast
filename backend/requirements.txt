@@ -25,7 +25,7 @@ numpy>=1.26.0
 networkx>=3.4.0
 
 # Auth
-python-jose[cryptography]>=3.3.0
+pyjwt[crypto]>=2.10.0  # replaced python-jose (unmaintained; PYSEC-2026-4298 unfixed)
 passlib[bcrypt]>=1.7.0
 bcrypt>=4.0.1,<4.1  # passlib incompatible with bcrypt 4.1+ (72-byte wrap bug)
 cryptography>=42.0.0

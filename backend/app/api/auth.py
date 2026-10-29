@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from jose import jwt, JWTError, jwk as jose_jwk
+import jwt
 from passlib.context import CryptContext
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
@@ -83,13 +83,13 @@ async def get_current_user(
         payload = jwt.decode(
             token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm]
         )
-        user_id: str = payload.get("sub")
+        user_id: str | None = payload.get("sub")
         jti = payload.get("jti")
         if user_id is None:
             raise HTTPException(status_code=401, detail="Invalid token")
         if is_jti_revoked(db, jti):
             raise HTTPException(status_code=401, detail="Token revoked")
-    except JWTError:
+    except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
     user = db.query(User).filter(User.id == user_id).first()
@@ -395,13 +395,12 @@ async def _verify_oidc_id_token(client, id_token: str, expected_nonce: str) -> d
     alg = header.get("alg")
     if alg not in OIDC_ALLOWED_ALGS:
         raise ValueError(f"id_token alg {alg!r} not allowed")
-    key_obj = jose_jwk.construct(key, algorithm=alg)
+    key_obj = jwt.PyJWK(key, algorithm=alg).key
     claims = jwt.decode(
         id_token,
         key_obj,
         algorithms=[alg],
         audience=settings.oidc_client_id,
-        options={"verify_at_hash": False},
     )
     # Exact issuer match (trailing slash tolerated) -- a prefix match would
     # accept a sibling realm such as ".../realms/rf-evil".

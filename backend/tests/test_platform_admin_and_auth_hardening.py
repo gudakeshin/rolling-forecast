@@ -10,7 +10,7 @@ import uuid
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from jose import jwt as jose_jwt
+import jwt
 
 from app.models.business_unit import BusinessUnit
 from app.models.company import Company
@@ -225,10 +225,64 @@ def test_oidc_id_token_rejects_symmetric_alg(monkeypatch):
     from app.config import settings
 
     monkeypatch.setattr(settings, "oidc_issuer", ISS)
-    token = jose_jwt.encode({"iss": ISS, "sub": "x", "aud": settings.oidc_client_id},
-                            "secret", algorithm="HS256", headers={"kid": "k1"})
+    token = jwt.encode({"iss": ISS, "sub": "x", "aud": settings.oidc_client_id},
+                       "secret", algorithm="HS256", headers={"kid": "k1"})
     with pytest.raises(ValueError, match="not allowed"):
         asyncio.run(auth._verify_oidc_id_token(_FakeClient(), token, "nonce"))
+
+
+class _RsaJwksClient:
+    def __init__(self, public_jwk: dict):
+        self._jwk = public_jwk
+
+    async def get(self, url, **_):
+        if "well-known" in url:
+            return _FakeResp({"jwks_uri": ISS + "/certs"})
+        return _FakeResp({"keys": [self._jwk]})
+
+
+@pytest.fixture
+def rsa_idp():
+    import json
+
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(private_key.public_key()))
+    public_jwk.update({"kid": "rsa-1", "use": "sig", "alg": "RS256"})
+    return private_key, _RsaJwksClient(public_jwk)
+
+
+def _id_token(private_key, **overrides):
+    claims = {"iss": ISS, "sub": "s-rsa", "aud": "rf-client",
+              "nonce": "n-1", "exp": 4102444800, **overrides}
+    return jwt.encode(claims, private_key, algorithm="RS256", headers={"kid": "rsa-1"})
+
+
+def test_oidc_id_token_verifies_rs256_against_jwks(monkeypatch, rsa_idp):
+    from app.api import auth
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "oidc_issuer", ISS)
+    monkeypatch.setattr(settings, "oidc_client_id", "rf-client")
+    private_key, client = rsa_idp
+    claims = asyncio.run(auth._verify_oidc_id_token(client, _id_token(private_key), "n-1"))
+    assert claims["sub"] == "s-rsa"
+
+
+@pytest.mark.parametrize("overrides,nonce,match", [
+    ({}, "other-nonce", "nonce"),
+    ({"iss": ISS + "-evil"}, "n-1", "issuer"),
+])
+def test_oidc_id_token_rejects_wrong_nonce_or_issuer(monkeypatch, rsa_idp, overrides, nonce, match):
+    from app.api import auth
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "oidc_issuer", ISS)
+    monkeypatch.setattr(settings, "oidc_client_id", "rf-client")
+    private_key, client = rsa_idp
+    with pytest.raises(ValueError, match=match):
+        asyncio.run(auth._verify_oidc_id_token(client, _id_token(private_key, **overrides), nonce))
 
 
 # ── self-registration ───────────────────────────────────────────────────
