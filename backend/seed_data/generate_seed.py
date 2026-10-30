@@ -10,7 +10,7 @@ from datetime import datetime
 import os
 
 
-def generate_seed_data(output_path: str = None, months: int = 36):
+def generate_seed_data(output_path: str | None = None, months: int = 36):
     """Generate synthetic P&L actuals CSV."""
     np.random.seed(42)
 

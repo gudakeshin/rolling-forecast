@@ -1,8 +1,7 @@
 """Chat endpoints -- send messages and stream responses via SSE."""
 
 import json
-import asyncio
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from sse_starlette.sse import EventSourceResponse
 
@@ -18,13 +17,16 @@ from app.schemas.chat import (
 )
 from app.orchestration.master_agent import MasterAgent
 from app.orchestration.context_manager import ContextManager
+from app.rate_limit import limiter
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
 @router.post("/message")
+@limiter.limit("30/minute")
 async def send_message(
-    request: ChatMessageRequest,
+    request: Request,
+    body: ChatMessageRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -34,11 +36,11 @@ async def send_message(
     _ = current_user.role  # force-load the lazy relationship
 
     # Get or create conversation
-    if request.conversation_id:
+    if body.conversation_id:
         conversation = (
             db.query(Conversation)
             .filter(
-                Conversation.id == request.conversation_id,
+                Conversation.id == body.conversation_id,
                 Conversation.user_id == user_id,
             )
             .first()
@@ -55,7 +57,7 @@ async def send_message(
         db.refresh(conversation)
 
     conversation_id = conversation.id
-    message_content = request.content
+    message_content = body.content
 
     # Save user message
     user_message = Message(
@@ -183,3 +185,37 @@ async def get_conversation(
         ],
         working_memory=conversation.working_memory,
     )
+
+
+@router.delete("/conversations/{conversation_id}", status_code=204)
+async def delete_conversation(
+    conversation_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete a conversation and all of its messages (owner only)."""
+    conversation = (
+        db.query(Conversation)
+        .filter(
+            Conversation.id == conversation_id,
+            Conversation.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Detach documents scoped to this conversation (FK is nullable, no cascade)
+    try:
+        from app.models.document import Document
+
+        db.query(Document).filter(Document.conversation_id == conversation_id).update(
+            {"conversation_id": None},
+            synchronize_session=False,
+        )
+    except Exception:
+        pass
+
+    db.delete(conversation)
+    db.commit()
+    return None

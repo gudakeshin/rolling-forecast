@@ -1,9 +1,10 @@
 """Skills Management API -- list, read, and edit skill .md definitions."""
 
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from app.api.auth import get_current_user
 from app.domain.registry import get_registry
 from app.domain.skill_loader import (
     load_skill_definition,
@@ -12,6 +13,21 @@ from app.domain.skill_loader import (
     parse_skill_md,
     SKILLS_DIR,
 )
+from app.models.user import User
+from app.services.permissions import (
+    can_access_business_unit,
+    require_permission,
+    require_platform_admin,
+)
+from app.services.skill_overrides import (
+    delete_skill_override,
+    effective_skill_definitions,
+    get_skill_override,
+    set_skill_override,
+)
+from app.services.audit import record_audit
+from app.database import get_db
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/skills", tags=["skills"])
@@ -26,10 +42,34 @@ class SkillCreateRequest(BaseModel):
     content: str
 
 
-# ── List all skills ──────────────────────────────────────────────────────────
+class SkillOverrideRequest(BaseModel):
+    content: str  # Override .md: frontmatter (description/tags) + optional body
+    business_unit_id: str | None = None
+
+
+def _override_company(user: User, business_unit_id: str | None) -> str:
+    """The company an override call acts on: the one named, if the caller can
+    reach it, else the caller's own. 404 (not 403) for an inaccessible one,
+    so company ids can't be probed."""
+    bu_id = business_unit_id or user.business_unit_id
+    if not bu_id or not can_access_business_unit(user, bu_id):
+        raise HTTPException(status_code=404, detail="Business unit not found")
+    return bu_id
+
+
+def _definition_view(defn) -> dict:
+    return {
+        "description": defn.description,
+        "tags": defn.tags,
+        "version": defn.version,
+        "when_to_use": defn.when_to_use,
+        "examples": defn.examples,
+        "instructions": defn.instructions,
+    }
+
 
 @router.get("/")
-async def list_skills():
+async def list_skills(current_user: User = Depends(get_current_user)):
     """List all registered skills with their .md definition status."""
     registry = get_registry()
     return {
@@ -39,10 +79,8 @@ async def list_skills():
     }
 
 
-# ── List .md files ───────────────────────────────────────────────────────────
-
 @router.get("/definitions")
-async def list_definitions():
+async def list_definitions(current_user: User = Depends(get_current_user)):
     """List all skill .md definition files."""
     return {
         "definitions": list_skill_files(),
@@ -50,10 +88,8 @@ async def list_definitions():
     }
 
 
-# ── Get single skill detail ─────────────────────────────────────────────────
-
 @router.get("/{skill_name}")
-async def get_skill(skill_name: str):
+async def get_skill(skill_name: str, current_user: User = Depends(get_current_user)):
     """Get a skill's details including its .md definition content."""
     registry = get_registry()
     skill = registry.get(skill_name)
@@ -62,7 +98,6 @@ async def get_skill(skill_name: str):
     if not skill and not defn:
         raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
 
-    # Read the raw .md file content
     md_content = None
     md_file = SKILLS_DIR / f"{skill_name}.md"
     if md_file.exists():
@@ -90,16 +125,14 @@ async def get_skill(skill_name: str):
     }
 
 
-# ── Update a skill definition ───────────────────────────────────────────────
-
 @router.put("/{skill_name}")
-async def update_skill(skill_name: str, req: SkillUpdateRequest):
-    """Update a skill's .md definition file.
-    
-    This allows users to customize the skill's description, parameters,
-    instructions, and examples without modifying Python code.
-    """
-    # Validate the content parses correctly
+async def update_skill(
+    skill_name: str,
+    req: SkillUpdateRequest,
+    current_user: User = Depends(require_platform_admin()),
+    db: Session = Depends(get_db),
+):
+    """Update a skill's .md definition file (admin only)."""
     try:
         defn = parse_skill_md(req.content, f"{skill_name}.md")
     except ValueError as e:
@@ -111,17 +144,25 @@ async def update_skill(skill_name: str, req: SkillUpdateRequest):
             detail=f"Skill name in .md file ('{defn.name}') doesn't match URL ('{skill_name}')"
         )
 
-    # Save the file
     success = save_skill_definition(skill_name, req.content)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to save skill definition")
 
-    # Reload the definition in the registry
     registry = get_registry()
     new_defn = load_skill_definition(skill_name)
     if new_defn:
         registry._definitions[skill_name] = new_defn
+    registry.bump_definitions_generation()
 
+    record_audit(
+        db,
+        action="skills.update",
+        entity_type="skill",
+        entity_id=skill_name,
+        actor_id=current_user.id,
+        actor_username=current_user.username,
+        commit=True,
+    )
     logger.info(f"Skill definition updated: {skill_name}")
 
     return {
@@ -132,32 +173,37 @@ async def update_skill(skill_name: str, req: SkillUpdateRequest):
     }
 
 
-# ── Create a new skill definition ───────────────────────────────────────────
-
 @router.post("/")
-async def create_skill_definition(req: SkillCreateRequest):
-    """Create a new skill .md definition file.
-    
-    Note: This only creates the .md file. A Python implementation class
-    must also be created to provide the execution logic.
-    """
-    # Check if file already exists
+async def create_skill_definition(
+    req: SkillCreateRequest,
+    current_user: User = Depends(require_platform_admin()),
+    db: Session = Depends(get_db),
+):
+    """Create a new skill .md definition file (admin only)."""
     md_file = SKILLS_DIR / f"{req.name}.md"
     if md_file.exists():
         raise HTTPException(
             status_code=409, detail=f"Skill definition '{req.name}.md' already exists"
         )
 
-    # Validate
     try:
-        defn = parse_skill_md(req.content, f"{req.name}.md")
+        parse_skill_md(req.content, f"{req.name}.md")  # validate before save
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Save
     success = save_skill_definition(req.name, req.content)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to create skill definition")
+
+    record_audit(
+        db,
+        action="skills.create",
+        entity_type="skill",
+        entity_id=req.name,
+        actor_id=current_user.id,
+        actor_username=current_user.username,
+        commit=True,
+    )
 
     return {
         "success": True,
@@ -167,14 +213,74 @@ async def create_skill_definition(req: SkillCreateRequest):
     }
 
 
-# ── Reload all definitions ──────────────────────────────────────────────────
+@router.get("/{skill_name}/override")
+async def get_skill_override_view(
+    skill_name: str,
+    business_unit_id: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """A company's override of a skill (if any) and the resulting definition."""
+    if get_registry().get_definition(skill_name) is None:
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+    bu_id = _override_company(current_user, business_unit_id)
+    definitions, _ = effective_skill_definitions(db, business_unit_id=bu_id)
+    return {
+        "name": skill_name,
+        "business_unit_id": bu_id,
+        "content": get_skill_override(db, business_unit_id=bu_id, skill_name=skill_name),
+        "effective": _definition_view(definitions[skill_name]),
+    }
+
+
+@router.put("/{skill_name}/override")
+async def put_skill_override(
+    skill_name: str,
+    req: SkillOverrideRequest,
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+):
+    """Set a company's override of a skill's LLM-facing text (company admin)."""
+    bu_id = _override_company(current_user, req.business_unit_id)
+    try:
+        effective = set_skill_override(
+            db, business_unit_id=bu_id, skill_name=skill_name,
+            content=req.content, actor=current_user,
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    db.commit()
+    return {
+        "name": skill_name,
+        "business_unit_id": bu_id,
+        "content": req.content,
+        "effective": _definition_view(effective),
+    }
+
+
+@router.delete("/{skill_name}/override", status_code=204)
+async def remove_skill_override(
+    skill_name: str,
+    business_unit_id: str | None = None,
+    current_user: User = Depends(require_permission("admin")),
+    db: Session = Depends(get_db),
+):
+    """Drop a company's override, reverting it to the global definition."""
+    bu_id = _override_company(current_user, business_unit_id)
+    if not delete_skill_override(
+        db, business_unit_id=bu_id, skill_name=skill_name, actor=current_user
+    ):
+        raise HTTPException(status_code=404, detail="No override to remove")
+    db.commit()
+
 
 @router.post("/reload")
-async def reload_definitions():
-    """Reload all skill .md definitions from disk.
-    
-    Use this after editing .md files directly on the filesystem.
-    """
+async def reload_definitions(
+    current_user: User = Depends(require_platform_admin()),
+):
+    """Reload all skill .md definitions from disk (admin only)."""
     registry = get_registry()
     registry.load_definitions()
 

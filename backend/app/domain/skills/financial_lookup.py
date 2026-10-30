@@ -44,6 +44,15 @@ class FinancialLookupSkill(BaseSkill):
                     "description": "For company_financials: income_statement, balance_sheet, cash_flow, info",
                     "default": "info",
                 },
+                "persist_as_driver": {
+                    "type": "boolean",
+                    "description": (
+                        "When true, persist the fetched series as a causal driver "
+                        "(drivers + driver_values value_type=actual). "
+                        "Applies to stock_price, market_index, and economic_indicator."
+                    ),
+                    "default": False,
+                },
             },
             "required": ["query_type", "symbol"],
         }
@@ -69,9 +78,57 @@ class FinancialLookupSkill(BaseSkill):
                 "market_index, or company_financials."
             )
 
-        return await handler(params, symbol)
+        return await handler(params, symbol, context)
 
-    async def _stock_price(self, params: dict, symbol: str) -> SkillResult:
+    def _persist_series(
+        self,
+        context: SkillContext,
+        *,
+        key: str,
+        name: str,
+        source: str,
+        dates: list[str],
+        values: list[float],
+        driver_type: str = "macro",
+        unit: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Write macro series to causal driver tables. Returns persist metadata or None."""
+        if not context.db:
+            return None
+        from app.services.driver_ingest import persist_macro_as_driver
+        from app.services.ingestion.csv_adapter import CSVActualsProvider
+        from app.services.permissions import resolve_skill_user
+
+        helper = CSVActualsProvider()
+        rows: list[dict[str, Any]] = []
+        for d, v in zip(dates, values):
+            period = helper._normalize_period(d)
+            try:
+                rows.append({"period": period, "value": float(v)})
+            except (TypeError, ValueError):
+                continue
+        if not rows:
+            return None
+        # Monthly series: last observation wins per period
+        by_period: dict[str, float] = {}
+        for r in rows:
+            by_period[str(r["period"])] = float(r["value"])
+        deduped = [{"period": p, "value": v} for p, v in sorted(by_period.items())]
+        actor = resolve_skill_user(context)
+        meta = persist_macro_as_driver(
+            context.db,
+            key=key,
+            name=name,
+            source=source,
+            rows=deduped,
+            driver_type=driver_type,
+            unit=unit,
+            actor=actor,
+        )
+        context.db.commit()
+        return meta
+
+    async def _stock_price(self, params: dict, symbol: str, context: SkillContext) -> SkillResult:
         period = params.get("period", "3mo")
         try:
             import yfinance as yf
@@ -113,20 +170,42 @@ class FinancialLookupSkill(BaseSkill):
             }
             lines.append(f"\n*Showing {len(hist)} trading days ({period} period)*")
 
+            data: dict[str, Any] = {
+                "symbol": symbol,
+                "price": current,
+                "change": change,
+                "change_pct": change_pct,
+                "period_data": period_data,
+                "info": {
+                    "name": name,
+                    "market_cap": market_cap,
+                    "pe_ratio": pe_ratio,
+                },
+            }
+            if params.get("persist_as_driver"):
+                # Full history for driver (monthly-normalized), not just last 30
+                all_dates = hist.index.strftime("%Y-%m-%d").tolist()
+                all_prices = [float(p) for p in hist["Close"].tolist()]
+                persist = self._persist_series(
+                    context,
+                    key=f"yf_{symbol.lower()}",
+                    name=f"{name} ({symbol})",
+                    source="yfinance",
+                    dates=all_dates,
+                    values=all_prices,
+                    driver_type="index",
+                    unit="price",
+                )
+                if persist:
+                    data["persisted_driver"] = persist
+                    lines.append(
+                        f"\n*Persisted as driver `{persist['key']}` "
+                        f"({persist['n_rows']} periods, source=yfinance)*"
+                    )
+
             return SkillResult.ok(
                 message=f"{symbol}: ${current:,.2f} ({'+' if change_pct >= 0 else ''}{change_pct:.1f}%)",
-                data={
-                    "symbol": symbol,
-                    "price": current,
-                    "change": change,
-                    "change_pct": change_pct,
-                    "period_data": period_data,
-                    "info": {
-                        "name": name,
-                        "market_cap": market_cap,
-                        "pe_ratio": pe_ratio,
-                    },
-                },
+                data=data,
                 content_blocks=[self._text_block("\n".join(lines))],
             )
 
@@ -134,7 +213,7 @@ class FinancialLookupSkill(BaseSkill):
             logger.error(f"yfinance error for {symbol}: {e}", exc_info=True)
             return SkillResult.fail(f"Failed to fetch stock data for {symbol}: {str(e)}")
 
-    async def _economic_indicator(self, params: dict, symbol: str) -> SkillResult:
+    async def _economic_indicator(self, params: dict, symbol: str, context: SkillContext) -> SkillResult:
         if not settings.fred_api_key:
             return SkillResult.fail(
                 "FRED API key is not configured. Set FRED_API_KEY in your .env file. "
@@ -156,6 +235,13 @@ class FinancialLookupSkill(BaseSkill):
 
         try:
             from fredapi import Fred
+
+            # Reuse integration URL safety for the known FRED endpoint (no new fetch path)
+            from app.services.integration_safety import assert_safe_integration_url
+
+            assert_safe_integration_url(
+                "https://api.stlouisfed.org/fred/series/observations", kind="fred"
+            )
 
             fred = Fred(api_key=settings.fred_api_key)
             series = fred.get_series(symbol, observation_start="2023-01-01")
@@ -180,18 +266,38 @@ class FinancialLookupSkill(BaseSkill):
             for date, val in recent.items():
                 lines.append(f"  {date.strftime('%Y-%m')}: {val:,.2f}")
 
+            data: dict[str, Any] = {
+                "symbol": symbol,
+                "name": indicator_name,
+                "latest": latest,
+                "change": change,
+                "series": {
+                    "dates": recent.index.strftime("%Y-%m-%d").tolist(),
+                    "values": [round(float(v), 4) for v in recent.tolist()],
+                },
+            }
+            if params.get("persist_as_driver"):
+                all_dates = series.index.strftime("%Y-%m-%d").tolist()
+                all_vals = [float(v) for v in series.tolist()]
+                persist = self._persist_series(
+                    context,
+                    key=f"fred_{symbol.lower()}",
+                    name=indicator_name,
+                    source="fred",
+                    dates=all_dates,
+                    values=all_vals,
+                    driver_type="macro",
+                )
+                if persist:
+                    data["persisted_driver"] = persist
+                    lines.append(
+                        f"\n*Persisted as driver `{persist['key']}` "
+                        f"({persist['n_rows']} periods, source=fred)*"
+                    )
+
             return SkillResult.ok(
                 message=f"{indicator_name}: {latest:,.2f}",
-                data={
-                    "symbol": symbol,
-                    "name": indicator_name,
-                    "latest": latest,
-                    "change": change,
-                    "series": {
-                        "dates": recent.index.strftime("%Y-%m-%d").tolist(),
-                        "values": [round(float(v), 4) for v in recent.tolist()],
-                    },
-                },
+                data=data,
                 content_blocks=[self._text_block("\n".join(lines))],
             )
 
@@ -199,7 +305,8 @@ class FinancialLookupSkill(BaseSkill):
             logger.error(f"FRED API error for {symbol}: {e}", exc_info=True)
             return SkillResult.fail(f"Failed to fetch FRED data for {symbol}: {str(e)}")
 
-    async def _company_financials(self, params: dict, symbol: str) -> SkillResult:
+    async def _company_financials(self, params: dict, symbol: str, context: SkillContext) -> SkillResult:
+        _ = context
         metric = params.get("metric", "info")
         try:
             import yfinance as yf

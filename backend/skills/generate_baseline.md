@@ -2,19 +2,26 @@
 name: generate_baseline
 description: >
   Generate a statistical baseline forecast for all P&L line items using the
-  best-fit model per line item. Auto-selection tests ARIMA, Prophet, ETS, and
-  Linear Trend using walk-forward cross-validation MAPE scores. Each line item
-  gets the algorithm with the lowest prediction error. Produces point forecasts
-  with confidence intervals (P10/P50/P90). Includes automatic confidence scoring
-  and AI remediation analysis. ALWAYS use model_type='auto' unless the user
-  explicitly requests a specific model.
+  best-fit model per line item. Auto-selection runs walk-forward cross-validation
+  across registered models (including naive / seasonal-naive benchmarks when
+  enabled) and picks by MASE → pinball → complexity (or legacy MAPE, depending
+  on selection_metric). Produces point forecasts with confidence intervals
+  (P10/P50/P90). Includes automatic confidence scoring and AI remediation.
+  ALWAYS use model_type='auto' unless the user explicitly requests a specific model.
 required_role: generate
-version: "2.0"
+version: "2.1"
 tags: [forecasting, generation, statistical, baseline, multi-model]
 parameters:
   - name: dataset_id
     type: string
     description: ID of the actuals dataset to use (uses latest if not specified)
+    required: false
+  - name: business_unit
+    type: string
+    description: >
+      Name or id of the company/business unit to forecast. Required unless
+      the caller belongs to exactly one business unit (then it's inferred),
+      or dataset_id is given explicitly.
     required: false
   - name: horizon_months
     type: integer
@@ -23,17 +30,26 @@ parameters:
   - name: model_type
     type: string
     description: >
-      ALWAYS use 'auto' (default) which tests all algorithms and picks the best
-      per line item via MAPE comparison. Only set to a specific model if the
-      user EXPLICITLY requests it (e.g., "use ARIMA for everything").
-    enum: [auto, arima, prophet, ets, linear]
+      ALWAYS use 'auto' (default) which tests registered algorithms and picks the
+      best per line item. Only set to a specific registry model name if the user
+      EXPLICITLY requests it (e.g., "use ARIMA for everything"). Validated at
+      execute time against the live model registry — not a fixed enum.
     default: auto
   - name: models_to_test
     type: array
     description: >
-      Subset of algorithms to test during auto-selection. If omitted, all 4
-      models are tested. Use when the user wants to limit comparison scope
-      (e.g., ["ets", "arima"] to only test those two).
+      Subset of registry model names to test during auto-selection. If omitted,
+      all registered models are considered (subject to the two-stage cost screen).
+      Use when the user wants to limit comparison scope (e.g., ["ets", "arima"]).
+    required: false
+  - name: model_preset
+    type: string
+    description: >
+      Name or id of a saved model preset (see list_model_presets /
+      manage_model_presets) to use instead of specifying model_type/
+      models_to_test directly. Any model_type/models_to_test/horizon_months
+      passed explicitly alongside this still take priority over the preset's
+      values — the preset only fills in what wasn't explicitly given.
     required: false
   - name: random_seed
     type: integer
@@ -83,3 +99,5 @@ The response includes a MAPE comparison table showing how each model scored per 
 - User confirmed auto-selection → `model_type="auto"` (default)
 - "Only use ETS and ARIMA" → `model_type="auto"`, `models_to_test=["ets", "arima"]`
 - "Use Prophet for everything" → `model_type="prophet"`
+- "Run a forecast with my Conservative model" → `model_preset="Conservative"`
+- "Run it with Conservative but only 6 months" → `model_preset="Conservative"`, `horizon_months=6`

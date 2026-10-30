@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.domain.base_skill import BaseSkill, SkillContext, SkillResult
 from app.models.forecast import ForecastVersion
+from app.services.permissions import can_access_business_unit, resolve_skill_user, version_scope_filter
 
 logger = logging.getLogger(__name__)
 
@@ -69,12 +70,9 @@ class ManageVersionsSkill(BaseSkill):
             return SkillResult.fail(f"Unknown action: {action}")
 
     async def _list_versions(self, db: Session, context: SkillContext) -> SkillResult:
-        versions = (
-            db.query(ForecastVersion)
-            .order_by(ForecastVersion.created_at.desc())
-            .limit(20)
-            .all()
-        )
+        user = resolve_skill_user(context)
+        q = version_scope_filter(db.query(ForecastVersion), user, ForecastVersion)
+        versions = q.order_by(ForecastVersion.created_at.desc()).limit(20).all()
 
         if not versions:
             return SkillResult.ok(
@@ -130,7 +128,7 @@ class ManageVersionsSkill(BaseSkill):
             return SkillResult.fail("No version specified or active.")
 
         version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-        if not version:
+        if not version or not can_access_business_unit(resolve_skill_user(context), version.business_unit_id):
             return SkillResult.fail(f"Version '{version_id}' not found.")
 
         content_blocks = [
@@ -175,7 +173,7 @@ class ManageVersionsSkill(BaseSkill):
             return SkillResult.fail("No version ID specified.")
 
         version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-        if not version:
+        if not version or not can_access_business_unit(resolve_skill_user(context), version.business_unit_id):
             return SkillResult.fail(f"Version '{version_id}' not found.")
 
         context.context_manager.set_active_version_id(version_id)
@@ -197,7 +195,7 @@ class ManageVersionsSkill(BaseSkill):
             return SkillResult.fail("No status specified.")
 
         version = db.query(ForecastVersion).filter(ForecastVersion.id == version_id).first()
-        if not version:
+        if not version or not can_access_business_unit(resolve_skill_user(context), version.business_unit_id):
             return SkillResult.fail(f"Version '{version_id}' not found.")
 
         old_status = version.status

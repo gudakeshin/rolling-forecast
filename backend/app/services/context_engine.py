@@ -11,7 +11,6 @@ Provides a unified interface for:
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -20,21 +19,22 @@ from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models.document import Document, DocumentChunk
+from app.models.document import Document
 from app.services import document_processor, vector_store
 
 logger = logging.getLogger(__name__)
 
 
-async def upload_document(
+async def save_uploaded_document(
     db: Session,
     file: UploadFile,
     user_id: str,
     scope: str = "user",
     conversation_id: str | None = None,
     tags: list[str] | None = None,
-) -> Document:
-    """Save an uploaded file to disk and trigger the processing pipeline."""
+) -> tuple[Document, str]:
+    """Save an uploaded file to disk as a 'processing' Document, not yet
+    indexed. Returns (document, stored file path) for `process_document`."""
     os.makedirs(settings.context_upload_dir, exist_ok=True)
 
     file_type = document_processor.detect_file_type(file.filename or "unknown.txt")
@@ -62,9 +62,22 @@ async def upload_document(
     db.add(doc)
     db.commit()
     db.refresh(doc)
+    return doc, file_path
 
-    doc = await document_processor.process_document(db, doc, file_path)
-    return doc
+
+async def upload_document(
+    db: Session,
+    file: UploadFile,
+    user_id: str,
+    scope: str = "user",
+    conversation_id: str | None = None,
+    tags: list[str] | None = None,
+) -> Document:
+    """Save an uploaded file to disk and run the processing pipeline now."""
+    doc, file_path = await save_uploaded_document(
+        db, file, user_id, scope=scope, conversation_id=conversation_id, tags=tags
+    )
+    return await document_processor.process_document(db, doc, file_path)
 
 
 async def ingest_url(

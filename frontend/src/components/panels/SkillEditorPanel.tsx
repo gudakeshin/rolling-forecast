@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
+import { apiDelete, apiGet, apiPost, apiPut, fetchApi } from '../../api/client';
+import { useAuthStore } from '../../store/authStore';
 
 interface SkillInfo {
   name: string;
@@ -23,6 +25,17 @@ interface SkillDetail {
   md_file: string;
 }
 
+interface SkillsListResponse {
+  skills: SkillInfo[];
+}
+
+interface SkillOverrideView {
+  name: string;
+  business_unit_id: string;
+  content: string | null;
+  effective: { description: string; when_to_use: string; examples: string[] };
+}
+
 export function SkillEditorPanel() {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
@@ -33,12 +46,9 @@ export function SkillEditorPanel() {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const apiBase = 'http://localhost:8000';
-
   const fetchSkills = useCallback(async () => {
     try {
-      const res = await fetch(`${apiBase}/api/skills/`);
-      const data = await res.json();
+      const data = await apiGet<SkillsListResponse>('/skills/');
       setSkills(data.skills || []);
     } catch (e) {
       console.error('Failed to fetch skills:', e);
@@ -53,8 +63,7 @@ export function SkillEditorPanel() {
 
   const fetchDetail = async (name: string) => {
     try {
-      const res = await fetch(`${apiBase}/api/skills/${name}`);
-      const data = await res.json();
+      const data = await apiGet<SkillDetail>(`/skills/${name}`);
       setDetail(data);
       setEditContent(data.md_content || '');
       setSelectedSkill(name);
@@ -70,9 +79,8 @@ export function SkillEditorPanel() {
     setMessage(null);
 
     try {
-      const res = await fetch(`${apiBase}/api/skills/${selectedSkill}`, {
+      const res = await fetchApi(`/skills/${selectedSkill}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: editContent }),
       });
 
@@ -82,7 +90,7 @@ export function SkillEditorPanel() {
         fetchDetail(selectedSkill);
         fetchSkills();
       } else {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({ detail: 'Failed to save' }));
         setMessage({ type: 'error', text: err.detail || 'Failed to save' });
       }
     } catch (e) {
@@ -94,7 +102,7 @@ export function SkillEditorPanel() {
 
   const handleReload = async () => {
     try {
-      await fetch(`${apiBase}/api/skills/reload`, { method: 'POST' });
+      await apiPost('/skills/reload');
       fetchSkills();
       setMessage({ type: 'success', text: 'All skill definitions reloaded from disk' });
     } catch (e) {
@@ -173,7 +181,7 @@ export function SkillEditorPanel() {
                 {skill.tags.slice(0, 3).map((tag) => (
                   <span
                     key={tag}
-                    className="px-1.5 py-0.5 text-[10px] bg-surface-700 text-surface-400 rounded"
+                    className="px-1.5 py-0.5 text-xs bg-surface-700 text-surface-400 rounded"
                   >
                     {tag}
                   </span>
@@ -206,7 +214,7 @@ export function SkillEditorPanel() {
                   <button
                     onClick={handleSave}
                     disabled={saving}
-                    className="px-3 py-1 text-xs bg-deloitte-green text-black font-semibold rounded hover:bg-deloitte-green/90 disabled:opacity-50"
+                    className="px-3 py-1 text-xs bg-deloitte-green text-white font-semibold rounded hover:bg-deloitte-green/90 disabled:opacity-50"
                   >
                     {saving ? 'Saving...' : 'Save'}
                   </button>
@@ -236,6 +244,8 @@ export function SkillEditorPanel() {
                   </button>
                 )}
               </div>
+
+              <CompanyOverride skillName={detail.name} baseDescription={detail.description} />
 
               {/* Metadata */}
               <div className="grid grid-cols-3 gap-3">
@@ -306,11 +316,11 @@ export function SkillEditorPanel() {
                       >
                         <div className="flex items-center gap-2">
                           <code className="text-xs font-mono text-deloitte-green">{p.name}</code>
-                          <span className="text-[10px] px-1.5 py-0.5 bg-surface-700 text-surface-400 rounded">
+                          <span className="text-xs px-1.5 py-0.5 bg-surface-700 text-surface-400 rounded">
                             {p.type}
                           </span>
                           {p.required && (
-                            <span className="text-[10px] px-1.5 py-0.5 bg-red-500/10 text-red-400 rounded">
+                            <span className="text-xs px-1.5 py-0.5 bg-red-500/10 text-red-400 rounded">
                               required
                             </span>
                           )}
@@ -321,7 +331,7 @@ export function SkillEditorPanel() {
                             {p.enum.map((v: string) => (
                               <span
                                 key={v}
-                                className="text-[10px] px-1 py-0.5 bg-surface-700 text-surface-300 rounded font-mono"
+                                className="text-xs px-1 py-0.5 bg-surface-700 text-surface-300 rounded font-mono"
                               >
                                 {v}
                               </span>
@@ -346,10 +356,141 @@ export function SkillEditorPanel() {
   );
 }
 
+/** This company's override of the skill's LLM-facing text, layered over the
+ * global .md (backend: app/services/skill_overrides.py). Company admins can
+ * edit it; parameters and required role always stay global. */
+function CompanyOverride({ skillName, baseDescription }: { skillName: string; baseDescription: string }) {
+  const canEdit = useAuthStore((s) => Boolean(s.user?.can_admin));
+  const [view, setView] = useState<SkillOverrideView | null>(null);
+  const [draft, setDraft] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      setView(await apiGet<SkillOverrideView>(`/skills/${skillName}/override`));
+    } catch (e: any) {
+      // No company (e.g. an unassigned platform admin): nothing to show.
+      setView(null);
+      if (e?.message && e.message !== 'Business unit not found') setError(e.message);
+    }
+  }, [skillName]);
+
+  useEffect(() => {
+    setDraft(null);
+    load();
+  }, [load]);
+
+  const save = async () => {
+    if (draft === null) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setView(await apiPut<SkillOverrideView>(`/skills/${skillName}/override`, { content: draft }));
+      setDraft(null);
+    } catch (e: any) {
+      setError(e?.message || 'Failed to save override');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await apiDelete(`/skills/${skillName}/override`);
+      await load();
+    } catch (e: any) {
+      setError(e?.message || 'Failed to remove override');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!view && !error) return null;
+
+  // JSON string syntax is valid YAML, so a description containing ": " or
+  // quotes still yields a template that parses.
+  const template = `---\ndescription: ${JSON.stringify(baseDescription.replace(/\s+/g, ' ').trim())}\n---\n`;
+
+  return (
+    <div className="px-3 py-2.5 bg-surface-800 rounded border border-surface-700 space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <h4 className="text-xs font-semibold text-surface-400 uppercase tracking-wider">
+          Company override
+        </h4>
+        {view && canEdit && draft === null && (
+          <div className="flex gap-2">
+            <button
+              onClick={() => setDraft(view.content ?? template)}
+              disabled={busy}
+              className="px-2 py-1 text-xs bg-deloitte-green/10 border border-deloitte-green/25 text-deloitte-green rounded hover:bg-deloitte-green/20 disabled:opacity-50"
+            >
+              {view.content ? 'Edit override' : 'Add override'}
+            </button>
+            {view.content && (
+              <button
+                onClick={remove}
+                disabled={busy}
+                className="px-2 py-1 text-xs bg-surface-700 hover:bg-surface-600 text-surface-300 rounded disabled:opacity-50"
+              >
+                Remove
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {error && <p className="text-xs text-red-400">{error}</p>}
+
+      {draft !== null ? (
+        <div className="space-y-2">
+          <p className="text-xs text-surface-400">
+            Frontmatter may set <code>description</code> and <code>tags</code>; a markdown body replaces the
+            whole global body. Parameters and required role can&apos;t be overridden.
+          </p>
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            aria-label={`Company override for ${skillName}`}
+            rows={8}
+            className="w-full p-2 bg-black text-surface-200 font-mono text-xs rounded resize-y focus:outline-none"
+            spellCheck={false}
+          />
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => setDraft(null)}
+              disabled={busy}
+              className="px-3 py-1 text-xs bg-surface-700 hover:bg-surface-600 text-surface-300 rounded"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={save}
+              disabled={busy}
+              className="px-3 py-1 text-xs bg-deloitte-green text-white font-semibold rounded hover:bg-deloitte-green/90 disabled:opacity-50"
+            >
+              {busy ? 'Saving...' : 'Save override'}
+            </button>
+          </div>
+        </div>
+      ) : view?.content ? (
+        <p className="text-sm text-surface-300">
+          Your company&apos;s assistant uses: <span className="italic">{view.effective.description}</span>
+        </p>
+      ) : (
+        view && <p className="text-xs text-surface-400">Using the global definition.</p>
+      )}
+    </div>
+  );
+}
+
 function MetaCard({ label, value }: { label: string; value: string }) {
   return (
     <div className="px-3 py-2 bg-surface-800 rounded border border-surface-700">
-      <p className="text-[10px] text-surface-400 uppercase tracking-wider">{label}</p>
+      <p className="text-xs text-surface-400 uppercase tracking-wider">{label}</p>
       <p className="text-sm font-semibold text-white mt-0.5">{value}</p>
     </div>
   );

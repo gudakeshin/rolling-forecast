@@ -5,14 +5,20 @@ import { ChartRenderer } from './renderers/ChartRenderer';
 import { StatusCard } from './renderers/StatusCard';
 import { ActionCard } from './renderers/ActionCard';
 import { PanelTrigger } from './renderers/PanelTrigger';
-import { User, Wrench } from 'lucide-react';
+import { CitationsRenderer } from './renderers/CitationsRenderer';
+import { IconButton } from '../ui/Pressable';
+import { User, Wrench, RotateCcw } from 'lucide-react';
+import { useI18n } from '../../i18n/useI18n';
 
 interface Props {
   message: ChatMessage;
+  onRegenerate?: () => void;
+  canRegenerate?: boolean;
 }
 
-export function MessageBubble({ message }: Props) {
+export function MessageBubble({ message, onRegenerate, canRegenerate }: Props) {
   const isUser = message.role === 'user';
+  const { t } = useI18n();
 
   return (
     <div className={`flex gap-3 chat-message-enter ${isUser ? 'justify-end' : ''}`}>
@@ -27,7 +33,7 @@ export function MessageBubble({ message }: Props) {
       <div
         className={`max-w-[80%] ${
           isUser
-            ? 'bg-accent-500 rounded-2xl rounded-br-md px-4 py-3'
+            ? 'bg-deloitte-green-dark rounded-2xl rounded-br-md px-4 py-3'
             : 'space-y-3'
         }`}
       >
@@ -52,11 +58,29 @@ export function MessageBubble({ message }: Props) {
 
             {/* Content blocks */}
             {message.content_blocks && message.content_blocks.length > 0 ? (
-              message.content_blocks.map((block, i) => (
-                <ContentBlockRenderer key={i} block={block} />
-              ))
+              (() => {
+                const citationsBlock = message.content_blocks.find((b) => b.type === 'citations');
+                const citations = citationsBlock?.data?.citations;
+                return message.content_blocks.map((block, i) => (
+                  <ContentBlockRenderer key={i} block={block} citations={citations} />
+                ));
+              })()
             ) : (
               <TextRenderer text={message.content} />
+            )}
+
+            {canRegenerate && onRegenerate && (
+              <div className="pt-1">
+                <IconButton
+                  label={t('chat.regenerate')}
+                  title={t('chat.regenerate')}
+                  onClick={() => onRegenerate()}
+                  className="text-surface-500 hover:text-surface-200 gap-1.5 px-2"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span className="text-xs">{t('chat.regenerate')}</span>
+                </IconButton>
+              </div>
             )}
           </>
         )}
@@ -72,14 +96,20 @@ export function MessageBubble({ message }: Props) {
   );
 }
 
-function ContentBlockRenderer({ block }: { block: { type: string; data: any } }) {
+function ContentBlockRenderer({
+  block,
+  citations,
+}: {
+  block: { type: string; data: any };
+  citations?: any[];
+}) {
   try {
     if (!block || !block.data) {
       return null;
     }
     switch (block.type) {
       case 'text':
-        return <TextRenderer text={block.data.text ?? ''} />;
+        return <TextRenderer text={block.data.text ?? ''} citations={citations} />;
       case 'table':
         return <TableRenderer data={block.data} />;
       case 'chart':
@@ -90,6 +120,8 @@ function ContentBlockRenderer({ block }: { block: { type: string; data: any } })
         return <ActionCard data={block.data} />;
       case 'panel_trigger':
         return <PanelTrigger data={block.data} />;
+      case 'citations':
+        return <CitationsRenderer data={block.data} />;
       default:
         return <TextRenderer text={JSON.stringify(block.data)} />;
     }

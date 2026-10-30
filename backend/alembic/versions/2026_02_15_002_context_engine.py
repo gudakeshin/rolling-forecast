@@ -9,6 +9,13 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
+import sys
+from pathlib import Path as _Path
+_alembic_dir = str(_Path(__file__).resolve().parents[1])
+if _alembic_dir not in sys.path:
+    sys.path.insert(0, _alembic_dir)
+from migration_helpers import create_table_if_missing, drop_table_if_exists
+
 revision: str = "002_context_engine"
 down_revision: Union[str, None] = "001"
 branch_labels: Union[str, Sequence[str], None] = None
@@ -16,7 +23,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table(
+    create_table_if_missing(
         "documents",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column("user_id", sa.String(36), sa.ForeignKey("users.id"), nullable=False),
@@ -45,7 +52,7 @@ def upgrade() -> None:
     op.create_index("ix_documents_scope", "documents", ["scope"])
     op.create_index("ix_documents_status", "documents", ["status"])
 
-    op.create_table(
+    create_table_if_missing(
         "document_chunks",
         sa.Column("id", sa.String(36), primary_key=True),
         sa.Column(
@@ -65,5 +72,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_table("document_chunks")
-    op.drop_table("documents")
+    drop_table_if_exists("document_chunks")
+    drop_table_if_exists("documents")

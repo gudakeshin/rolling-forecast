@@ -209,7 +209,7 @@ class TestReviewForecastSkill:
         # Try to approve as analyst
         result = await review_skill.execute({"action": "approve"}, skill_context)
         assert result.success is False
-        assert "manager" in result.message.lower() or "admin" in result.message.lower()
+        assert "manager" in result.message.lower() or "admin" in result.message.lower() or "reviewer" in result.message.lower()
 
 
 class TestExportAuditSkill:

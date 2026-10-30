@@ -38,7 +38,7 @@ AI-powered Rolling Forecast Generation & Refresh platform for FP&A teams. Built 
 │  │  └──────┬───────┘  └────────────────────┘  │    │
 │  └─────────┼──────────────────────────────────┘    │
 │  ┌─────────┴──────────────────────────────────┐    │
-│  │  Skills Registry (16 domain skills)         │    │
+│  │  Skills Registry (26 domain skills)         │    │
 │  │  .md definitions + Python execution         │    │
 │  │  Converted to LangChain tools at runtime    │    │
 │  └─────────┬──────────────────────────────────┘    │
@@ -91,7 +91,7 @@ cp .env.example backend/.env
 ```bash
 cd backend
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.lock
 
 # Run migrations (first time)
 alembic upgrade head
@@ -253,7 +253,7 @@ rolling-forecast/
 │   ├── app/
 │   │   ├── api/                # FastAPI route handlers
 │   │   ├── domain/
-│   │   │   ├── skills/         # 16 domain skill implementations
+│   │   │   ├── skills/         # 26 domain skill implementations
 │   │   │   ├── engines/        # Forecast model engines
 │   │   │   ├── registry.py     # Skill registry + LangChain tool conversion
 │   │   │   └── base_skill.py   # Base skill class
@@ -337,11 +337,32 @@ pytest -v
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ANTHROPIC_API_KEY` | (required) | Claude API key |
-| `ANTHROPIC_MODEL` | `claude-sonnet-4-20250514` | Model to use |
+| `ANTHROPIC_MODEL` | `claude-sonnet-5` | Model to use |
 | `DATABASE_URL` | `sqlite:///./rolling_forecast.db` | Database connection string |
 | `JWT_SECRET_KEY` | `dev-secret-key-...` | JWT signing secret |
 | `APP_ENV` | `development` | Environment (development/production) |
 | `LOG_LEVEL` | `INFO` | Logging level |
+| `ALLOWED_HOSTS` | (unset) | Comma-separated Host header allowlist; middleware installed only when set |
+| `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Proxies whose `X-Forwarded-For` uvicorn trusts. Set to `*` **only** when the app port is not publicly reachable — rate limiting keys on this |
+| `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | `5` / `10` | Postgres connection pool sizing |
+| `REDIS_URL` | (unset) | Enables distributed locks, arq queue, and Redis-backed rate limits |
+| `EMBEDDING_BACKEND` | `onnx` | `onnx` uses ChromaDB's bundled all-MiniLM-L6-v2 (no torch); `sentence_transformers` is opt-in |
+
+See [.env.example](.env.example) for the full set.
+
+### Dependencies
+
+`requirements.txt` is the human-edited input; `requirements.lock` is the
+hash-pinned resolution that Docker and CI actually install. Regenerate after
+changing `requirements.txt`:
+
+```bash
+cd backend && ./scripts/lock-deps.sh
+```
+
+Use `./scripts/lock-deps.sh --upgrade` to deliberately move versions, and run
+the test suite afterwards — `prophet`, `statsmodels`, `numpy`, and
+`scikit-learn` versions change forecast output.
 
 ---
 

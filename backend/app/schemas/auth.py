@@ -1,6 +1,6 @@
 """Pydantic schemas for authentication."""
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
 
 class LoginRequest(BaseModel):
@@ -10,10 +10,19 @@ class LoginRequest(BaseModel):
 
 class TokenResponse(BaseModel):
     access_token: str
+    refresh_token: str | None = None
     token_type: str = "bearer"
     user_id: str
     username: str
     role: str
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: str | None = None
 
 
 class UserCreate(BaseModel):
@@ -25,13 +34,39 @@ class UserCreate(BaseModel):
     role_name: str = "analyst"
 
 
+class CompanyMembershipInfo(BaseModel):
+    company_id: str
+    business_unit_id: str | None
+    name: str
+    role_name: str
+
+
 class UserResponse(BaseModel):
     id: str
     email: str
     username: str
     full_name: str
     business_unit: str | None
+    business_unit_id: str | None = None
     role_name: str
     is_active: bool
+    can_input: bool = False
+    can_generate: bool = False
+    can_override: bool = False
+    can_review: bool = False
+    can_publish: bool = False
+    can_admin: bool = False
+    can_manage_drivers: bool = False
+    can_view_all_bus: bool = False
+    companies: list[CompanyMembershipInfo] = []
 
     model_config = {"from_attributes": True}
+
+
+class SwitchCompanyRequest(BaseModel):
+    company_id: str
+
+
+class GrantMembershipRequest(BaseModel):
+    company_id: str
+    role_name: str

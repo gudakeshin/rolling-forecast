@@ -1,0 +1,165 @@
+"""Per-company overrides of the forecast-behavior knobs in app.config.Settings.
+
+Built on the same additive-override pattern as app.services.tenant_settings
+(reporting_currency / fiscal_calendar from Phase 2 pass 2b): each field here
+is stored as a `BusinessUnitSetting` row keyed `analysis.<field>`, and reads
+fall through to the global `app.config.settings` default whenever no
+per-business-unit override exists. No new table or migration -- the existing
+generic key/value override table is typed enough for this.
+
+Every field is read per-call. `enable_benchmark_models` and
+`enable_global_gbm_model` decide which models a registry *contains*, so they
+are applied by picking that company's registry
+(`app.domain.engines.model_registry.registry_for_analysis`), one cached
+registry per gate combination.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from sqlalchemy.orm import Session
+
+from app.config import settings
+from app.services.audit import record_audit
+from app.services.tenant_settings import get_tenant_setting, set_tenant_setting
+
+# name -> python type. Order matches app/config.py's "Forecast defaults" block.
+ANALYSIS_PROFILE_FIELDS: dict[str, type] = {
+    "default_horizon_months": int,
+    "confidence_threshold_low": int,
+    "confidence_threshold_medium": int,
+    "selection_metric": str,
+    "selection_wall_clock_seconds": float,
+    "materiality_share": float,
+    "qp_coherence_tolerance": float,
+    "enable_driver_forecasting": bool,
+    "exog_min_points_per_regressor": int,
+    "min_history_months": int,
+    "ideal_history_months": int,
+    "outlier_cleaning_enabled": bool,
+    "outlier_mad_z": float,
+    "structural_break_min_post_points": int,
+    "conformal_calibration_enabled": bool,
+    "conformal_min_residuals_per_horizon": int,
+    "conformal_min_residuals_total": int,
+    "conformal_realized_min_cycles": int,
+    "enable_ensemble_blending": bool,
+    "enable_benchmark_models": bool,
+    "enable_global_gbm_model": bool,
+}
+
+_KEY_PREFIX = "analysis."
+
+
+@dataclass(frozen=True)
+class AnalysisSettings:
+    default_horizon_months: int
+    confidence_threshold_low: int
+    confidence_threshold_medium: int
+    selection_metric: str
+    selection_wall_clock_seconds: float
+    materiality_share: float
+    qp_coherence_tolerance: float
+    enable_driver_forecasting: bool
+    exog_min_points_per_regressor: int
+    min_history_months: int
+    ideal_history_months: int
+    outlier_cleaning_enabled: bool
+    outlier_mad_z: float
+    structural_break_min_post_points: int
+    conformal_calibration_enabled: bool
+    conformal_min_residuals_per_horizon: int
+    conformal_min_residuals_total: int
+    conformal_realized_min_cycles: int
+    enable_ensemble_blending: bool
+    enable_benchmark_models: bool
+    enable_global_gbm_model: bool
+
+
+def _decode(field_type: type, raw: str) -> Any:
+    if field_type is bool:
+        return raw.strip().lower() in ("1", "true", "yes", "on")
+    return field_type(raw)
+
+
+def _encode(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def resolve_analysis_settings(db: Session, *, business_unit_id: str | None) -> AnalysisSettings:
+    """Company override, falling back to the global `app.config.settings` default.
+
+    Safe to call with `business_unit_id=None` (e.g. a system-wide job) -- every
+    field then resolves straight to the global default, identical to reading
+    `settings.<field>` directly today."""
+    values: dict[str, Any] = {}
+    for name, field_type in ANALYSIS_PROFILE_FIELDS.items():
+        raw = get_tenant_setting(db, f"{_KEY_PREFIX}{name}", business_unit_id=business_unit_id)
+        values[name] = _decode(field_type, raw) if raw is not None else getattr(settings, name)
+    return AnalysisSettings(**values)
+
+
+def get_analysis_profile_overrides(db: Session, *, business_unit_id: str) -> dict[str, Any]:
+    """Only the fields actually overridden for this business unit (global-default
+    fields are omitted) -- for an admin UI to show "custom" vs "inherited"."""
+    overrides: dict[str, Any] = {}
+    for name, field_type in ANALYSIS_PROFILE_FIELDS.items():
+        raw = get_tenant_setting(db, f"{_KEY_PREFIX}{name}", business_unit_id=business_unit_id)
+        if raw is not None:
+            overrides[name] = _decode(field_type, raw)
+    return overrides
+
+
+def validate_analysis_patch(patch: dict[str, Any]) -> dict[str, Any]:
+    """Coerce a proposed set of overrides to their declared types without
+    writing anything. Raises ValueError for an unknown key or a value that
+    doesn't match its type -- the same checks `update_analysis_profile` applies,
+    so a dry run (e.g. the agent's proposal step) can't pass where a write fails."""
+    unknown = set(patch) - set(ANALYSIS_PROFILE_FIELDS)
+    if unknown:
+        raise ValueError(f"Unknown analysis profile field(s): {sorted(unknown)}")
+
+    coerced: dict[str, Any] = {}
+    for name, value in patch.items():
+        field_type = ANALYSIS_PROFILE_FIELDS[name]
+        if field_type is bool and not isinstance(value, bool):
+            raise ValueError(f"'{name}' must be a boolean")
+        if field_type in (int, float) and isinstance(value, bool):
+            raise ValueError(f"'{name}' must be a number")
+        if field_type in (int, float) and not isinstance(value, (int, float)):
+            raise ValueError(f"'{name}' must be a number")
+        coerced[name] = field_type(value)
+    return coerced
+
+
+def update_analysis_profile(
+    db: Session,
+    *,
+    business_unit_id: str,
+    patch: dict[str, Any],
+    actor,
+    source: str = "admin_ui",
+) -> AnalysisSettings:
+    """Validate and write a set of per-business-unit overrides, audited one
+    event per changed key (``source`` records which surface made the change,
+    e.g. the admin UI or the chat agent). Raises ValueError for an unknown key
+    or a value that doesn't match its declared type."""
+    for name, coerced in validate_analysis_patch(patch).items():
+        set_tenant_setting(
+            db, f"{_KEY_PREFIX}{name}", _encode(coerced), business_unit_id=business_unit_id
+        )
+        record_audit(
+            db,
+            action="analysis_profile.update",
+            entity_type="business_unit",
+            entity_id=business_unit_id,
+            actor_id=getattr(actor, "id", None),
+            actor_username=getattr(actor, "username", None),
+            details={"field": name, "value": coerced, "source": source},
+        )
+
+    return resolve_analysis_settings(db, business_unit_id=business_unit_id)

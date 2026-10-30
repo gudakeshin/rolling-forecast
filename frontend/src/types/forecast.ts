@@ -4,6 +4,7 @@ export interface ForecastVersion {
   label: string | null;
   status: string;
   version_type: string;
+  scenario?: string;
   horizon_months: number;
   base_period: string | null;
   total_line_items: number;

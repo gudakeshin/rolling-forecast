@@ -76,7 +76,7 @@ class TestHistoryAnalysis:
         dates = pd.DatetimeIndex(pd.date_range("2024-01", periods=24, freq="MS"))
         analysis = HistoryAnalysis(values, dates, "Break Line")
 
-        # Note: structural break detection depends on the R/S statistic threshold
+        # Note: structural break detection uses CUSUM/Chow (not R/S)
         result = analysis.analyze()
         if analysis.has_structural_break:
             assert "structural_break" in result["flags"]

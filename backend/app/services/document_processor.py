@@ -5,10 +5,8 @@ for chunking, then stores embeddings in ChromaDB via the vector_store module.
 """
 
 import logging
-import os
 import uuid
 from pathlib import Path
-from typing import Any
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sqlalchemy.orm import Session
@@ -134,12 +132,12 @@ def _load_html(file_path: str) -> list[dict]:
 
 
 def load_url(url: str) -> list[dict]:
-    """Fetch and parse a URL into document pages."""
-    import httpx
+    """Fetch and parse a URL into document pages (SSRF-safe)."""
     from bs4 import BeautifulSoup
 
-    resp = httpx.get(url, follow_redirects=True, timeout=30)
-    resp.raise_for_status()
+    from app.services.integration_safety import safe_fetch_url
+
+    resp = safe_fetch_url(url, kind="web", timeout=30)
     soup = BeautifulSoup(resp.text, "html.parser")
     for tag in soup(["script", "style", "nav", "footer", "header"]):
         tag.decompose()
