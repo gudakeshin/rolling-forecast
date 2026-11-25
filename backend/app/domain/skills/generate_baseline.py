@@ -137,6 +137,8 @@ def _generate_remediation(
         suggestions.append("Narrow the forecast with driver inputs or manual adjustment.")
     if any("R²" in i or "fit" in i.lower() for i in issues):
         suggestions.append("Review underlying data for anomalies or structural changes.")
+    if any(i.startswith("missing_periods_filled") for i in issues):
+        suggestions.append("Some periods had no actuals and were interpolated — confirm whether they were true zeros or missing loads.")
     if any("break" in i.lower() for i in issues):
         suggestions.append("A structural break was detected — validate if business conditions changed.")
 
@@ -148,6 +150,48 @@ def _generate_remediation(
         "reason": "; ".join(issues),
         "suggestion": " ".join(suggestions) if suggestions else "Review this item and consider applying a manual override.",
     }
+
+
+def reindex_to_fiscal_grid(
+    periods: list[str],
+    values: list[float],
+    cal_cfg: Any = None,
+) -> tuple[list[str], list[float], list[str]]:
+    """Put an observed series onto the regular fiscal-period grid.
+
+    Actuals arrive as sparse rows: a month with no posting is simply absent,
+    so position ``i`` in the raw series is not ``i`` periods after the start.
+    Seasonal lags, CV origins and any foundation model assume a regular grid,
+    so every period between the first and last observation is materialized.
+    Missing interior periods are linearly interpolated between their observed
+    neighbours (never filled from a later value at the edges — the grid only
+    spans first..last observation) and returned so the caller can flag them.
+
+    ``values`` must already be in the reporting currency; interpolated
+    periods therefore need no FX rate of their own.
+
+    Returns ``(grid_periods, grid_values, missing_periods)``.
+    """
+    from app.services.period_calendar import period_range, period_to_date
+
+    if not periods:
+        return [], [], []
+    observed: dict[str, float] = {}
+    for p, v in zip(periods, values):
+        observed[p] = float(v)
+    cfg = () if cal_cfg is None else (cal_cfg,)
+    ordered = sorted(observed, key=lambda p: period_to_date(p, *cfg))
+    grid = period_range(ordered[0], ordered[-1], *cfg)
+    # Observed labels the calendar arithmetic cannot reach (mixed label
+    # formats) — keep the input untouched rather than guess a grid.
+    if not set(observed).issubset(grid):
+        return ordered, [observed[p] for p in ordered], []
+    missing = [p for p in grid if p not in observed]
+    if not missing:
+        return ordered, [observed[p] for p in ordered], []
+    s = pd.Series([observed.get(p, float("nan")) for p in grid], dtype=float)
+    filled = s.interpolate(method="linear", limit_area="inside")
+    return grid, [float(v) for v in filled.tolist()], missing
 
 
 def forecast_linked_drivers(
@@ -627,6 +671,7 @@ class GenerateBaselineSkill(BaseSkill):
             "n_downgraded": 0,
             "driver_forecasts_written": 0,
             "drivers_forecasted": 0,
+            "gap_filled_lines": 0,
         }
         # Preset-resolution warnings (e.g. candidates disabled for this
         # company) belong in the run's own warnings, not only the log.
@@ -703,6 +748,9 @@ class GenerateBaselineSkill(BaseSkill):
                         )
                     except MissingFxRateError:
                         continue
+                    p_periods, converted, _missing = reindex_to_fiscal_grid(
+                        p_periods, converted, cal_cfg
+                    )
                     p_values = pd.Series(converted)
                     p_dates = pd.DatetimeIndex(
                         [pd.Timestamp(period_to_date(p, cal_cfg)) for p in p_periods]
@@ -783,6 +831,11 @@ class GenerateBaselineSkill(BaseSkill):
                     fx_hashes.append(fx_hash)
                 except MissingFxRateError as e:
                     return SkillResult.fail(str(e))
+                # Missing fiscal periods would silently shift every seasonal
+                # lag; put the line on the regular grid and flag the gaps.
+                periods, converted, missing_periods = reindex_to_fiscal_grid(
+                    periods, converted, cal_cfg
+                )
                 values = pd.Series(converted)
                 dates = pd.DatetimeIndex([
                     pd.Timestamp(period_to_date(p, cal_cfg)) for p in periods
@@ -813,6 +866,15 @@ class GenerateBaselineSkill(BaseSkill):
                     ),
                 )
 
+                if missing_periods:
+                    line_out.flags.append(f"missing_periods_filled:{len(missing_periods)}")
+                    shown = ", ".join(missing_periods[:6])
+                    more = "…" if len(missing_periods) > 6 else ""
+                    line_out.warnings.append(
+                        f"{li.name}: {len(missing_periods)} missing period(s) "
+                        f"interpolated onto the fiscal calendar ({shown}{more})"
+                    )
+                    summary["gap_filled_lines"] += 1
                 all_warnings.extend(line_out.warnings)
                 if line_out.flags:
                     all_flags.append({"line_item": li.name, "flags": line_out.flags})
@@ -1007,6 +1069,7 @@ class GenerateBaselineSkill(BaseSkill):
                     {"metric": "Lines skipped", "value": str(summary["skipped"])},
                     {"metric": "Zero-activity lines", "value": str(summary["zero_lines"])},
                     {"metric": "Sparse data (< 12 months)", "value": str(summary["sparse_lines"])},
+                    {"metric": "Lines with missing periods filled", "value": str(summary.get("gap_filled_lines", 0))},
                     {"metric": "Structural breaks", "value": str(summary["structural_breaks"])},
                     {"metric": "Negative values clamped", "value": str(summary["negative_clamped"])},
                     {"metric": "Horizon", "value": f"{horizon} months"},
@@ -1261,6 +1324,7 @@ class GenerateBaselineSkill(BaseSkill):
                 "lines_skipped": summary["skipped"],
                 "zero_lines": summary["zero_lines"],
                 "sparse_lines": summary["sparse_lines"],
+                "gap_filled_lines": summary.get("gap_filled_lines", 0),
                 "structural_breaks": summary["structural_breaks"],
                 "model_distribution": summary["model_distribution"],
                 "drivers_forecasted": summary.get("drivers_forecasted", 0),
