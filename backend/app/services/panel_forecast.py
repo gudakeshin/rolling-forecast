@@ -140,6 +140,49 @@ def build_global_panel_context(
     random_seed: int,
     registry: ModelRegistry,
 ) -> GlobalPanelContext | None:
+    """Build the run's cross-series panel: the global GBM and, when the
+    company's registry contains it, the Chronos-2 batch (Phase C).
+
+    Chronos-2 is attached as ``panel.foundation``. It is built even when the
+    GBM panel is not (too few lines), in which case an otherwise empty panel
+    carries it. Both builders are failure-isolated: a GBM error still
+    propagates to the caller's try/except as before, and the foundation
+    builder never raises (an unavailable service becomes a skip reason).
+    """
+    kwargs: dict[str, Any] = dict(
+        line_items=line_items,
+        effective_series_by_line=effective_series_by_line,
+        periods_by_line=periods_by_line,
+        cal_cfg=cal_cfg,
+        version_id=version_id,
+        horizon=horizon,
+        random_seed=random_seed,
+        registry=registry,
+    )
+    gbm_panel = _build_gbm_panel_context(db, **kwargs)
+    from app.domain.engines.chronos2 import CHRONOS2_NAME
+
+    if registry.get(CHRONOS2_NAME) is None:
+        return gbm_panel
+    from app.services.foundation_forecast import build_foundation_context
+
+    panel = gbm_panel if gbm_panel is not None else GlobalPanelContext.empty()
+    panel.foundation = build_foundation_context(db, **kwargs)
+    return panel
+
+
+def _build_gbm_panel_context(
+    db: Session,
+    *,
+    line_items: list[LineItem],
+    effective_series_by_line: dict[int, "EffectiveSeriesResult"],
+    periods_by_line: dict[int, list[str]],
+    cal_cfg: FiscalCalendarConfig | None,
+    version_id: str,
+    horizon: int,
+    random_seed: int,
+    registry: ModelRegistry,
+) -> GlobalPanelContext | None:
     """Build the global panel model for one version-generation run.
 
     Returns None when there isn't enough of a panel to justify a cross-series

@@ -175,6 +175,161 @@ def cv_fold_horizon(forecast_horizon: int, n_points: int, min_train: int = 12) -
     return max(1, min(int(forecast_horizon), cap))
 
 
+def cv_n_folds(
+    n_points: int,
+    *,
+    min_data_points: int,
+    fold_horizon: int,
+    max_folds_short_series: int | None = None,
+    short_series_threshold: int = 36,
+) -> int:
+    """How many walk-forward folds the registry scores a model on.
+
+    3 by default, capped for short series when the model asks for it, and up
+    to 5 when history allows (more folds = a better-powered 1-SE band). Shared
+    by ModelRegistry._evaluate_one and models that precompute their CV once
+    per run (Chronos-2), so both score the same windows and pair fold-by-fold.
+    """
+    n_folds = 3
+    if max_folds_short_series is not None and n_points < short_series_threshold:
+        n_folds = max_folds_short_series
+    max_folds_by_data = max(1, (n_points - min_data_points) // max(fold_horizon, 1))
+    if max_folds_by_data >= 5 and (
+        max_folds_short_series is None or n_points >= short_series_threshold
+    ):
+        n_folds = min(5, max_folds_by_data)
+    return n_folds
+
+
+def cv_fold_windows(
+    n_points: int, *, min_data_points: int, n_folds: int, fold_horizon: int
+) -> list[tuple[int, int]]:
+    """``(train_end, test_end)`` per fold, most recent fold first.
+
+    Fold k holds out ``fold_horizon * k`` points from the end and tests the
+    next ``fold_horizon`` of them; stops once the training window would be
+    shorter than ``min_data_points``.
+    """
+    windows: list[tuple[int, int]] = []
+    for fold in range(1, n_folds + 1):
+        train_end = n_points - fold_horizon * fold
+        if train_end < min_data_points:
+            break
+        test_end = min(train_end + fold_horizon, n_points)
+        if test_end <= train_end:
+            break
+        windows.append((train_end, test_end))
+    return windows
+
+
+@dataclass
+class FoldPrediction:
+    """One scored CV fold: training values, held-out actuals, P10/P50/P90."""
+
+    train: np.ndarray
+    actuals: np.ndarray
+    point: np.ndarray
+    lower: np.ndarray
+    upper: np.ndarray
+
+
+def summarize_cv_folds(
+    folds: Sequence[FoldPrediction | None], *, fold_horizon: int, m: int
+) -> dict[str, Any]:
+    """Score walk-forward folds into the dict ``IForecastModel.evaluate_cv`` returns.
+
+    ``folds`` runs most-recent-first; ``None`` is a fold the model failed
+    (scored inf on every metric, which fails the model — see
+    ``recency_weighted_mean``). MASE uses the ``mase_denominator`` ladder and
+    never emits inf from a flat training segment (those folds are None).
+    """
+    fold_mapes: list[float | None] = []
+    fold_smapes: list[float] = []
+    fold_mases: list[float | None] = []
+    fold_pinball_10: list[float] = []
+    fold_pinball_90: list[float] = []
+    # Out-of-sample residuals keyed by horizon step (1-based): the
+    # calibration set for split-conformal intervals
+    # (app/services/interval_calibration.py).
+    residuals_by_h: dict[int, list[float]] = {}
+    coverage_hits = 0
+    coverage_total = 0
+    scale_methods: list[str] = []
+    n_test_points = 0
+
+    for f in folds:
+        if f is None:
+            fold_mapes.append(float("inf"))
+            fold_smapes.append(float("inf"))
+            fold_mases.append(float("inf"))
+            fold_pinball_10.append(float("inf"))
+            fold_pinball_90.append(float("inf"))
+            scale_methods.append("error")
+            continue
+        actuals, predicted, lower, upper = f.actuals, f.point, f.lower, f.upper
+        n_test_points += len(actuals)
+        # Signed errors bucketed by steps ahead of the fold origin: h=1 errors
+        # are smaller than h=12 errors, so pooling them gives wrong bands.
+        for step, resid in enumerate(actuals - predicted, start=1):
+            if np.isfinite(resid):
+                residuals_by_h.setdefault(step, []).append(float(resid))
+
+        # MAPE — only on non-zero actuals (legacy; asymmetric)
+        mask = actuals != 0
+        if mask.sum() == 0:
+            fold_mapes.append(None)
+        else:
+            fold_mapes.append(
+                float(np.mean(np.abs((actuals[mask] - predicted[mask]) / actuals[mask])) * 100)
+            )
+        fold_smapes.append(_smape(actuals, predicted))
+
+        denom, method = mase_denominator(f.train, m)
+        scale_methods.append(method)
+        if method == "ineligible" or denom <= 0:
+            fold_mases.append(None)
+        else:
+            fold_mases.append(float(np.mean(np.abs(actuals - predicted)) / denom))
+
+        fold_pinball_10.append(_pinball(actuals, lower, 0.10))
+        fold_pinball_90.append(_pinball(actuals, upper, 0.90))
+        inside = (actuals >= lower) & (actuals <= upper)
+        coverage_hits += int(inside.sum())
+        coverage_total += len(actuals)
+
+    def _scored(values: list[float | None]) -> int:
+        return sum(1 for v in values if v is not None and np.isfinite(v))
+
+    coverage_80 = float(coverage_hits / coverage_total) if coverage_total else None
+    # Prefer the most common successful scale method
+    ok_methods = [s for s in scale_methods if s not in ("ineligible", "error")]
+    scale_method = max(set(ok_methods), key=ok_methods.count) if ok_methods else (
+        scale_methods[-1] if scale_methods else "ineligible"
+    )
+    mean_pb10 = recency_weighted_mean(fold_pinball_10)
+    mean_pb90 = recency_weighted_mean(fold_pinball_90)
+    return {
+        "mean_mape": recency_weighted_mean(fold_mapes),
+        "mean_smape": recency_weighted_mean(fold_smapes),
+        "mean_mase": recency_weighted_mean(fold_mases),
+        "mean_pinball_10": mean_pb10,
+        "mean_pinball_90": mean_pb90,
+        "mean_pinball": (
+            (mean_pb10 + mean_pb90) / 2.0
+            if mean_pb10 != float("inf") and mean_pb90 != float("inf")
+            else float("inf")
+        ),
+        "coverage_80": coverage_80,
+        "fold_residuals": {h: list(v) for h, v in sorted(residuals_by_h.items())},
+        "n": n_test_points,
+        "fold_mapes": fold_mapes,
+        "fold_mases": fold_mases,
+        "fold_horizon": fold_horizon,
+        "n_folds_used": _scored(fold_mases) or _scored(fold_mapes),
+        "mase_scale_method": scale_method,
+    }
+
+
 class SupportsExog(Protocol):
     """The subset of IForecastModel that accepts exogenous regressors.
 
@@ -337,115 +492,27 @@ class IForecastModel(ABC):
         denominator ladder in ``mase_denominator`` (never emits inf from a flat
         training segment — those folds are marked ineligible).
         """
-        # Fold lists run most-recent-first (fold 1 = latest origin). None = the
-        # data made this fold unscorable for that metric; inf = model failed.
-        fold_mapes: list[float | None] = []
-        fold_smapes: list[float] = []
-        fold_mases: list[float | None] = []
-        fold_pinball_10: list[float] = []
-        fold_pinball_90: list[float] = []
-        # Out-of-sample residuals keyed by horizon step (1-based). These are the
-        # calibration set for split-conformal intervals — see
-        # app/services/interval_calibration.py. Previously discarded.
-        residuals_by_h: dict[int, list[float]] = {}
-        coverage_hits = 0
-        coverage_total = 0
-        scale_methods: list[str] = []
-        n_test_points = 0
         m = seasonal_period_length()
         n = len(series)
-
-        for fold in range(1, n_folds + 1):
-            holdout = fold_horizon * fold
-            train_end = n - holdout
-            if train_end < self.min_data_points:
-                break
-            test_start = train_end
-            test_end = min(train_end + fold_horizon, n)
-            if test_end <= test_start:
-                break
+        # Most-recent fold first (fold 1 = latest origin); None = model failed.
+        folds: list[FoldPrediction | None] = []
+        for train_end, test_end in cv_fold_windows(
+            n, min_data_points=self.min_data_points, n_folds=n_folds, fold_horizon=fold_horizon
+        ):
             train = series.iloc[:train_end]
-            test = series.iloc[test_start:test_end]
+            test = series.iloc[train_end:test_end]
             train_dates = dates[:train_end]
             try:
                 params = self.fit(train, train_dates)
                 forecast = self.predict(params, len(test), train_dates[-1])
-                actuals = np.asarray(test.values, dtype=float)
-                predicted = np.asarray(forecast.point_forecast[: len(actuals)], dtype=float)
-                lower = np.asarray(forecast.lower_bound[: len(actuals)], dtype=float)
-                upper = np.asarray(forecast.upper_bound[: len(actuals)], dtype=float)
-                n_test_points += len(actuals)
-
-                # Keep the raw signed errors, bucketed by how far ahead of the
-                # fold origin they were predicted. h=1 errors are smaller than
-                # h=12 errors, so pooling them would give flat, wrong bands.
-                for step, resid in enumerate(actuals - predicted, start=1):
-                    if np.isfinite(resid):
-                        residuals_by_h.setdefault(step, []).append(float(resid))
-
-                # MAPE — only on non-zero actuals (legacy; asymmetric)
-                mask = actuals != 0
-                if mask.sum() == 0:
-                    fold_mapes.append(None)
-                else:
-                    fold_mapes.append(
-                        float(np.mean(np.abs((actuals[mask] - predicted[mask]) / actuals[mask])) * 100)
-                    )
-
-                fold_smapes.append(_smape(actuals, predicted))
-
-                denom, method = mase_denominator(np.asarray(train.values, dtype=float), m)
-                scale_methods.append(method)
-                if method == "ineligible" or denom <= 0:
-                    fold_mases.append(None)
-                else:
-                    fold_mases.append(float(np.mean(np.abs(actuals - predicted)) / denom))
-
-                fold_pinball_10.append(_pinball(actuals, lower, 0.10))
-                fold_pinball_90.append(_pinball(actuals, upper, 0.90))
-
-                inside = (actuals >= lower) & (actuals <= upper)
-                coverage_hits += int(inside.sum())
-                coverage_total += len(actuals)
+                k = len(test)
+                folds.append(FoldPrediction(
+                    train=np.asarray(train.values, dtype=float),
+                    actuals=np.asarray(test.values, dtype=float),
+                    point=np.asarray(forecast.point_forecast[:k], dtype=float),
+                    lower=np.asarray(forecast.lower_bound[:k], dtype=float),
+                    upper=np.asarray(forecast.upper_bound[:k], dtype=float),
+                ))
             except Exception:
-                fold_mapes.append(float("inf"))
-                fold_smapes.append(float("inf"))
-                fold_mases.append(float("inf"))
-                fold_pinball_10.append(float("inf"))
-                fold_pinball_90.append(float("inf"))
-                scale_methods.append("error")
-
-        def _scored(folds: list[float | None]) -> int:
-            return sum(1 for v in folds if v is not None and np.isfinite(v))
-
-        coverage_80 = (
-            float(coverage_hits / coverage_total) if coverage_total else None
-        )
-        # Prefer the most common successful scale method
-        ok_methods = [s for s in scale_methods if s not in ("ineligible", "error")]
-        scale_method = max(set(ok_methods), key=ok_methods.count) if ok_methods else (
-            scale_methods[-1] if scale_methods else "ineligible"
-        )
-
-        return {
-            "mean_mape": recency_weighted_mean(fold_mapes),
-            "mean_smape": recency_weighted_mean(fold_smapes),
-            "mean_mase": recency_weighted_mean(fold_mases),
-            "mean_pinball_10": recency_weighted_mean(fold_pinball_10),
-            "mean_pinball_90": recency_weighted_mean(fold_pinball_90),
-            "mean_pinball": (
-                (
-                    lambda a, b: (a + b) / 2.0
-                    if a != float("inf") and b != float("inf")
-                    else float("inf")
-                )(recency_weighted_mean(fold_pinball_10), recency_weighted_mean(fold_pinball_90))
-            ),
-            "coverage_80": coverage_80,
-            "fold_residuals": {h: list(v) for h, v in sorted(residuals_by_h.items())},
-            "n": n_test_points,
-            "fold_mapes": fold_mapes,
-            "fold_mases": fold_mases,
-            "fold_horizon": fold_horizon,
-            "n_folds_used": _scored(fold_mases) or _scored(fold_mapes),
-            "mase_scale_method": scale_method,
-        }
+                folds.append(None)
+        return summarize_cv_folds(folds, fold_horizon=fold_horizon, m=m)

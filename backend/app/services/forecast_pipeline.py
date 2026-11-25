@@ -610,6 +610,34 @@ class LineForecast:
     was_clamped: bool = False
 
 
+def _with_foundation_note(
+    parameters: dict[str, Any] | None,
+    registry: ModelRegistry,
+    panel: "GlobalPanelContext | None",
+) -> dict[str, Any] | None:
+    """Stamp Chronos-2 status/provenance onto a line's ModelMetadata.parameters.
+
+    Only when the company's registry contains chronos2: records the model id,
+    weight revision and service version the run used, or the reason it was
+    skipped (service down, circuit open, context not built), so a skipped
+    foundation model is visible per line rather than silently absent.
+    """
+    from app.domain.engines.chronos2 import CHRONOS2_NAME, foundation_unavailable_reason
+
+    if registry.get(CHRONOS2_NAME) is None:
+        return parameters
+    fm = getattr(panel, "foundation", None) if panel is not None else None
+    if fm is not None:
+        note = fm.metadata_note()
+    else:
+        note = {
+            "model": CHRONOS2_NAME,
+            "status": "unavailable",
+            "skip_reason": foundation_unavailable_reason(panel, None),
+        }
+    return {**(parameters or {}), "foundation_model": note}
+
+
 def _sparse_history_pool(
     registry: ModelRegistry, ctx: "LineForecastContext", line_item_id: int
 ) -> list[str]:
@@ -871,6 +899,10 @@ def forecast_line_item(
             and selected_model
             and selected_impl is not None
             and selected_impl.capabilities.supports_exog
+            # A panel model (Chronos-2) already scored its drivers inside the
+            # once-per-run batch; a per-line exog head-to-head would refit it
+            # fold by fold, which its contract forbids.
+            and not selected_impl.capabilities.is_panel_model
         ):
             future_periods = make_period_labels(effective_dates[-1], horizon)
             exog_bundle = build_exog_for_line(
@@ -1250,7 +1282,9 @@ def forecast_line_item(
                     ModelMetadata(
                         line_result_id=result_id,
                         model_type=selected_model,
-                        parameters=forecast_output.parameters,
+                        parameters=_with_foundation_note(
+                            forecast_output.parameters, registry, ctx.panel
+                        ),
                         training_window_start=periods[0] if periods else None,
                         training_window_end=periods[-1] if periods else None,
                         training_points=len(effective_values),

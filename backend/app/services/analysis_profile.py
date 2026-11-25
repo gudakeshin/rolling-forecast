@@ -7,8 +7,8 @@ fall through to the global `app.config.settings` default whenever no
 per-business-unit override exists. No new table or migration -- the existing
 generic key/value override table is typed enough for this.
 
-Every field is read per-call. `enable_benchmark_models` and
-`enable_global_gbm_model` decide which models a registry *contains*, so they
+Every field is read per-call. `enable_benchmark_models`,
+`enable_global_gbm_model` and `enable_foundation_models` decide which models a registry *contains*, so they
 are applied by picking that company's registry
 (`app.domain.engines.model_registry.registry_for_analysis`), one cached
 registry per gate combination.
@@ -48,6 +48,7 @@ ANALYSIS_PROFILE_FIELDS: dict[str, type] = {
     "enable_ensemble_blending": bool,
     "enable_benchmark_models": bool,
     "enable_global_gbm_model": bool,
+    "enable_foundation_models": bool,
 }
 
 _KEY_PREFIX = "analysis."
@@ -76,6 +77,7 @@ class AnalysisSettings:
     enable_ensemble_blending: bool
     enable_benchmark_models: bool
     enable_global_gbm_model: bool
+    enable_foundation_models: bool
 
 
 def _decode(field_type: type, raw: str) -> Any:

@@ -150,6 +150,21 @@ class Settings(BaseSettings):
     # can switch either off in its AnalysisProfile.
     enable_global_gbm_model: bool = True
     enable_ensemble_blending: bool = True
+    # Phase C: Chronos-2 time-series foundation model, served by the
+    # self-hosted fm-service sidecar (torch lives there, never in this
+    # image). Dark by default: it ships only after it passes the
+    # scripts/backtest_roster.py gate (Phase D). A company can opt in through
+    # its AnalysisProfile. When on, it competes through the same two-stage
+    # cost gate, paired-SE band and blending as every other model.
+    enable_foundation_models: bool = False
+    fm_service_url: str = "http://fm-service:8100"
+    # One HTTP call carries every line and CV origin of a run, so the
+    # timeout is per run, not per line.
+    fm_service_timeout_seconds: float = 120.0
+    # Circuit breaker: after this many consecutive failures stop calling the
+    # service for fm_circuit_reset_seconds, then let one probe through.
+    fm_circuit_failure_threshold: int = 3
+    fm_circuit_reset_seconds: float = 300.0
 
     # Context Engine
     chroma_persist_dir: str = str(Path(__file__).parent.parent / "data" / "chroma")
