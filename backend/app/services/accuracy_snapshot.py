@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+import math
 import uuid
 from typing import Iterable
 
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
+from app.domain.engines.base_model import seasonal_period_length
 from app.models.actuals import ActualsRecord
 from app.models.forecast import ForecastLineResult, ForecastVersion
 from app.models.fx import ForecastAccuracyRecord
@@ -170,16 +172,20 @@ class AccuracySnapshotService:
             if flr.p10 is not None and flr.p90 is not None:
                 within = flr.p10 <= actual.value <= flr.p90
 
-            naive_p50 = None
+            # Benchmarks must be forecasts that were *available at the origin*.
+            # Naive = the last actual at the base period, held flat for every
+            # horizon — not the actual just before the target, which for h > 1
+            # had not happened yet and flatters the benchmark (and so
+            # understates FVA). Seasonal naive repeats the last observed
+            # season, stepping back whole years until it lands at or before
+            # the origin.
+            naive_p50 = hist_by_key.get((flr.line_item_id, base))
             seasonal_naive_p50 = None
             try:
-                prior = add_periods(actual.period, -1)
-                naive_p50 = hist_by_key.get((flr.line_item_id, prior))
-            except Exception:
-                pass
-            try:
-                lag12 = add_periods(actual.period, -12)
-                seasonal_naive_p50 = hist_by_key.get((flr.line_item_id, lag12))
+                m = seasonal_period_length()
+                cycles = max(1, math.ceil(h / m))
+                source = add_periods(actual.period, -m * cycles)
+                seasonal_naive_p50 = hist_by_key.get((flr.line_item_id, source))
             except Exception:
                 pass
 

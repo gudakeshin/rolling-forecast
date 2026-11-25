@@ -220,3 +220,76 @@ def test_lagged_driver_reads_real_history_before_the_window(db_session):
     # driver(t-2): 2023-11, 2023-12, 2024-01, 2024-02
     assert out.exog_train.iloc[:, 0].tolist() == [7.0, 8.0, 1.0, 2.0]
     assert out.exog_future.iloc[0, 0] == 3.0
+
+
+# ── 3. FVA naive benchmark at the forecast origin ─────────────────────────
+
+
+def test_naive_benchmark_uses_the_last_actual_at_the_origin(db_session):
+    from app.models.actuals import ActualsDataset, ActualsRecord
+    from app.models.forecast import ForecastLineResult, ForecastVersion
+    from app.models.fx import ForecastAccuracyRecord
+    from app.models.line_item import LineItem
+    from app.services.accuracy_snapshot import AccuracySnapshotService
+
+    li = LineItem(account_code="PB-FVA", name="PhaseB FVA", category="Revenue", display_order=1)
+    db_session.add(li)
+    db_session.flush()
+
+    hist = ActualsDataset(
+        source_type="csv", source_name="pb-hist.csv", file_hash="pb-hist",
+        period_start="2023-01", period_end="2024-06", periods_count=18, row_count=18,
+    )
+    db_session.add(hist)
+    db_session.flush()
+    for i in range(18):  # 2023-01 .. 2024-06, value = 100 + i
+        period = f"{2023 + i // 12}-{i % 12 + 1:02d}"
+        db_session.add(ActualsRecord(
+            dataset_id=hist.id, line_item_id=li.id, period=period,
+            value=100.0 + i, currency="USD",
+        ))
+
+    version = ForecastVersion(
+        name="PB-FVA-v1", status="draft", version_type="scheduled",
+        base_period="2024-06", horizon_months=3,
+    )
+    db_session.add(version)
+    db_session.flush()
+    targets = ["2024-07", "2024-08", "2024-09"]
+    for p in targets:
+        db_session.add(ForecastLineResult(
+            version_id=version.id, line_item_id=li.id, period=p,
+            p10=100.0, p50=120.0, p90=140.0, model_type="linear",
+        ))
+
+    new = ActualsDataset(
+        source_type="csv", source_name="pb-new.csv", file_hash="pb-new",
+        period_start="2024-07", period_end="2024-09", periods_count=3, row_count=3,
+    )
+    db_session.add(new)
+    db_session.flush()
+    for j, p in enumerate(targets):
+        db_session.add(ActualsRecord(
+            dataset_id=new.id, line_item_id=li.id, period=p,
+            value=200.0 + j, currency="USD",
+        ))
+    db_session.commit()
+
+    AccuracySnapshotService(db_session).on_actuals_ingested(new.id)
+    db_session.commit()
+
+    recs = {
+        r.period: r
+        for r in db_session.query(ForecastAccuracyRecord)
+        .filter(ForecastAccuracyRecord.version_id == version.id)
+        .all()
+    }
+    assert set(recs) == set(targets)
+    origin_actual = 117.0  # 2024-06
+    for p in targets:
+        # Flat from the origin for every horizon — never the post-origin
+        # actual just before the target (200 for 2024-08, 201 for 2024-09).
+        assert recs[p].naive_p50 == origin_actual
+    # Seasonal naive: same period last year, all of it at or before the origin.
+    assert recs["2024-07"].seasonal_naive_p50 == 106.0
+    assert recs["2024-09"].seasonal_naive_p50 == 108.0
