@@ -97,3 +97,126 @@ async def test_generate_baseline_flags_lines_with_a_missing_month(
     assert result.success, result.message
     assert result.data["gap_filled_lines"] >= 1
     assert result.data["gap_filled_lines"] == result.data["lines_forecasted"]
+
+
+# ── 2. Driver history: no plan overwrite, no backfill ─────────────────────
+
+
+def _driver_line(db_session, key: str, lag: int):
+    from app.models.driver import Driver, DriverLink
+    from app.models.line_item import LineItem
+
+    li = LineItem(account_code=f"PB-{key}", name=f"PhaseB {key}", category="Revenue", display_order=1)
+    db_session.add(li)
+    db_session.flush()
+    d = Driver(key=key, name=key, driver_type="macro")
+    db_session.add(d)
+    db_session.flush()
+    db_session.add(
+        DriverLink(
+            driver_id=d.id, line_item_id=li.id, relation="level", lag=lag,
+            status="active", link_type="manual", transform="level",
+        )
+    )
+    db_session.flush()
+    return li, d
+
+
+def test_plan_values_never_overwrite_driver_actuals(db_session):
+    from app.services.driver_exog import build_exog_for_line
+    from app.services.driver_series import upsert_driver_values
+
+    li, d = _driver_line(db_session, "pb_plan_vs_actual", lag=0)
+    upsert_driver_values(
+        db_session, driver_id=d.id,
+        rows=[{"period": f"2024-0{m}", "value": 100.0 + m} for m in range(1, 5)],
+    )
+    # The budget covers the whole year, history included.
+    upsert_driver_values(
+        db_session, driver_id=d.id, value_type="plan", version_id="pb-v1",
+        rows=[{"period": f"2024-0{m}", "value": 999.0} for m in range(1, 7)],
+    )
+    db_session.commit()
+
+    out = build_exog_for_line(
+        db_session, line_item_id=li.id,
+        train_periods=["2024-01", "2024-02", "2024-03", "2024-04"],
+        future_periods=["2024-05", "2024-06"],
+        version_id="pb-v1",
+    )
+    assert out is not None
+    assert out.exog_train.iloc[:, 0].tolist() == [101.0, 102.0, 103.0, 104.0]
+    # The plan still supplies the future, where there is no actual.
+    assert out.exog_future.iloc[:, 0].tolist() == [999.0, 999.0]
+
+
+def test_plan_outranks_a_stored_driver_forecast_for_future_periods(db_session):
+    from app.services.driver_exog import build_exog_for_line
+    from app.services.driver_series import upsert_driver_values
+
+    li, d = _driver_line(db_session, "pb_plan_vs_fc", lag=0)
+    upsert_driver_values(
+        db_session, driver_id=d.id,
+        rows=[{"period": f"2024-0{m}", "value": float(m)} for m in range(1, 4)],
+    )
+    upsert_driver_values(
+        db_session, driver_id=d.id, value_type="forecast", version_id="pb-v2",
+        rows=[{"period": "2024-04", "value": 40.0}],
+    )
+    upsert_driver_values(
+        db_session, driver_id=d.id, value_type="plan", version_id="pb-v2",
+        rows=[{"period": "2024-04", "value": 44.0}],
+    )
+    db_session.commit()
+
+    out = build_exog_for_line(
+        db_session, line_item_id=li.id,
+        train_periods=["2024-01", "2024-02", "2024-03"], future_periods=["2024-04"],
+        version_id="pb-v2",
+    )
+    assert out is not None
+    assert out.exog_future.iloc[0, 0] == 44.0
+
+
+def test_the_driver_window_has_no_backfill_from_later_values(db_session):
+    from app.services.driver_exog import build_exog_for_line
+    from app.services.driver_series import upsert_driver_values
+
+    # Driver history only starts mid-window: the old ffill().bfill() copied
+    # the 2024-04 value into 2024-01..03.
+    li, d = _driver_line(db_session, "pb_late_driver", lag=0)
+    upsert_driver_values(
+        db_session, driver_id=d.id,
+        rows=[{"period": f"2024-0{m}", "value": 10.0 * m} for m in range(4, 7)],
+    )
+    db_session.commit()
+
+    out = build_exog_for_line(
+        db_session, line_item_id=li.id,
+        train_periods=[f"2024-0{m}" for m in range(1, 7)], future_periods=["2024-07"],
+        version_id=None,
+    )
+    if out is not None:
+        assert f"d{d.id}_lag0" not in out.exog_train.columns
+        assert all(sp.driver_id != d.id for sp in out.specs)
+
+
+def test_lagged_driver_reads_real_history_before_the_window(db_session):
+    from app.services.driver_exog import build_exog_for_line
+    from app.services.driver_series import upsert_driver_values
+
+    li, d = _driver_line(db_session, "pb_lag_history", lag=2)
+    rows = [{"period": "2023-11", "value": 7.0}, {"period": "2023-12", "value": 8.0}]
+    rows += [{"period": f"2024-0{m}", "value": float(m)} for m in range(1, 5)]
+    upsert_driver_values(db_session, driver_id=d.id, rows=rows)
+    db_session.commit()
+
+    out = build_exog_for_line(
+        db_session, line_item_id=li.id,
+        train_periods=[f"2024-0{m}" for m in range(1, 5)], future_periods=["2024-05"],
+        version_id=None,
+    )
+    assert out is not None
+    # driver(t-2): 2023-11, 2023-12, 2024-01, 2024-02
+    assert out.exog_train.iloc[:, 0].tolist() == [7.0, 8.0, 1.0, 2.0]
+    assert out.exog_future.iloc[0, 0] == 3.0
