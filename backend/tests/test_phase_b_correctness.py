@@ -346,3 +346,208 @@ def test_prophet_seasonality_period_follows_the_calendar(monkeypatch):
     assert params.get("yearly_seasonality") is True
     out = model.predict(params, 3, dates[-1])
     assert out.diagnostics["seasonality_period"] == 4
+
+
+# ── 5. CPU-heavy fits off the event loop, in parallel ─────────────────────
+
+
+async def _ingest_two_years(skill_context, seed_line_items, tmp_path, name: str):
+    from app.domain.skills.ingest_actuals import IngestActualsSkill
+
+    rows = []
+    for code, li in seed_line_items.items():
+        if li.is_calculated:
+            continue
+        for month in range(24):
+            rows.append({
+                "account_code": code, "account_name": li.name, "category": li.category,
+                "period": f"{2024 + month // 12}-{month % 12 + 1:02d}",
+                "value": 1000.0 + 25.0 * month + (month % 12) * 7.0,
+                "currency": "USD",
+            })
+    path = tmp_path / name
+    pd.DataFrame(rows).to_csv(path, index=False)
+    out = await IngestActualsSkill().execute({"file_path": str(path)}, skill_context)
+    assert out.success, out.message
+
+
+def _p50_by_line_period(db_session, version_id: str) -> dict[tuple[int, str], float]:
+    from app.models.forecast import ForecastLineResult
+
+    rows = db_session.query(ForecastLineResult).filter(
+        ForecastLineResult.version_id == version_id
+    ).all()
+    return {(r.line_item_id, r.period): round(float(r.p50), 6) for r in rows}
+
+
+@pytest.mark.asyncio
+async def test_parallel_line_fits_match_the_serial_run(
+    db_session, db_engine, seed_line_items, skill_context, tmp_path, monkeypatch
+):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from sqlalchemy.orm import sessionmaker
+
+    import app.database as database
+    from app.domain.skills.generate_baseline import GenerateBaselineSkill
+    from app.services import fit_parallel
+
+    await _ingest_two_years(skill_context, seed_line_items, tmp_path, "par.csv")
+    params = {"horizon_months": 3, "model_type": "auto", "random_seed": 7, "skip_plan_check": True}
+
+    serial = await GenerateBaselineSkill().execute(params, skill_context)
+    assert serial.success, serial.message
+
+    # Pool children open their own session; point it at the unit-test DB.
+    monkeypatch.setattr(database, "SessionLocal", sessionmaker(bind=db_engine))
+    calls: list[int] = []
+    real_fit = fit_parallel.fit_line_task
+
+    def counting_fit(task):
+        calls.append(task.line_item_id)
+        return real_fit(task)
+
+    monkeypatch.setattr(fit_parallel, "fit_line_task", counting_fit)
+    pool = ThreadPoolExecutor(max_workers=3)
+    fit_parallel.set_fit_executor(pool)
+    try:
+        parallel = await GenerateBaselineSkill().execute(params, skill_context)
+    finally:
+        fit_parallel.set_fit_executor(None)
+        pool.shutdown(wait=True)
+    assert parallel.success, parallel.message
+
+    assert len(calls) == serial.data["lines_forecasted"]  # every line went through the pool
+    a = _p50_by_line_period(db_session, serial.data["version_id"])
+    b = _p50_by_line_period(db_session, parallel.data["version_id"])
+    assert a and a == b
+
+
+def test_line_fit_task_survives_a_real_spawned_process(db_session):
+    """The task (context, registry, analysis settings) pickles into a spawned
+    child, which opens its own session and returns a LineForecast."""
+    import pickle
+
+    from app.domain.engines.model_registry import registry_for_analysis
+    from app.services import fit_parallel
+    from app.services.analysis_profile import resolve_analysis_settings
+    from app.services.forecast_pipeline import LineForecastContext
+    from app.services.period_calendar import get_calendar_config
+
+    analysis = resolve_analysis_settings(db_session, business_unit_id=None)
+    ctx = LineForecastContext(
+        version_id="pb-spawn", horizon=3, cal_cfg=get_calendar_config(),
+        model_registry=registry_for_analysis(analysis), analysis=analysis,
+    )
+    task = fit_parallel.make_task(
+        line_item_id=-424242,  # does not exist in any DB
+        values=[1.0, 2.0, 3.0], dates=pd.date_range("2024-01-01", periods=3, freq="MS"),
+        periods=["2024-01", "2024-02", "2024-03"], is_material=False, ctx=ctx,
+    )
+    assert pickle.loads(pickle.dumps(task)).ctx.horizon == 3
+
+    pool = fit_parallel.create_fit_pool(1)
+    try:
+        out = pool.submit(fit_parallel.fit_line_task, task).result(timeout=120)
+    finally:
+        pool.shutdown(wait=True)
+    assert out.skipped and out.skip_reason == "line_item_not_found"
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_job_stops_between_lines(
+    db_session, seed_line_items, skill_context, tmp_path
+):
+    from app.domain.skills.generate_baseline import GenerateBaselineSkill
+    from app.services.fit_parallel import clear_cancel, request_cancel
+
+    await _ingest_two_years(skill_context, seed_line_items, tmp_path, "cancel.csv")
+    request_cancel("pb-cancel-job")
+    try:
+        result = await GenerateBaselineSkill().execute(
+            {"horizon_months": 3, "model_type": "linear", "random_seed": 1,
+             "skip_plan_check": True, "_job_id": "pb-cancel-job"},
+            skill_context,
+        )
+    finally:
+        clear_cancel("pb-cancel-job")
+    assert result.data["partial"] is True
+    assert result.data["lines_completed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_baseline_job_does_not_block_the_event_loop(monkeypatch):
+    import asyncio
+    import time
+
+    import app.workers.arq_worker as worker
+
+    async def cpu_bound(job_id, params, user_id):
+        time.sleep(0.6)  # synchronous work, like a real fit loop
+        return {"success": True, "message": "ok", "data": {}}
+
+    monkeypatch.setattr(worker, "_execute_baseline", cpu_bound)
+    ticks = 0
+
+    async def ticker():
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.05)
+            ticks += 1
+
+    t = asyncio.create_task(ticker())
+    try:
+        out = await worker.run_generate_baseline({}, "pb-loop-job", {}, None)
+    finally:
+        t.cancel()
+    assert out["success"] is True
+    assert ticks >= 5  # the loop kept running while the job computed
+
+
+@pytest.mark.asyncio
+async def test_a_stalled_job_is_told_to_stop(monkeypatch):
+    import time
+
+    import app.workers.arq_worker as worker
+    from app.config import settings
+    from app.services.fit_parallel import is_cancelled
+    from app.services.job_queue import update_job
+
+    seen_cancel: list[bool] = []
+
+    async def hung(job_id, params, user_id):
+        update_job(job_id, status="running", progress=0.2, step="stuck",
+                   progress_updated_at="2000-01-01T00:00:00+00:00")
+        deadline = time.time() + 5
+        while time.time() < deadline and not is_cancelled(job_id):
+            time.sleep(0.02)
+        seen_cancel.append(is_cancelled(job_id))
+        return {"success": False, "message": "stopped", "data": {}}
+
+    monkeypatch.setattr(worker, "_execute_baseline", hung)
+    monkeypatch.setattr(settings, "job_progress_stall_minutes", 0.001)
+
+    with pytest.raises(worker.ProgressStalledError):
+        await worker.run_generate_baseline({}, "pb-stall-job", {}, None)
+    # Give the worker thread a moment to observe the flag.
+    deadline = time.time() + 5
+    while not seen_cancel and time.time() < deadline:
+        time.sleep(0.02)
+    assert seen_cancel == [True]
+
+
+def test_worker_creates_and_shuts_down_the_fit_pool(monkeypatch):
+    import asyncio
+
+    import app.workers.arq_worker as worker
+    from app.services import fit_parallel
+
+    monkeypatch.setenv("FORECAST_FIT_PROCESSES", "1")
+    ctx: dict = {}
+    asyncio.run(worker.WorkerSettings.on_startup(ctx))
+    try:
+        assert fit_parallel.get_fit_executor() is ctx["fit_pool"]
+        assert worker.WorkerSettings.max_jobs > 1
+    finally:
+        asyncio.run(worker.WorkerSettings.on_shutdown(ctx))
+    assert fit_parallel.get_fit_executor() is None

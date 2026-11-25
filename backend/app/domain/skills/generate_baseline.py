@@ -786,38 +786,38 @@ class GenerateBaselineSkill(BaseSkill):
                 )
                 panel = None
 
+        from app.services.fit_parallel import (
+            PARALLEL_MIN_LINES,
+            LineForecastStream,
+            get_fit_executor,
+            is_cancelled,
+            make_task,
+            run_task_with_session,
+        )
+        from app.services.forecast_pipeline import LineForecastContext
+
+        base_ctx = LineForecastContext(
+            version_id=version.id,
+            horizon=horizon,
+            random_seed=random_seed,
+            model_type=model_type,
+            models_to_test=models_to_test,
+            selection_rule=selection_rule,
+            cal_cfg=cal_cfg,
+            model_registry=model_registry,
+            analysis=analysis,
+            realized_coverage=realized_coverage,
+            panel=panel,
+        )
+        stream: LineForecastStream | None = None
         try:
+            # Stage 1 (parent, cheap): actuals → reporting currency → fiscal
+            # grid, for every line. All DB access for the inputs happens here.
+            prepared: list[tuple[LineItem, Any, list[str]]] = []
             for li in line_items:
-                summary["total"] += 1
-
-                if job_id and (n_line_items <= 5 or summary["total"] % 5 == 0):
-                    from app.services.job_queue import update_job
-
-                    update_job(
-                        job_id,
-                        status="running",
-                        progress=min(0.9, summary["total"] / max(n_line_items, 1)),
-                        step=f"{li.name} ({summary['total']}/{n_line_items})",
-                    )
-
-                # EC11: Check timeout periodically
-                try:
-                    check_generation_timeout(
-                        start_time,
-                        context=f"Processing line {summary['total']}/{len(line_items)}: {li.name}",
-                    )
-                except ForecastTimeoutError as e:
-                    # Flush any pending rows before returning
-                    self._flush_forecast_batch(db, pending_line_rows, pending_metadata)
-                    version.generation_time_seconds = time.time() - start_time
-                    db.commit()
-                    all_warnings.append(str(e))
-                    return self._build_timeout_response(version, summary, all_warnings, all_flags)
-
                 records = actuals_by_li.get(li.id, [])
-
                 if not records:
-                    summary["skipped"] += 1
+                    prepared.append((li, None, []))
                     continue
 
                 # Build time series — convert to reporting currency at construction time
@@ -836,35 +836,78 @@ class GenerateBaselineSkill(BaseSkill):
                 periods, converted, missing_periods = reindex_to_fiscal_grid(
                     periods, converted, cal_cfg
                 )
-                values = pd.Series(converted)
                 dates = pd.DatetimeIndex([
                     pd.Timestamp(period_to_date(p, cal_cfg)) for p in periods
                 ])
-
                 is_material = (trailing_abs.get(li.id, 0.0) / grand_abs) >= materiality_share
-                from app.services.forecast_pipeline import LineForecastContext, forecast_line_item
-
-                line_out = forecast_line_item(
-                    db,
-                    li,
-                    values,
-                    dates,
-                    periods,
-                    LineForecastContext(
-                        version_id=version.id,
-                        horizon=horizon,
-                        random_seed=random_seed,
-                        model_type=model_type,
-                        models_to_test=models_to_test,
-                        selection_rule=selection_rule,
-                        is_material=is_material,
-                        cal_cfg=cal_cfg,
-                        model_registry=model_registry,
-                        analysis=analysis,
-                        realized_coverage=realized_coverage,
-                        panel=panel,
-                    ),
+                task = make_task(
+                    line_item_id=li.id,
+                    values=converted,
+                    dates=dates,
+                    periods=periods,
+                    is_material=is_material,
+                    ctx=base_ctx,
                 )
+                prepared.append((li, task, missing_periods))
+
+            # Stage 2 (CPU-heavy): fit/select/predict. In the arq worker this
+            # fans out to the process pool; elsewhere it runs serially, lazily,
+            # one line per loop iteration exactly as before.
+            tasks = [t for _li, t, _m in prepared if t is not None]
+            li_by_id = {li.id: li for li in line_items}
+            executor = get_fit_executor() if len(tasks) >= PARALLEL_MIN_LINES else None
+            if executor is not None:
+                # Pool children read through their own sessions, so stage-0
+                # driver forecasts and the version row must be committed.
+                db.commit()
+            stream = LineForecastStream(
+                tasks,
+                serial_fn=lambda t: run_task_with_session(db, li_by_id[t.line_item_id], t),
+                executor=executor,
+            )
+            if stream.parallel:
+                logger.info("fitting %d lines on the process pool", len(tasks))
+
+            # Stage 3 (parent): progress, timeout, bookkeeping — in line order.
+            for li, task, missing_periods in prepared:
+                summary["total"] += 1
+
+                if job_id and (n_line_items <= 5 or summary["total"] % 5 == 0):
+                    from app.services.job_queue import update_job
+
+                    update_job(
+                        job_id,
+                        status="running",
+                        progress=min(0.9, summary["total"] / max(n_line_items, 1)),
+                        step=f"{li.name} ({summary['total']}/{n_line_items})",
+                    )
+
+                # EC11: Check timeout periodically; a cancelled job (progress
+                # stall or arq job_timeout) stops the same way.
+                try:
+                    check_generation_timeout(
+                        start_time,
+                        context=f"Processing line {summary['total']}/{len(line_items)}: {li.name}",
+                    )
+                    if is_cancelled(job_id):
+                        raise ForecastTimeoutError(
+                            f"Job {job_id} was cancelled at line "
+                            f"{summary['total']}/{len(line_items)}: {li.name}"
+                        )
+                except ForecastTimeoutError as e:
+                    stream.close()
+                    # Flush any pending rows before returning
+                    self._flush_forecast_batch(db, pending_line_rows, pending_metadata)
+                    version.generation_time_seconds = time.time() - start_time
+                    db.commit()
+                    all_warnings.append(str(e))
+                    return self._build_timeout_response(version, summary, all_warnings, all_flags)
+
+                if task is None:
+                    summary["skipped"] += 1
+                    continue
+
+                line_out = next(stream)
 
                 if missing_periods:
                     line_out.flags.append(f"missing_periods_filled:{len(missing_periods)}")
@@ -913,6 +956,8 @@ class GenerateBaselineSkill(BaseSkill):
             logger.error(f"Forecast generation error: {e}", exc_info=True)
             all_warnings.append(f"Generation error: {str(e)[:200]}")
         finally:
+            if stream is not None:
+                stream.close()
             reset_calendar(cal_token)
 
         # Persist batched forecast rows before reconciliation / scoring

@@ -66,7 +66,8 @@ def test_worker_queues_are_split():
 
     assert TaskWorkerSettings.queue_name == bt.TASK_QUEUE
     assert TaskWorkerSettings.max_jobs > 1
-    assert WorkerSettings.max_jobs == 1  # forecasts keep their own slot
+    # Forecasts keep their own queue; it now runs several jobs at once.
+    assert WorkerSettings.max_jobs > 1
     assert {f.__name__ for f in TaskWorkerSettings.functions} == {"run_background_task"}
 
 
