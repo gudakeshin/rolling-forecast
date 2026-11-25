@@ -293,3 +293,56 @@ def test_naive_benchmark_uses_the_last_actual_at_the_origin(db_session):
     # Seasonal naive: same period last year, all of it at or before the origin.
     assert recs["2024-07"].seasonal_naive_p50 == 106.0
     assert recs["2024-09"].seasonal_naive_p50 == 108.0
+
+
+# ── 4. Seasonal period comes from the fiscal calendar ─────────────────────
+
+
+def test_outlier_stl_uses_the_calendar_seasonal_period(monkeypatch):
+    import numpy as np
+
+    import app.domain.engines.base_model as base_model
+    from app.services.outlier_cleaning import detect_outliers_stl_mad
+
+    monkeypatch.setattr(base_model, "seasonal_period_length", lambda: 4)
+    # 10 points: two 4-period cycles is enough for STL, two 12-period cycles is not.
+    rng = np.random.default_rng(0)
+    t = np.arange(10)
+    values = pd.Series(100.0 + np.array([-6.0, -2.0, 2.0, 6.0])[t % 4] + rng.normal(0, 1.0, 10))
+    dates = pd.date_range("2024-01-01", periods=10, freq="MS")
+
+    out = detect_outliers_stl_mad(values, dates)
+
+    assert out.method == "stl_mad"
+    assert out.details["seasonal_period"] == 4
+
+
+def test_outlier_stl_explicit_period_still_wins():
+    import numpy as np
+
+    from app.services.outlier_cleaning import detect_outliers_stl_mad
+
+    rng = np.random.default_rng(1)
+    t = np.arange(10)
+    values = pd.Series(100.0 + np.array([-6.0, -2.0, 2.0, 6.0])[t % 4] + rng.normal(0, 1.0, 10))
+    dates = pd.date_range("2024-01-01", periods=10, freq="MS")
+    out = detect_outliers_stl_mad(values, dates, seasonal_period=4)
+    assert out.details["seasonal_period"] == 4
+
+
+def test_prophet_seasonality_period_follows_the_calendar(monkeypatch):
+    pytest.importorskip("prophet")
+    import numpy as np
+
+    import app.domain.engines.prophet_model as prophet_model
+
+    monkeypatch.setattr(prophet_model, "seasonal_period_length", lambda: 4)
+    n = 12  # >= 2 cycles of 4, < 2 cycles of 12
+    y = pd.Series(100.0 + np.tile([0.0, 5.0, 10.0, 5.0], 3) + np.arange(n))
+    dates = pd.date_range("2023-01-01", periods=n, freq="MS")
+
+    model = prophet_model.ProphetModel()
+    params = model.fit(y, dates)
+    assert params.get("yearly_seasonality") is True
+    out = model.predict(params, 3, dates[-1])
+    assert out.diagnostics["seasonality_period"] == 4
