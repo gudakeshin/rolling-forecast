@@ -5,7 +5,12 @@ import pandas as pd
 from typing import Any
 import logging
 
-from app.domain.engines.base_model import IForecastModel, ForecastOutput, ModelCapabilities
+from app.domain.engines.base_model import (
+    ForecastOutput,
+    IForecastModel,
+    ModelCapabilities,
+    seasonal_period_length,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +54,7 @@ class ProphetModel(IForecastModel):
 
         try:
             model = Prophet(
-                yearly_seasonality=True if len(series) >= 24 else False,
+                yearly_seasonality=True if len(series) >= 2 * seasonal_period_length() else False,
                 weekly_seasonality=False,
                 daily_seasonality=False,
                 changepoint_prior_scale=0.05,
@@ -75,7 +80,7 @@ class ProphetModel(IForecastModel):
             has_changepoints = len(changepoints) > 0
 
             return {
-                "yearly_seasonality": len(series) >= 24,
+                "yearly_seasonality": len(series) >= 2 * seasonal_period_length(),
                 "changepoint_prior_scale": 0.05,
                 "n_changepoints": len(changepoints),
                 "has_changepoints": has_changepoints,
@@ -155,7 +160,9 @@ class ProphetModel(IForecastModel):
             },
             diagnostics={
                 "seasonality_detected": params.get("yearly_seasonality", False),
-                "seasonality_period": 12 if params.get("yearly_seasonality") else None,
+                "seasonality_period": (
+                    seasonal_period_length() if params.get("yearly_seasonality") else None
+                ),
                 "has_changepoints": params.get("has_changepoints", False),
                 "n_changepoints": params.get("n_changepoints", 0),
             },

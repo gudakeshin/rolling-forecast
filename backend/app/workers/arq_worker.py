@@ -147,6 +147,15 @@ async def _execute_baseline(
         db.close()
 
 
+def _run_baseline_in_thread(
+    job_id: str,
+    params: dict[str, Any],
+    user_id: str | None,
+) -> dict[str, Any]:
+    """Thread entry point: a private event loop for the (async-signature) skill."""
+    return asyncio.run(_execute_baseline(job_id, params, user_id))
+
+
 async def run_generate_baseline(
     ctx: dict,
     job_id: str,
@@ -159,8 +168,18 @@ async def run_generate_baseline(
 
     update_job(job_id, status="running", progress=0.1, step="Starting")
 
+    from app.services.fit_parallel import clear_cancel, request_cancel
+
     stall_minutes = float(settings.job_progress_stall_minutes)
-    skill_task = asyncio.create_task(_execute_baseline(job_id, params, user_id))
+    clear_cancel(job_id)
+    # The run is CPU-bound and synchronous under its async signature. Running
+    # it on this loop starved the watchdog (it could only fire once the run
+    # had already finished), arq's heartbeats, and every other job. Give it a
+    # thread with its own loop; the line fits themselves go to the process
+    # pool registered in on_startup.
+    skill_task = asyncio.create_task(
+        asyncio.to_thread(_run_baseline_in_thread, job_id, params, user_id)
+    )
     watchdog_task = asyncio.create_task(_progress_watchdog(job_id, stall_minutes))
 
     try:
@@ -189,6 +208,9 @@ async def run_generate_baseline(
         exc = watchdog_task.exception()
         if isinstance(exc, ProgressStalledError):
             logger.error("%s", exc)
+            # The thread cannot be killed; tell the baseline loop to stop at
+            # its next line instead of running on unobserved.
+            request_cancel(job_id)
             update_job(job_id, status="failed", error=str(exc))
             raise exc
         if exc is not None:
@@ -198,6 +220,11 @@ async def run_generate_baseline(
             return skill_task.result()
         raise ProgressStalledError(f"Job {job_id} ended without a skill result")
     except ProgressStalledError:
+        raise
+    except asyncio.CancelledError:
+        # arq's job_timeout (or shutdown) cancelled us — stop the thread too.
+        request_cancel(job_id)
+        update_job(job_id, status="failed", error="Job cancelled (timeout or shutdown)")
         raise
     except Exception as e:
         logger.exception("generate_baseline job %s failed", job_id)
@@ -541,8 +568,12 @@ async def run_background_task(
 
 
 class WorkerSettings:
-    """Forecast generation + scheduled sweeps. One slot: a baseline run is
-    heavy enough that two at once would starve each other."""
+    """Forecast generation + scheduled sweeps.
+
+    Each baseline runs in its own thread and fans its line fits out to one
+    shared process pool (created in ``on_startup``), so concurrent jobs share
+    the CPU through the pool instead of starving each other on the loop.
+    ``max_jobs`` therefore counts runs in flight, not cores."""
 
     functions = [run_generate_baseline]
     cron_jobs = [
@@ -556,31 +587,46 @@ class WorkerSettings:
         cron(scheduled_anomaly_sweep, hour=7, minute=30, run_at_startup=False),
     ]
     redis_settings: Any = None
-    # arq default is 300s — a full CoA baseline needs far longer, but raising
-    # the timeout alone with max_jobs=1 blocks the only worker on a hang.
-    # Pair with the progress stall watchdog above.
+    # arq default is 300s — a full CoA baseline needs far longer. A hung run
+    # is caught by the progress stall watchdog above (which can now fire
+    # mid-run, since the run is off the loop) and cancelled cooperatively.
     job_timeout = 3600
-    max_jobs = 1
+    max_jobs = 4
 
     @staticmethod
     async def on_startup(ctx: dict) -> None:
         # arq awaits this hook; a plain function crashed every worker at boot.
         from app.config import settings
+        from app.services.fit_parallel import create_fit_pool, fit_processes, set_fit_executor
 
         # Prefer settings so env can override without editing this module
         WorkerSettings.job_timeout = int(settings.job_timeout_seconds)
+        processes = fit_processes()
+        pool = create_fit_pool(processes)
+        set_fit_executor(pool)
+        ctx["fit_pool"] = pool
         logger.info(
-            "arq worker started (job_timeout=%ss, stall=%smin, max_jobs=%s)",
+            "arq worker started (job_timeout=%ss, stall=%smin, max_jobs=%s, fit_processes=%s)",
             WorkerSettings.job_timeout,
             settings.job_progress_stall_minutes,
             WorkerSettings.max_jobs,
+            processes,
         )
+
+    @staticmethod
+    async def on_shutdown(ctx: dict) -> None:
+        from app.services.fit_parallel import set_fit_executor
+
+        pool = ctx.pop("fit_pool", None)
+        set_fit_executor(None)
+        if pool is not None:
+            pool.shutdown(wait=False, cancel_futures=True)
 
 
 class TaskWorkerSettings:
     """Short background tasks (pulls, document indexing, board-pack email,
-    rescore, reflection) on their own queue, so a long forecast on the
-    single-slot WorkerSettings queue never blocks them. Run as a second
+    rescore, reflection) on their own queue, so long forecasts on the
+    WorkerSettings queue never block them. Run as a second
     worker: ``arq app.workers.arq_worker.TaskWorkerSettings``."""
 
     functions = [run_background_task]
