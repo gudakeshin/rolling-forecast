@@ -299,6 +299,73 @@ Per dataset (`+range` pinball): test −8.0% [−13.6, −3.1], sample −15.4%
   (so `+range-nowiden` first ran with widening on); every arm's keys are
   now set on every run.
 
+## Foundation models, Phase E — usability features (2026-11-26)
+
+All five build on the Chronos-2 batch each run already makes for the range
+blend.
+
+### E1 — New and short lines (`foundation_short_lines_enabled`, **on**)
+
+`backtest_roster.py --new-lines N` simulates new lines: lines are split
+into 4 groups, and each group in turn keeps only its last N training
+points while the others keep full history (so siblings are realistic).
+Scored against the uncut history's naive scale; 2 origins; vs the
+production default (`+range`), 95% paired CI:
+
+| History | Default point model | MASE | Pinball | Coverage |
+|---|---|---|---|---|
+| 3 months | flat average | 0 (point kept) | **−14.9% [−19.0, −10.3]** | 0.51 → 0.69 |
+| 6 months | forced linear | **−32.4% [−36.1, −28.1]** | **−46.3% [−52.4, −38.4]** | 0.55 → 0.72 |
+| 9 months | linear vs GBM | +3.3% [+0.6, +7.2] | **−13.2% [−18.3, −7.7]** | 0.64 → 0.76 |
+| all | | **−13.7% [−17.0, −10.1]** | **−28.9% [−33.9, −23.5]** | 0.57 → 0.72 |
+
+A first version replaced every short line's point with Chronos-2; it lost
+on MASE against the flat average (3 months: worse on test and Zeiss) and
+against the GBM (9 months). So Chronos-2 now replaces only the
+forced-linear fallback (a short line with no global-GBM candidate); every
+other short line keeps its point and takes the range blend. The 9-month
+MASE loss is the 10 synthetic `SYN-short` lines, which are a pure linear
+trend plus noise (linear's best case by construction); on the real datasets
+no 9-month line was forced to linear. **On by default** (tests run with
+it off, like the range blend, since they have no sidecar).
+`test_foundation_short_lines.py`.
+
+### E2 — Second opinion (`second_opinion_enabled`, on)
+
+A line whose published P50 is outside Chronos-2's P10–P90 for at least half
+the horizon gets a "Models disagree" flag: it is in the line's remediation,
+the review queue includes it whatever its confidence (with a badge), and
+Why-this-number shows Chronos-2's P10/P50/P90 for the cell. No number
+changes. `app/services/second_opinion.py`, `test_second_opinion.py`.
+
+### E3 — Driver-aware what-if (`method="foundation"`)
+
+`create_what_if_scenario(..., method="foundation")` (API `method`, skill
+`run_what_if`) forecasts each driver-linked line twice in one call, under
+the base and the shocked driver path as known-future covariate, and adds
+the difference to the published P50; the band keeps its half-widths. Lines
+it cannot serve (< 12 points, no usable driver column, service down) fall
+back to the link coefficients, and the result says so.
+`app/services/foundation_what_if.py`, `test_phase6b_7.py`.
+
+### E4 — Instant preview
+
+`GET /panel/forecast-preview/{dataset_id}`: one Chronos-2 call over every
+line of an uploaded dataset (no CV, no drivers, nothing persisted), opened
+automatically after an actuals upload from chat (primary panel) or the
+document library (second panel). Labelled as a preview.
+`app/services/foundation_preview.py`, `ForecastPreviewPanel.tsx`,
+`test_foundation_preview.py`.
+
+### E5 — Vintage-band anomalies
+
+The anomaly dashboard adds "Outside Prior Range": an actual in the last 6
+periods that fell outside the P10–P90 of the closest prior vintage that
+covered it (shortest horizon, newest), with severity by distance in band
+widths (> 1 critical, > 0.5 warning). From the existing
+`ForecastAccuracyRecord.within_p10_p90`. `app/services/vintage_anomalies.py`,
+`test_vintage_anomalies.py`.
+
 ## Whole-app gates (plan "Verification")
 
 - `pytest -q --cov=app --cov-fail-under=60`: 779 passed, 4 skipped, coverage 76.4% (2026-11-26).

@@ -2697,6 +2697,9 @@ async def get_anomaly_dashboard(
 
     # ── Detect anomalies per line item ────────────────
     anomaly_items: list[dict] = []
+    from app.services.vintage_anomalies import vintage_band_misses
+
+    band_misses = vintage_band_misses(db, list(li_groups))
 
     dismissed_ids = {
         row.anomaly_id
@@ -2834,6 +2837,30 @@ async def get_anomaly_dashboard(
             except Exception:
                 pass
 
+        # ── Method 6: Actual outside a prior vintage's band (Phase E5) ──
+        sev_score = {"critical": 3.0, "warning": 2.0, "info": 1.0}
+        for miss in band_misses.get(li_id, []):
+            side = "above" if miss["direction"] == "above" else "below"
+            widths = miss["band_widths_outside"]
+            findings.append({
+                "type": "vintage_band_miss",
+                "severity": miss["severity"],
+                "score": (widths if widths is not None else 3.0) * 30 * mat_weight
+                + sev_score[miss["severity"]],
+                "headline": f"Actual landed {side} the forecast range in {miss['period']}",
+                "detail": (
+                    f"The {miss['period']} actual of {formatCurrency(miss['value'])} is {side} the "
+                    f"P10-P90 of {formatCurrency(miss['p10'])} to {formatCurrency(miss['p90'])} that the "
+                    f"forecast made {miss['horizon_offset']} month(s) earlier published"
+                    + (f" ({widths:.1f} band widths outside)." if widths is not None else ".")
+                    + " Either something unusual happened, or the band was too narrow."
+                ),
+                "period": miss["period"],
+                "value": miss["value"],
+                "expected": miss["expected"],
+                "vintage_version_id": miss["vintage_version_id"],
+            })
+
         # ── Method 5: Wide prediction intervals ──────
         for r in group:
             if r.p10 is not None and r.p90 is not None and abs(r.p50) > 1e-10:
@@ -2895,6 +2922,15 @@ async def get_anomaly_dashboard(
                 "type": "override",
                 "label": "Adjust forecast",
                 "detail": f"Override the forecast for {li.name} if the model projection doesn't match known business plans.",
+            })
+        if "vintage_band_miss" in finding_types:
+            actions.append({
+                "type": "investigate",
+                "label": "Explain the miss",
+                "detail": (
+                    f"Find out what drove {li.name} outside its forecast range — a one-off, a "
+                    "data issue, or a change the forecast should now carry."
+                ),
             })
         if "high_uncertainty" in finding_types:
             actions.append({

@@ -4,6 +4,7 @@ import { uploadFile, apiPost } from '../../api/client';
 import { useI18n } from '../../i18n/useI18n';
 import { useComposerStore } from '../../store/composerStore';
 import { useAuthStore } from '../../store/authStore';
+import { usePanelStore } from '../../store/panelStore';
 import {
   loadSkills,
   searchMentions,
@@ -309,6 +310,9 @@ export function InputBar({ onSend, onStop, isStreaming }: Props) {
         // chat round-trip needed for the LLM to notice and call ingest_actuals.
         const result = await uploadFile('/upload/actuals', file);
         setUploadStatus(result.message || `${file.name} ingested`);
+        // Instant Chronos-2 preview while the full baseline is generated.
+        const datasetId = result.ingest?.dataset_id;
+        if (datasetId) usePanelStore.getState().openPanel('forecast_preview', { dataset_id: datasetId });
         onSend(`I've uploaded and ingested "${result.filename}" as actuals data. ${result.message || ''}`);
         setTimeout(() => setUploadStatus(null), 5000);
       } else if (CONTEXT_EXTENSIONS.has(ext) || !ACTUALS_EXTENSIONS.has(ext)) {

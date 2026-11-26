@@ -12,7 +12,7 @@ scores the withheld months:
     +blend+gbm    both, without CV-coverage widening (production until
                   2026-11-26)
     +cvwiden      +blend+gbm, widening each band by its CV coverage
-                  (cv_coverage_widening_enabled; the production default)
+                  (cv_coverage_widening_enabled; production until the range blend)
     +conformal    +cvwiden with split-conformal interval calibration
                   (conformal_calibration_enabled), the coverage report the
                   setting's comment asks for before turning it on
@@ -22,6 +22,9 @@ scores the withheld months:
                   (foundation_range_blend_enabled); Chronos-2 is not a
                   selection candidate, so point forecasts are unchanged
     +range-nowiden  the same without CV-coverage widening
+    +short        the production default: +range plus Chronos-2 for new and
+                  short lines (foundation_short_lines_enabled); run with
+                  --new-lines N to score it on simulated new lines
     +fm+range     +fm, with each non-Chronos-2 line's P10/P90 averaged with
                   Chronos-2's (foundation_range_blend_enabled)
     +fm+range-nowiden  the same without CV-coverage widening
@@ -105,6 +108,13 @@ CONFIGS = {
         "enable_global_gbm_model": True,
         "foundation_range_blend_enabled": True,
     },
+    "+short": {
+        "enable_ensemble_blending": True,
+        "enable_global_gbm_model": True,
+        "cv_coverage_widening_enabled": True,
+        "foundation_range_blend_enabled": True,
+        "foundation_short_lines_enabled": True,
+    },
     "+fm+range": {
         "enable_ensemble_blending": True,
         "enable_global_gbm_model": True,
@@ -119,7 +129,7 @@ CONFIGS = {
         "foundation_range_blend_enabled": True,
     },
 }
-DEFAULT = "+cvwiden"
+DEFAULT = "+short"
 RAW = "chronos2-raw"
 ORDER = [*CONFIGS, RAW]
 
@@ -169,6 +179,8 @@ def run(
     origins: int = 1,
     origin_step: int = 3,
     min_train: int = 8,
+    new_lines: int | None = None,
+    new_groups: int = 4,
 ) -> pd.DataFrame:
     """Score every config from ``origins`` forecast origins per line.
 
@@ -176,6 +188,12 @@ def run(
     scores the ``holdout`` points that follow the cut, so origins step back in
     time and their test windows overlap when origin_step < holdout. A line is
     used at an origin only when at least ``min_train`` points remain.
+
+    ``new_lines=k`` simulates new lines: lines are split into ``new_groups``
+    groups, and in turn each group's training history is cut to its last
+    ``k`` points while the other lines keep theirs (so sibling context is
+    realistic). Only the cut lines are scored; MASE and pinball are scaled
+    by the uncut history's naive MAE, so the scale is not itself a guess.
     """
     engine = create_engine("sqlite:///:memory:")
     import app.models  # noqa: F401 -- register mappers
@@ -207,12 +225,18 @@ def run(
         )
         registry = registry_for_analysis(analysis)
         t0 = time.time()
+        codes = list(series)
+        groups = (
+            [set(codes[g::new_groups]) for g in range(new_groups)] if new_lines else [None]
+        )
         for origin in range(origins):
-            results.extend(_run_origin(
-                db, series, items, cal, analysis, registry, config,
-                holdout=holdout, seed=seed, cut=holdout + origin * origin_step,
-                min_train=min_train, origin=origin,
-            ))
+            for group in groups:
+                results.extend(_run_origin(
+                    db, series, items, cal, analysis, registry, config,
+                    holdout=holdout, seed=seed, cut=holdout + origin * origin_step,
+                    min_train=min_train, origin=origin,
+                    cut_codes=group, cut_to=new_lines,
+                ))
         print(f"  {config}: {time.time() - t0:.1f}s", file=sys.stderr)
     db.close()
     return pd.DataFrame(results)
@@ -221,14 +245,19 @@ def run(
 def _run_origin(
     db, series, items, cal, analysis, registry, config, *,
     holdout: int, seed: int, cut: int, min_train: int, origin: int,
+    cut_codes: set[str] | None = None, cut_to: int | None = None,
 ) -> list[dict]:
     results: list[dict] = []
     train_by_line, periods_by_line, dates_by_line, actual_by_line = {}, {}, {}, {}
+    scale_by_line: dict[int, float] = {}
     for code, (_, g) in series.items():
         if len(g) - cut < min_train:
             continue
         tr = g.iloc[: len(g) - cut]
         li = items[code]
+        scale_by_line[li.id] = naive_scale(tr["value"].astype(float).values)
+        if cut_codes is not None and code in cut_codes and cut_to:
+            tr = tr.iloc[-cut_to:]
         train_by_line[li.id] = pd.Series(tr["value"].astype(float).values)
         periods_by_line[li.id] = list(tr["period"])
         dates_by_line[li.id] = pd.DatetimeIndex(
@@ -242,6 +271,7 @@ def _run_origin(
         analysis.enable_global_gbm_model
         or analysis.enable_foundation_models
         or settings.foundation_range_blend_enabled
+        or settings.foundation_short_lines_enabled
     ):
         effective = {
             li.id: compute_effective_series(
@@ -274,6 +304,8 @@ def _run_origin(
             analysis=analysis,
             panel=panel,
         )
+        if cut_codes is not None and li.account_code not in cut_codes:
+            continue
         out = forecast_line_item(
             None, li, train_by_line[li.id], dates_by_line[li.id], periods_by_line[li.id], ctx  # type: ignore[arg-type]
         )
@@ -284,7 +316,7 @@ def _run_origin(
         p50 = np.array([r["p50"] for r in rows], dtype=float)
         p10 = np.array([r.get("p10", r["p50"]) for r in rows], dtype=float)
         p90 = np.array([r.get("p90", r["p50"]) for r in rows], dtype=float)
-        scale = naive_scale(train_by_line[li.id].values)
+        scale = scale_by_line[li.id]
         results.append({
             "config": config,
             "series": code,
@@ -356,6 +388,10 @@ def main() -> None:
     )
     parser.add_argument("--origin-step", type=int, default=3)
     parser.add_argument(
+        "--new-lines", type=int, default=None,
+        help="simulate new lines: cut each group's history to its last N points in turn",
+    )
+    parser.add_argument(
         "--configs", default=None,
         help="comma-separated subset of arms to run (the default arm is always included)",
     )
@@ -374,7 +410,7 @@ def main() -> None:
         print(f"{path.name}:", file=sys.stderr)
         df = run(
             path, args.holdout, args.seed, configs,
-            origins=args.origins, origin_step=args.origin_step,
+            origins=args.origins, origin_step=args.origin_step, new_lines=args.new_lines,
         )
         df["dataset"] = path.name
         frames.append(df)

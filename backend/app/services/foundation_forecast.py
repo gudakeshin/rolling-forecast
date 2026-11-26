@@ -43,6 +43,7 @@ from app.domain.engines.base_model import (
     summarize_cv_folds,
 )
 from app.domain.engines.chronos2 import (
+    CHRONOS2_MIN_CONTEXT,
     CHRONOS2_MIN_POINTS,
     CHRONOS2_NAME,
     FoundationPanelContext,
@@ -155,15 +156,24 @@ def build_foundation_batch(
     """The request series, plus per-line bookkeeping to score the CV folds."""
     from app.services.driver_exog import build_exog_for_line
 
+    from app.config import settings
+
+    # New and short lines (3-11 points, including those otherwise forced to a
+    # flat average) get a production forecast only, no CV fold; see
+    # forecast_pipeline._short_line_foundation_model.
+    short_lines = settings.foundation_short_lines_enabled
     series: list[dict[str, Any]] = []
     plan: dict[int, dict[str, Any]] = {}
     for li in line_items:
         res = effective_series_by_line.get(li.id)
-        if res is None or res.forced is not None:
+        if res is None:
+            continue
+        if res.forced is not None and not (short_lines and res.forced == "average"):
             continue
         values = np.asarray(res.values.values, dtype=float)
         n = len(values)
-        if n < CHRONOS2_MIN_POINTS or not np.all(np.isfinite(values)):
+        min_points = CHRONOS2_MIN_CONTEXT if short_lines else CHRONOS2_MIN_POINTS
+        if n < min_points or not np.all(np.isfinite(values)):
             continue
         # Effective values can be a suffix of the raw history (structural-break
         # truncation): align periods to the values actually forecast.
@@ -202,10 +212,12 @@ def build_foundation_batch(
         })
 
         fold_horizon = cv_fold_horizon(horizon, n)
-        n_folds = cv_n_folds(n, min_data_points=CHRONOS2_MIN_POINTS, fold_horizon=fold_horizon)
-        windows = cv_fold_windows(
-            n, min_data_points=CHRONOS2_MIN_POINTS, n_folds=n_folds, fold_horizon=fold_horizon
-        )
+        windows: list[tuple[int, int]] = []
+        if n >= CHRONOS2_MIN_POINTS:
+            n_folds = cv_n_folds(n, min_data_points=CHRONOS2_MIN_POINTS, fold_horizon=fold_horizon)
+            windows = cv_fold_windows(
+                n, min_data_points=CHRONOS2_MIN_POINTS, n_folds=n_folds, fold_horizon=fold_horizon
+            )
         for train_end, test_end in windows:
             origin = periods[train_end - 1]
             fold_future = (

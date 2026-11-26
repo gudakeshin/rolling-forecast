@@ -40,6 +40,10 @@ CHRONOS2_NAME = "chronos2"
 # accepts shorter context, but below a year there is no seasonal cycle to
 # condition on and the per-series CV has nothing to pair against.
 CHRONOS2_MIN_POINTS = 12
+# Shortest context for a production-only forecast of a new or short line
+# (foundation_short_lines_enabled): no CV fold, sibling lines in the same
+# group supply the rest of the context.
+CHRONOS2_MIN_CONTEXT = 3
 
 
 @dataclass(frozen=True)

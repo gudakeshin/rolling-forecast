@@ -173,6 +173,19 @@ class Settings(BaseSettings):
     # fm-service down a run carries on without it (circuit breaker, skip reason).
     foundation_range_blend_enabled: bool = True
     foundation_range_blend_weight: float = 0.5
+    # New and short lines. A short line with no global-GBM candidate (which
+    # is otherwise forced to linear) takes Chronos-2's forecast, conditioned on
+    # its sibling lines; every short line of 3+ points joins the run's
+    # Chronos-2 batch, so the others (flat average below 6 points, the
+    # linear-vs-GBM contest) keep their point and take the range blend.
+    # On since the new-line backtest (backtest_roster.py --new-lines, see
+    # ENHANCEMENT_PLAN_VERIFICATION.md): pooled MASE -13.7%, pinball -28.9%,
+    # coverage 0.57 -> 0.72; the forced-linear case alone MASE -32%.
+    foundation_short_lines_enabled: bool = True
+    # Second opinion (Phase E2): flag a line for review when its published P50
+    # sits outside Chronos-2's P10-P90 for at least half the horizon. Changes
+    # no number; needs the run's Chronos-2 batch (the range blend builds it).
+    second_opinion_enabled: bool = True
     fm_service_url: str = "http://fm-service:8100"
     # One HTTP call carries every line and CV origin of a run, so the
     # timeout is per run, not per line.

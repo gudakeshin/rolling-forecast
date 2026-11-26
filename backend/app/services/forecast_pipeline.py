@@ -34,6 +34,7 @@ from app.services.driver_exog import build_exog_for_line
 from app.services.error_handlers import HistoryAnalysis, clamp_forecast_values
 from app.services.outlier_cleaning import clean_series_for_fit
 from app.services.period_calendar import FiscalCalendarConfig, period_to_date
+from app.services.second_opinion import disagree_flag, second_opinion
 from app.services.interval_calibration import (
     apply_bands,
     conformal_bands,
@@ -612,6 +613,30 @@ class LineForecast:
     was_clamped: bool = False
 
 
+def _second_opinion(
+    panel: "GlobalPanelContext | None",
+    line_item_id: int,
+    selected_model: str | None,
+    forecast_output: ForecastOutput,
+) -> dict[str, Any] | None:
+    """Chronos-2's band against this line's published P50 (Phase E2), or None."""
+    if not settings.second_opinion_enabled:
+        return None
+    from app.domain.engines.chronos2 import CHRONOS2_NAME, foundation_unavailable_reason
+
+    if CHRONOS2_NAME in str(selected_model or ""):
+        return None
+    if foundation_unavailable_reason(panel, line_item_id) is not None:
+        return None
+    fm = panel.foundation  # type: ignore[union-attr]
+    fc = fm.forecasts.get((line_item_id, fm.production_origin_by_line[line_item_id]))
+    if fc is None:
+        return None
+    return second_opinion(
+        forecast_output.point_forecast, fc.p10, fc.p50, fc.p90, list(forecast_output.periods)
+    )
+
+
 def _foundation_range_blend(
     panel: "GlobalPanelContext | None",
     line_item_id: int,
@@ -682,6 +707,32 @@ def _with_foundation_note(
             "skip_reason": foundation_unavailable_reason(panel, None),
         }
     return {**(parameters or {}), "foundation_model": note}
+
+
+def _short_line_foundation_model(
+    ctx: "LineForecastContext", li_id: int, effective: "EffectiveSeriesResult"
+) -> Any | None:
+    """Chronos-2, ready to replace the forced-linear fallback of a short line.
+
+    The caller asks only for a short line (6 to ``min_history_months`` - 1
+    points) that has no global-GBM candidate, i.e. one that would otherwise be
+    forced to linear. On the new-line backtest that is the one place
+    Chronos-2's point forecast wins (MASE -32%); a flat average (< 6 points)
+    and the linear-vs-GBM contest keep their point and only take the range
+    blend. Needs ``foundation_short_lines_enabled``, an ``auto`` run and a
+    cached forecast. Uses the model directly rather than through the
+    registry: Chronos-2 stays out of selection unless
+    ``enable_foundation_models`` is on.
+    """
+    if not settings.foundation_short_lines_enabled or ctx.model_type != "auto":
+        return None
+    if effective.forced is not None or not effective.is_sparse:
+        return None
+    from app.domain.engines.chronos2 import Chronos2Model, foundation_unavailable_reason
+
+    if foundation_unavailable_reason(ctx.panel, li_id) is not None:
+        return None
+    return Chronos2Model()
 
 
 def _sparse_history_pool(
@@ -762,14 +813,17 @@ def forecast_line_item(
     try:
         effective_model_type = forced or model_type
         sparse_pool: list[str] = []
+        short_fm = None
         if forced is None and effective.is_sparse and model_type == "auto":
             # Short history under-powers per-series CV, so the only contest is
             # linear vs the global panel model (whose CV is panel-wide);
-            # without the panel model this line is forced to linear as before.
+            # without the panel model this line is forced to linear, or to
+            # Chronos-2 when foundation_short_lines_enabled.
             sparse_pool = _sparse_history_pool(registry, ctx, li.id)
             if "global_gbm" not in sparse_pool:
                 sparse_pool = []
-                effective_model_type = "linear"
+                short_fm = _short_line_foundation_model(ctx, li.id, effective)
+                effective_model_type = short_fm.name if short_fm is not None else "linear"
 
         comparison = None
         if effective_model_type == "auto":
@@ -811,16 +865,19 @@ def forecast_line_item(
                 )
         else:
             selected_model = effective_model_type
-            model = registry.get(selected_model)
+            model = short_fm if short_fm is not None else registry.get(selected_model)
             if model is None:
                 raise ValueError(f"Unknown model '{selected_model}'")
-            # zero/average: skip CV (deterministic, no useful MAPE)
-            if selected_model in ("zero", "average"):
+            # zero/average: skip CV (deterministic, no useful MAPE). A short
+            # line on Chronos-2 has too little history for a CV fold.
+            if selected_model in ("zero", "average") or short_fm is not None:
                 selection_mape = None
                 out.comparison = {
                     "best_model": selected_model,
                     "best_mape": None,
-                    "selection_method": "forced_edge_case",
+                    "selection_method": (
+                        "short_history_foundation" if short_fm is not None else "forced_edge_case"
+                    ),
                     "selection_rule": selection_rule,
                     "comparisons": [{
                         "model": selected_model,
@@ -1044,17 +1101,25 @@ def forecast_line_item(
                         "required_points": needed,
                     }
 
-        forecast_output = registry.fit_and_predict(
-            selected_model,
-            effective_values,
-            effective_dates,
-            horizon,
-            random_seed=random_seed,
-            exog=(exog_bundle.exog_train if use_exog and exog_bundle is not None else None),
-            exog_future=(exog_bundle.exog_future if use_exog and exog_bundle is not None else None),
-            panel=ctx.panel,
-            line_item_id=li.id,
-        )
+        if short_fm is not None:
+            fm_params = short_fm.fit(
+                effective_values, effective_dates, panel=ctx.panel, line_item_id=li.id
+            )
+            forecast_output = short_fm.predict(
+                fm_params, horizon, effective_dates[-1], panel=ctx.panel
+            )
+        else:
+            forecast_output = registry.fit_and_predict(
+                selected_model,
+                effective_values,
+                effective_dates,
+                horizon,
+                random_seed=random_seed,
+                exog=(exog_bundle.exog_train if use_exog and exog_bundle is not None else None),
+                exog_future=(exog_bundle.exog_future if use_exog and exog_bundle is not None else None),
+                panel=ctx.panel,
+                line_item_id=li.id,
+            )
 
         # Ensemble-by-default: when a genuine runner-up sits inside the 1-SE
         # band of the winner, blend the two (inverse-MASE weights) instead of
@@ -1282,6 +1347,12 @@ def forecast_line_item(
                 if bounds_method != BOUNDS_METHOD_MODEL
                 else "foundation_range_blend"
             )
+        opinion = _second_opinion(ctx.panel, li.id, selected_model, forecast_output)
+        if opinion is not None:
+            forecast_output.parameters = dict(forecast_output.parameters or {})
+            forecast_output.parameters["second_opinion"] = opinion
+            if opinion["disagree"]:
+                out.flags.append(disagree_flag(opinion))
         if (
             use_exog
             and exog_bundle is not None

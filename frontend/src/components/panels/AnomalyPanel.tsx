@@ -40,6 +40,7 @@ const TYPE_LABELS: Record<string, string> = {
   actuals_outlier: 'Actuals Outlier',
   trend_break: 'Trend Break',
   high_uncertainty: 'High Uncertainty',
+  vintage_band_miss: 'Outside Prior Range',
 };
 
 // ─── Types ─────────────────────────────────────────
@@ -313,6 +314,7 @@ function FilterBar({
           <option value="actuals_outlier">Actuals Outlier</option>
           <option value="trend_break">Trend Break</option>
           <option value="high_uncertainty">High Uncertainty</option>
+          <option value="vintage_band_miss">Outside Prior Range</option>
         </select>
       </div>
 

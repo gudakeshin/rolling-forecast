@@ -25,6 +25,9 @@ class WhatIfRequest(BaseModel):
     base_version_id: str
     scenario_label: str
     shocks: list[DriverShockIn]
+    # links: push shocks through link coefficients (fast). foundation:
+    # re-forecast linked lines with Chronos-2 under the shocked driver path.
+    method: str = Field(default="links", pattern="^(links|foundation)$")
 
 
 @router.post("/what-if")
@@ -49,6 +52,7 @@ async def create_what_if(
                 for s in body.shocks
             ],
             actor=current_user,
+            method=body.method,
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e

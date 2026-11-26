@@ -1,6 +1,7 @@
 """Side panel data endpoints -- serve detailed views triggered from chat."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -26,6 +27,7 @@ router = APIRouter(prefix="/panel", tags=["panel"])
 
 from app.services.accuracy_snapshot import realized_coverage_by_line
 from app.services.interval_calibration import DEFAULT_ALPHA
+from app.services.second_opinion import DISAGREE_FLAG, cell_view
 
 
 def _extract_exog_payload(parameters: dict | None) -> dict | None:
@@ -580,10 +582,39 @@ async def why_this_number(
                 if meta and meta.seasonality_detected
                 else None
             ),
+            "second_opinion": cell_view(params.get("second_opinion"), result.period),
             "reconciliation": reconciliation,
             "override_history": override_history,
             "realized_coverage": realized_coverage,
         },
+    )
+
+
+@router.get("/forecast-preview/{dataset_id}", response_model=PanelDataResponse)
+def forecast_preview(
+    dataset_id: str,
+    horizon: int = Query(12, ge=1, le=24),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Instant Chronos-2 preview of an uploaded actuals dataset (Phase E4).
+
+    One foundation-model call over every line, in seconds, while the full
+    baseline runs through the usual generate path. Not persisted. Sync
+    (threadpool) because the fm-service call blocks.
+    """
+    from app.models.actuals import ActualsDataset
+    from app.services.foundation_preview import build_preview
+
+    dataset = db.query(ActualsDataset).filter(ActualsDataset.id == dataset_id).first()
+    if dataset is None or not can_access_business_unit(current_user, dataset.business_unit_id):
+        raise HTTPException(404, "Dataset not found")
+    data = build_preview(db, dataset, horizon=horizon)
+    return PanelDataResponse(
+        panel_type="forecast_preview",
+        # source_name is the stored (UUID) filename, so it makes a poor title.
+        title="Instant forecast preview",
+        data=data,
     )
 
 
@@ -602,7 +633,12 @@ async def get_review_queue(
             .join(LineItem)
             .filter(
                 ForecastLineResult.version_id == version_id,
-                ForecastLineResult.confidence_level.in_(["low", "medium"]),
+                or_(
+                    ForecastLineResult.confidence_level.in_(["low", "medium"]),
+                    # Second opinion (Phase E2): Chronos-2 disagrees with the
+                    # published forecast, whatever its own confidence says.
+                    ForecastLineResult.ai_reasoning.like(f"%{DISAGREE_FLAG}%"),
+                ),
             ),
             current_user,
             LineItem,
@@ -623,6 +659,7 @@ async def get_review_queue(
             "confidence_level": r.confidence_level,
             "model_type": r.model_type,
             "is_overridden": r.is_overridden,
+            "models_disagree": DISAGREE_FLAG in (r.ai_reasoning or ""),
         })
 
     return PanelDataResponse(

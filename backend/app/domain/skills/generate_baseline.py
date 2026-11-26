@@ -139,6 +139,11 @@ def _generate_remediation(
         suggestions.append("Review underlying data for anomalies or structural changes.")
     if any(i.startswith("missing_periods_filled") for i in issues):
         suggestions.append("Some periods had no actuals and were interpolated — confirm whether they were true zeros or missing loads.")
+    if any(i.startswith("Models disagree") for i in issues):
+        suggestions.append(
+            "A foundation model trained on other series puts this line elsewhere — "
+            "check recent drivers or one-offs before approving."
+        )
     if any("break" in i.lower() for i in issues):
         suggestions.append("A structural break was detected — validate if business conditions changed.")
 
@@ -730,6 +735,7 @@ class GenerateBaselineSkill(BaseSkill):
             analysis.enable_global_gbm_model
             or analysis.enable_foundation_models
             or settings.foundation_range_blend_enabled
+            or settings.foundation_short_lines_enabled
         ):
             try:
                 from app.services.forecast_pipeline import compute_effective_series

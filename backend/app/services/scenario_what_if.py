@@ -135,8 +135,18 @@ def create_what_if_scenario(
     scenario_label: str,
     shocks: list[DriverShock],
     actor: User | None,
+    method: str = "links",
 ) -> dict[str, Any]:
-    """Create scenario version by perturbing driver-linked line items only."""
+    """Create scenario version by perturbing driver-linked line items only.
+
+    ``method="links"`` pushes each shock through the link coefficient (or the
+    baseline's fitted exog beta). ``method="foundation"`` re-forecasts each
+    linked line with Chronos-2 under the base and the shocked driver path and
+    applies the difference (``foundation_what_if``); lines it cannot serve
+    fall back to the links.
+    """
+    if method not in ("links", "foundation"):
+        raise ValueError(f"Unknown what-if method '{method}'")
     source = db.query(ForecastVersion).filter(ForecastVersion.id == base_version_id).first()
     if not source or not can_access_business_unit(actor, source.business_unit_id):
         raise ValueError(f"Base version '{base_version_id}' not found")
@@ -231,6 +241,19 @@ def create_what_if_scenario(
         for li in db.query(LineItem).filter(LineItem.id.in_(li_ids)).all()
     }
     fitted_betas = _fitted_exog_betas(db, version_id=source.id, line_item_ids=li_ids)
+    fm_deltas: dict[int, dict[str, float]] = {}
+    fm_note: str | None = None
+    if method == "foundation":
+        from app.services.foundation_what_if import foundation_driver_deltas
+
+        fm_deltas, fm_note = foundation_driver_deltas(
+            db,
+            version=source,
+            line_item_ids=li_ids,
+            shocked_by_driver=shocked_by_driver,
+            periods=periods,
+            cal_cfg=cal_cfg,
+        )
     rows = (
         db.query(ForecastLineResult)
         .filter(
@@ -253,7 +276,22 @@ def create_what_if_scenario(
     # Apply link-based effect (fast approximation; no model refit). The line at
     # period t responds to the driver at t - lag, matching how the baseline
     # built its exog matrix (driver(t-lag) predicts line(t)).
+    for li_id, per_period in fm_deltas.items():
+        for period, delta in per_period.items():
+            row = by_key.get((li_id, period))
+            if row is None or abs(delta) < 1e-12:
+                continue
+            if row.id not in base_intervals:
+                base_intervals[row.id] = (row.p10, row.p50, row.p90)
+            row.p50 = float(row.p50 + delta)
+            affected += 1
+            affected_items.add(li_id)
+            affected_row_ids.add(row.id)
+        beta_source[li_id] = "chronos2_reforecast"
+
     for link in links:
+        if link.line_item_id in fm_deltas:
+            continue  # Chronos-2 already carried every shocked driver for this line
         link_shocks = shocked_by_driver.get(link.driver_id)
         if not link_shocks:
             continue
@@ -362,6 +400,8 @@ def create_what_if_scenario(
                 "shock_driver_ids": shock_driver_ids,
                 "affected_line_items": len(affected_items),
                 "affected_line_periods": affected,
+                "method": method,
+                "foundation_lines": sorted(fm_deltas),
             },
         )
     db.commit()
@@ -372,6 +412,8 @@ def create_what_if_scenario(
         "affected_line_items": len(affected_items),
         "affected_line_periods": affected,
         "shocked_drivers": len(shocked_by_driver),
+        "method": method,
+        **({"foundation_note": fm_note} if method == "foundation" and fm_note else {}),
         "line_items": [
             {
                 "line_item_id": lid,

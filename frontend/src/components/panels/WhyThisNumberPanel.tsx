@@ -71,6 +71,16 @@ interface WhyThisNumberData {
     status: string;
     created_at: string | null;
   }>;
+  second_opinion: {
+    model: string;
+    p10: number;
+    p50: number;
+    p90: number;
+    outside: boolean;
+    line_outside_share: number;
+    line_disagrees: boolean;
+    direction: 'above' | 'below' | 'mixed' | null;
+  } | null;
   realized_coverage: {
     n_vintages: number;
     n_within_band: number;
@@ -216,7 +226,10 @@ export function WhyThisNumberPanel({ data }: { data: any }) {
           ) : (
             <>Using the model's own analytic interval — not yet calibrated on realized residuals.</>
           )}
-          {d.bounds_method && d.bounds_method !== 'model' && (
+          {d.bounds_method?.includes('foundation_range') && (
+            <span className="text-surface-500"> Averaged with Chronos-2's P10–P90.</span>
+          )}
+          {d.bounds_method && d.bounds_method !== 'model' && !d.bounds_method.includes('foundation_range') && (
             <span className="text-surface-500"> Reconciled via {d.bounds_method}.</span>
           )}
         </p>
@@ -229,6 +242,33 @@ export function WhyThisNumberPanel({ data }: { data: any }) {
           </p>
         )}
       </Section>
+
+      {d.second_opinion && (
+        <Section
+          title="Second opinion"
+          icon={
+            <AlertTriangle
+              className={`w-3.5 h-3.5 ${d.second_opinion.line_disagrees ? 'text-amber-400' : 'text-deloitte-green'}`}
+            />
+          }
+        >
+          <p className="text-xs text-surface-300" data-testid="second-opinion">
+            Chronos-2, a foundation model that also reads this line's sibling lines, puts this period at{' '}
+            {formatCurrency(d.second_opinion.p50)} (P10–P90 {formatCurrency(d.second_opinion.p10)} to{' '}
+            {formatCurrency(d.second_opinion.p90)}).{' '}
+            {d.second_opinion.outside
+              ? `The published forecast is ${d.second_opinion.direction === 'below' ? 'below' : d.second_opinion.direction === 'above' ? 'above' : 'outside'} that range.`
+              : 'The published forecast is inside that range.'}
+          </p>
+          {d.second_opinion.line_disagrees && (
+            <p className="text-[11px] text-amber-400 mt-1">
+              Models disagree on this line: outside Chronos-2's range in{' '}
+              {Math.round(d.second_opinion.line_outside_share * 100)}% of forecast periods. Check recent drivers or
+              one-offs before approving.
+            </p>
+          )}
+        </Section>
+      )}
 
       {(d.structural_break?.detected || d.outlier_cleaning || d.seasonality?.detected) && (
         <Section title="History adjustments" icon={<AlertTriangle className="w-3.5 h-3.5 text-amber-400" />}>

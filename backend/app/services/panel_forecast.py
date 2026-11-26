@@ -167,7 +167,9 @@ def build_global_panel_context(
 
     # The range blend needs Chronos-2's forecasts even when Chronos-2 is not
     # a selection candidate (it changes bands only, never the point).
-    if registry.get(CHRONOS2_NAME) is None and not settings.foundation_range_blend_enabled:
+    if registry.get(CHRONOS2_NAME) is None and not (
+        settings.foundation_range_blend_enabled or settings.foundation_short_lines_enabled
+    ):
         return gbm_panel
     from app.services.foundation_forecast import build_foundation_context
 

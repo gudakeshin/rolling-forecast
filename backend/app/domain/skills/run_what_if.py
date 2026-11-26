@@ -51,6 +51,17 @@ class RunWhatIfSkill(BaseSkill):
                     ),
                     "items": {"type": "object"},
                 },
+                "method": {
+                    "type": "string",
+                    "enum": ["links", "foundation"],
+                    "default": "links",
+                    "description": (
+                        "links: push each shock through its driver link coefficient (instant). "
+                        "foundation: re-forecast each linked line with Chronos-2 under the "
+                        "shocked driver path, which captures lags and non-linear effects; "
+                        "lines it cannot serve fall back to links."
+                    ),
+                },
                 "open_panel": {"type": "boolean", "default": True},
             },
             "required": ["scenario_label", "shocks"],
@@ -113,6 +124,7 @@ class RunWhatIfSkill(BaseSkill):
                 scenario_label=label,
                 shocks=shocks,
                 actor=user,
+                method=str(params.get("method") or "links"),
             )
         except ValueError as e:
             return SkillResult.fail(str(e))
@@ -133,6 +145,9 @@ class RunWhatIfSkill(BaseSkill):
             f"{result.get('affected_line_periods', 0)} line-periods perturbed across "
             f"{result.get('affected_line_items', 0)} line items."
         )
+        if result.get("foundation_note"):
+            msg += f" Chronos-2 re-forecast skipped: {result['foundation_note']} (used driver links)."
+        
         return SkillResult.ok(
             message=msg,
             data=result,
