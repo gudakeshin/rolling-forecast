@@ -24,7 +24,9 @@ command -v uv >/dev/null 2>&1 || {
 }
 
 PLATFORM="x86_64-manylinux_2_28"
-PY_VERSION="3.11"
+# 3.11.5, not "3.11" (read as 3.11.0): the image (python:3.11-slim) and CI
+# run the latest 3.11.x, and some fixes (e.g. soupsieve >= 3.0.2) need 3.11.5.
+PY_VERSION="3.11.5"
 ARGS=(--python-platform "$PLATFORM" --python-version "$PY_VERSION" --generate-hashes)
 
 UPGRADE_ALL=0
