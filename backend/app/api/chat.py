@@ -1,5 +1,6 @@
 """Chat endpoints -- send messages and stream responses via SSE."""
 
+import asyncio
 import json
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
@@ -20,6 +21,10 @@ from app.orchestration.context_manager import ContextManager
 from app.rate_limit import limiter
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+# Strong references to agent turns still running after their client left;
+# without one, the event loop may garbage-collect a pending task.
+_running_turns: set[asyncio.Task] = set()
 
 
 @router.post("/message")
@@ -72,28 +77,33 @@ async def send_message(
     db.expunge(current_user)
     db.expunge(conversation)
 
-    async def event_generator():
-        """SSE event stream — uses its own DB session to stay alive for the full stream."""
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def run_turn() -> None:
+        """Run the agent turn to completion and save the reply, even if the
+        client disconnects mid-stream. The SSE generator below only relays
+        events; a client that lost its connection recovers the reply by
+        reloading the conversation (frontend/src/api/chat.ts)."""
         stream_db = SessionLocal()
         try:
-            # Re-attach objects to the stream-scoped session
+            # Re-attach objects to the turn-scoped session
             stream_db.add(current_user)
             stream_db.add(conversation)
 
             context_manager = ContextManager(db=stream_db, conversation=conversation, user=current_user)
             agent = MasterAgent(context_manager=context_manager, db=stream_db)
 
-            yield {
+            await queue.put({
                 "event": "message_start",
                 "data": json.dumps({"conversation_id": conversation_id}),
-            }
+            })
 
             full_response = None
             async for event in agent.astream(message_content):
-                yield {
+                await queue.put({
                     "event": event["event"],
                     "data": json.dumps(event["data"]),
-                }
+                })
                 if event["event"] == "message_end":
                     full_response = event["data"]
 
@@ -115,12 +125,24 @@ async def send_message(
                 stream_db.commit()
 
         except Exception as e:
-            yield {
+            await queue.put({
                 "event": "error",
                 "data": json.dumps({"error": str(e)}),
-            }
+            })
         finally:
             stream_db.close()
+            await queue.put(None)
+
+    task = asyncio.create_task(run_turn())
+    _running_turns.add(task)
+    task.add_done_callback(_running_turns.discard)
+
+    async def event_generator():
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            yield item
 
     return EventSourceResponse(event_generator())
 
@@ -219,3 +241,91 @@ async def delete_conversation(
     db.delete(conversation)
     db.commit()
     return None
+
+
+def _pending_or_404(action_id: str, user: User) -> dict:
+    from app.services import pending_actions
+
+    record = pending_actions.take_pending(action_id, user_id=user.id)
+    if record is None:
+        raise HTTPException(404, "This approval has expired or was already used")
+    return record
+
+
+@router.post("/pending-actions/{action_id}/confirm")
+@limiter.limit("30/minute")
+async def confirm_pending_action(
+    request: Request,
+    action_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Run an agent write the user approved with their own click.
+
+    The agent holds writes as pending once untrusted text has entered the
+    conversation (app.domain.skill_safety). This endpoint is the only way to
+    run one, and it runs as the approving user, with their permissions.
+    """
+    _ = request
+    from app.domain.base_skill import SkillContext
+    from app.domain.registry import run_pending_action
+
+    record = _pending_or_404(action_id, current_user)
+    conversation = None
+    if record.get("conversation_id"):
+        conversation = (
+            db.query(Conversation)
+            .filter(
+                Conversation.id == record["conversation_id"],
+                Conversation.user_id == current_user.id,
+            )
+            .first()
+        )
+    if conversation is None:
+        raise HTTPException(404, "This approval has expired or was already used")
+
+    _ = current_user.role
+    context_manager = ContextManager(db=db, conversation=conversation, user=current_user)
+    context = SkillContext(
+        db=db,
+        context_manager=context_manager,
+        user_id=current_user.id,
+        user_role=context_manager.user_role,
+        conversation_id=conversation.id,
+        user=current_user,
+    )
+    result = await run_pending_action(record, context)
+    db.add(
+        Message(
+            conversation_id=conversation.id,
+            role="assistant",
+            content=(
+                f"Approved `{record['skill_name']}`: {result.message}"
+                if result.success
+                else f"`{record['skill_name']}` failed: {result.message}"
+            ),
+            content_blocks=result.content_blocks or None,
+            panel_payload=result.panel_payload,
+        )
+    )
+    db.commit()
+    return {
+        "success": result.success,
+        "skill": record["skill_name"],
+        "message": result.message,
+        "content_blocks": result.content_blocks,
+        "panel_payload": result.panel_payload,
+        "conversation_id": conversation.id,
+    }
+
+
+@router.post("/pending-actions/{action_id}/discard")
+@limiter.limit("30/minute")
+async def discard_pending_action(
+    request: Request,
+    action_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    _ = request
+    record = _pending_or_404(action_id, current_user)
+    return {"discarded": True, "skill": record["skill_name"]}

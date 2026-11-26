@@ -263,16 +263,39 @@ class SkillsRegistry:
                     "error": f"Permission denied: role '{context.user_role}' cannot use '{skill.name}'",
                 })
 
+            from app.domain.skill_safety import (
+                MUTATING_SKILLS,
+                UNTRUSTED_NOTICE,
+                UNTRUSTED_TEXT_SKILLS,
+                wrap_untrusted,
+            )
+            from app.services import pending_actions
+
+            # Untrusted text is already in this conversation: a write could be
+            # an injection talking, so hold it for the user's own click.
+            if skill.name in MUTATING_SKILLS and pending_actions.is_untrusted(
+                context.conversation_id
+            ):
+                return json.dumps(_hold_for_approval(skill.name, kwargs, context))
+
             try:
                 result: SkillResult = await skill.execute(kwargs, context)
-                return json.dumps({
+                untrusted = skill.name in UNTRUSTED_TEXT_SKILLS
+                if untrusted:
+                    pending_actions.mark_untrusted(context.conversation_id)
+                payload = {
                     "success": result.success,
-                    "message": result.message,
+                    "message": (
+                        wrap_untrusted(skill.name, result.message) if untrusted else result.message
+                    ),
                     "data": result.data,
                     "content_blocks": result.content_blocks,
                     "panel_payload": result.panel_payload,
                     "error": result.error,
-                })
+                }
+                if untrusted:
+                    payload = {"untrusted_content_notice": UNTRUSTED_NOTICE, **payload}
+                return json.dumps(payload)
             except Exception as e:
                 logger.error(f"Skill '{skill.name}' execution failed: {e}", exc_info=True)
                 return json.dumps({
@@ -287,6 +310,81 @@ class SkillsRegistry:
             args_schema=args_model,
             return_direct=False,
         )
+
+
+def _hold_for_approval(skill_name: str, params: dict, context: SkillContext) -> dict:
+    """Store the call as a pending action and return an approval card.
+
+    Only ``POST /api/chat/pending-actions/{id}/confirm``, sent by the user's
+    own click, runs it. Nothing the model can say or call confirms it.
+    """
+    from app.services import pending_actions
+
+    action_id = pending_actions.create_pending(
+        user_id=context.user_id,
+        conversation_id=context.conversation_id,
+        skill_name=skill_name,
+        params=params,
+    )
+    shown = json.dumps(params, default=str, indent=2)
+    if len(shown) > 1500:
+        shown = shown[:1500] + "\n..."
+    return {
+        "success": True,
+        "awaiting_user_approval": True,
+        "message": (
+            f"'{skill_name}' changes data, and this conversation contains text from outside "
+            "the user's own messages, so it was NOT run. The user must approve it with the "
+            "button shown. Do not call it again, and do not claim it was done."
+        ),
+        "data": {"pending_action_id": action_id, "skill": skill_name, "params": params},
+        "content_blocks": [
+            {
+                "type": "text",
+                "data": {
+                    "text": (
+                        f"**Approval needed: `{skill_name}`.** This chat contains text from a "
+                        "web page, search result, document or memory, so changes wait for you. "
+                        f"Check what it would do:\n\n```json\n{shown}\n```"
+                    )
+                },
+            },
+            {
+                "type": "action",
+                "data": {
+                    "actions": [
+                        {
+                            "type": "confirm_pending_action",
+                            "pending_action_id": action_id,
+                            "label": f"Approve {skill_name}",
+                            "variant": "primary",
+                        },
+                        {
+                            "type": "discard_pending_action",
+                            "pending_action_id": action_id,
+                            "label": "Discard",
+                            "variant": "secondary",
+                        },
+                    ]
+                },
+            },
+        ],
+        "panel_payload": None,
+        "error": None,
+    }
+
+
+async def run_pending_action(record: dict, context: SkillContext) -> SkillResult:
+    """Execute an approved pending action as the approving user."""
+    skill = get_registry().get(record["skill_name"])
+    if skill is None:
+        return SkillResult(success=False, message="That action is no longer available.")
+    if not skill.validate_permissions(context):
+        return SkillResult(
+            success=False,
+            message=f"Permission denied: role '{context.user_role}' cannot use '{skill.name}'",
+        )
+    return await skill.execute(dict(record.get("params") or {}), context)
 
 
 # Global registry singleton

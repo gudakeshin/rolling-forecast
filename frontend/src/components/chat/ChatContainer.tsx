@@ -123,7 +123,13 @@ export function ChatContainer() {
             case 'tool_end':
               setToolInProgress(null);
               break;
+            case 'reconnecting':
+              // Connection dropped; the server keeps working and we wait for
+              // the saved reply (api/chat.ts recoverReply).
+              setToolInProgress('Connection lost, waiting for the reply');
+              break;
             case 'message_end':
+              setToolInProgress(null);
               finalContent = event.data.content || '';
               if (event.data.content_blocks) {
                 finalBlocks = event.data.content_blocks;
