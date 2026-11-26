@@ -233,3 +233,18 @@ def test_worker_startup_hooks_are_awaitable():
             fn = getattr(settings_cls, hook, None)
             if fn is not None:
                 assert inspect.iscoroutinefunction(fn), f"{settings_cls.__name__}.{hook} must be async"
+
+
+def test_context_upload_rejects_unsupported_types(client):
+    files = {"file": ("payload.exe", io.BytesIO(b"MZ\x90\x00"), "application/octet-stream")}
+    r = client.post("/api/context/upload", files=files, headers=_h(client))
+    assert r.status_code == 400
+
+
+def test_context_upload_enforces_the_size_cap(client, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "max_upload_bytes", 10)
+    files = {"file": ("big.txt", io.BytesIO(b"x" * 100), "text/plain")}
+    r = client.post("/api/context/upload", files=files, headers=_h(client))
+    assert r.status_code == 413
