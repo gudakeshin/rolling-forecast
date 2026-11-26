@@ -21,17 +21,11 @@ _REDIS_DENY_PREFIX = "rf:deny:jti:"
 
 
 def _redis():
-    if not settings.redis_url:
-        return None
-    try:
-        import redis
+    """The shared client (``app.services.redis_client``), or None in dev/test
+    without Redis. Raises outside development when Redis is unreachable."""
+    from app.services.redis_client import get_redis
 
-        client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
-        client.ping()
-        return client
-    except Exception as e:
-        logger.warning("Redis unavailable for token denylist (%s)", e)
-        return None
+    return get_redis("token denylist")
 
 
 def _hash_token(raw: str) -> str:
