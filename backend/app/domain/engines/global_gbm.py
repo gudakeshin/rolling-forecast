@@ -20,6 +20,7 @@ lives in app.services.panel_forecast.build_global_panel_context.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 import numpy as np
@@ -68,6 +69,22 @@ class GlobalPanelContext:
     # carries forward and one model fits lines of any magnitude; predict()
     # maps back with origin + prediction * scale. Absent = raw-level model.
     predict_origin_by_line: dict[int, tuple[float, float]] = field(default_factory=dict)
+    # Phase C: this run's Chronos-2 results (chronos2.FoundationPanelContext),
+    # present only when the company's registry contains chronos2. Rides on
+    # the panel so it reaches the registry through the existing panel= path.
+    foundation: Any = None
+
+    @classmethod
+    def empty(cls) -> "GlobalPanelContext":
+        """A panel with no GBM content — carries ``foundation`` alone when the
+        GBM panel could not be built (too few lines) but Chronos-2 can run."""
+        return cls(
+            feature_columns=[],
+            production_models={},
+            predict_features_by_line={},
+            per_line_cv_results={},
+            fitted_at=datetime.now(timezone.utc).isoformat(),
+        )
 
 
 def lag_rolling_features(values: np.ndarray, origin_idx: int) -> dict[str, float]:

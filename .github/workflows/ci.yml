@@ -113,6 +113,33 @@ jobs:
           echo "script head: $HEAD_REV"
           grep -q "$HEAD_REV" /tmp/current.txt
 
+  fm-service:
+    # Chronos-2 sidecar: build the image (weights pinned + sha256-checked at
+    # build), then a contract test against the running container.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: fm-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Unit tests (batching rules, no torch)
+        run: |
+          pip install "fastapi>=0.115,<1" "pydantic>=2.7,<3" "numpy>=1.26,<3" pytest
+          python -m pytest -q tests/test_batching.py
+      - name: Build image
+        run: docker build -t rolling-forecast-fm:ci .
+      - name: Contract test
+        run: |
+          docker run -d --name fm -p 8100:8100 rolling-forecast-fm:ci
+          for i in $(seq 1 90); do curl -sf http://127.0.0.1:8100/healthz && break; sleep 2; done
+          python tests/contract_test.py http://127.0.0.1:8100
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs fm || true
+
   frontend:
     runs-on: ubuntu-latest
     defaults:

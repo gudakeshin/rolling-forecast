@@ -3,7 +3,8 @@
 Selection uses either legacy MAPE or multi-metric (MASE → pinball → complexity)
 controlled by ``settings.selection_metric``. Benchmark models (naive /
 seasonal_naive) are gated by ``enable_benchmark_models`` and the global
-cross-series model by ``enable_global_gbm_model``. Both gates are
+cross-series model by ``enable_global_gbm_model``, and the Chronos-2
+foundation model by ``enable_foundation_models`` (default off). All gates are
 per-company (``AnalysisProfile``): ``get_model_registry`` keeps one registry
 per gate combination, so a company's own flags decide which models exist
 for its runs, falling back to the global settings when none are passed.
@@ -26,6 +27,7 @@ from app.domain.engines.base_model import (
     as_exog_model,
     as_panel_model,
     cv_fold_horizon,
+    cv_n_folds,
 )
 from app.domain.engines.linear import LinearTrendModel
 from app.domain.engines.ets import ETSModel
@@ -355,6 +357,7 @@ class ModelRegistry:
         *,
         enable_benchmark_models: bool | None = None,
         enable_global_gbm_model: bool | None = None,
+        enable_foundation_models: bool | None = None,
     ):
         from app.config import settings
 
@@ -367,6 +370,11 @@ class ModelRegistry:
             settings.enable_global_gbm_model
             if enable_global_gbm_model is None
             else enable_global_gbm_model
+        )
+        self.enable_foundation_models = (
+            settings.enable_foundation_models
+            if enable_foundation_models is None
+            else enable_foundation_models
         )
         self._models: dict[str, IForecastModel] = {}
         self._register_defaults()
@@ -402,6 +410,14 @@ class ModelRegistry:
                 self.register(GlobalGBMModel())
             except Exception as e:  # pragma: no cover — sklearn always present, defensive
                 logger.warning("Failed to register global_gbm model: %s", e)
+        if self.enable_foundation_models:
+            # Phase C: Chronos-2 via the fm-service sidecar. Dark by default
+            # (settings.enable_foundation_models / AnalysisProfile). Pure
+            # adapter — no torch import; the service is only called once per
+            # run from panel_forecast.build_global_panel_context.
+            from app.domain.engines.chronos2 import Chronos2Model
+
+            self.register(Chronos2Model())
 
     def register(self, model: IForecastModel) -> None:
         self._models[model.name] = model
@@ -440,6 +456,20 @@ class ModelRegistry:
         """
         mape = cv["mean_mape"]
         mase = cv["mean_mase"]
+        skip_reason = cv.get("skip_reason")
+        if skip_reason:
+            # A model that could not run this time (e.g. the foundation
+            # service is down) — not a model that scored badly.
+            return ModelComparisonResult(
+                model_name=model_name,
+                mape=float("inf"),
+                evaluation_time_ms=elapsed_ms,
+                eligible=False,
+                error=str(skip_reason)[:200],
+                complexity_rank=caps.complexity_rank,
+                cost_class=caps.cost_class,
+                is_benchmark=caps.is_benchmark,
+            )
         return ModelComparisonResult(
             model_name=model_name,
             mape=mape,
@@ -497,17 +527,13 @@ class ModelRegistry:
                 is_benchmark=caps.is_benchmark,
             )
 
-        n_folds = 3
-        if (
-            caps.max_folds_short_series is not None
-            and len(series) < caps.short_series_threshold
-        ):
-            n_folds = caps.max_folds_short_series
-
-        # Prefer more folds when history allows (cheap fix for under-powered 1-SE)
-        max_folds_by_data = max(1, (len(series) - model.min_data_points) // fold_horizon)
-        if max_folds_by_data >= 5 and (caps.max_folds_short_series is None or len(series) >= caps.short_series_threshold):
-            n_folds = min(5, max_folds_by_data)
+        n_folds = cv_n_folds(
+            len(series),
+            min_data_points=model.min_data_points,
+            fold_horizon=fold_horizon,
+            max_folds_short_series=caps.max_folds_short_series,
+            short_series_threshold=caps.short_series_threshold,
+        )
 
         # Panel models can't fit/predict from (series, dates) alone — the CV
         # result was already computed once, panel-wide, at panel-build time.
@@ -761,13 +787,14 @@ class ModelRegistry:
         return model.predict(params, horizon, dates[-1])
 
 
-_model_registries: dict[tuple[bool, bool], ModelRegistry] = {}
+_model_registries: dict[tuple[bool, bool, bool], ModelRegistry] = {}
 
 
 def get_model_registry(
     *,
     enable_benchmark_models: bool | None = None,
     enable_global_gbm_model: bool | None = None,
+    enable_foundation_models: bool | None = None,
 ) -> ModelRegistry:
     """The registry for one combination of the optional-model gates.
 
@@ -780,10 +807,15 @@ def get_model_registry(
     key = (
         settings.enable_benchmark_models if enable_benchmark_models is None else enable_benchmark_models,
         settings.enable_global_gbm_model if enable_global_gbm_model is None else enable_global_gbm_model,
+        settings.enable_foundation_models if enable_foundation_models is None else enable_foundation_models,
     )
     registry = _model_registries.get(key)
     if registry is None:
-        registry = ModelRegistry(enable_benchmark_models=key[0], enable_global_gbm_model=key[1])
+        registry = ModelRegistry(
+            enable_benchmark_models=key[0],
+            enable_global_gbm_model=key[1],
+            enable_foundation_models=key[2],
+        )
         _model_registries[key] = registry
     return registry
 
@@ -793,6 +825,7 @@ def registry_for_analysis(analysis: Any) -> ModelRegistry:
     return get_model_registry(
         enable_benchmark_models=analysis.enable_benchmark_models,
         enable_global_gbm_model=analysis.enable_global_gbm_model,
+        enable_foundation_models=getattr(analysis, "enable_foundation_models", None),
     )
 
 
@@ -800,7 +833,9 @@ def get_full_model_registry() -> ModelRegistry:
     """Every model registered, regardless of gates -- for capability lookups
     on a model name that some company's run may have used (e.g. base
     confidence for ``global_gbm`` when the global default has it off)."""
-    return get_model_registry(enable_benchmark_models=True, enable_global_gbm_model=True)
+    return get_model_registry(
+        enable_benchmark_models=True, enable_global_gbm_model=True, enable_foundation_models=True
+    )
 
 
 def reset_model_registry() -> None:

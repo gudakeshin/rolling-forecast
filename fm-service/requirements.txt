@@ -1,0 +1,10 @@
+# fm-service: Chronos-2 inference sidecar. Torch lives HERE, never in backend/.
+# Regenerate the hash-pinned lock with ./scripts/lock-deps.sh.
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+pydantic>=2.7,<3
+numpy>=1.26,<3
+# CPU-only torch wheel (resolved from download.pytorch.org/whl/cpu by the lock script)
+torch>=2.4,<3
+chronos-forecasting==2.3.2
+huggingface_hub>=0.24,<2

@@ -77,6 +77,21 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  # Chronos-2 inference sidecar (torch lives only here). Weights are baked
+  # into the image at a pinned revision; no runtime download. Only used when
+  # ENABLE_FOUNDATION_MODELS / a company's AnalysisProfile turns it on.
+  fm-service:
+    build:
+      context: ./fm-service
+      dockerfile: Dockerfile
+    container_name: forecast-fm-service
+    expose:
+      - "8100"
+    environment:
+      - FM_TORCH_THREADS=${FM_TORCH_THREADS:-4}
+    profiles: ["foundation"]
+    restart: unless-stopped
+
   worker:
     build:
       context: ./backend

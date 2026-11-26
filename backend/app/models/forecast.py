@@ -54,6 +54,12 @@ class ForecastVersion(Base):
     input_hash: Mapped[str | None] = mapped_column(
         String(64), nullable=True
     )  # Hash of all inputs for idempotency
+    # Foundation-model provenance (Phase C): model id, pinned weight revision,
+    # fm-service version and status ("ok" / "unavailable" + reason) of the
+    # Chronos-2 batch this version's run used. None when the gate was off.
+    foundation_model_provenance: Mapped[dict | None] = mapped_column(
+        JSON, nullable=True
+    )
 
     # Forecast parameters
     horizon_months: Mapped[int] = mapped_column(Integer, default=12)

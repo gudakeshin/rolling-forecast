@@ -17,9 +17,11 @@ from app.services.model_presets import create_preset, resolve_preset
 
 def test_registry_membership_follows_the_gates():
     off = get_model_registry(enable_benchmark_models=False, enable_global_gbm_model=False)
-    on = get_model_registry(enable_benchmark_models=True, enable_global_gbm_model=True)
+    on = get_model_registry(
+        enable_benchmark_models=True, enable_global_gbm_model=True, enable_foundation_models=True
+    )
     assert not {"naive", "seasonal_naive", "global_gbm"} & set(off.list_models())
-    assert {"naive", "seasonal_naive", "global_gbm"} <= set(on.list_models())
+    assert {"naive", "seasonal_naive", "global_gbm", "chronos2"} <= set(on.list_models())
     assert get_full_model_registry() is on
 
 
