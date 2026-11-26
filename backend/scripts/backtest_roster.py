@@ -9,7 +9,21 @@ scores the withheld months:
     baseline      single CV winner per line (current defaults)
     +blend        enable_ensemble_blending
     +gbm          enable_global_gbm_model (panel built on the training window)
-    +blend+gbm    both
+    +blend+gbm    both (the current production default)
+    +conformal    +blend+gbm with split-conformal interval calibration
+                  (conformal_calibration_enabled), the coverage report the
+                  setting's comment asks for before turning it on
+    +cvwiden      +blend+gbm, widening each band by its CV coverage
+                  (cv_coverage_widening_enabled)
+    +fm           +blend+gbm plus Chronos-2 (enable_foundation_models), which
+                  competes through the same selection, band and blending
+    chronos2-raw  Chronos-2's own zero-shot P10/P50/P90 from the +fm run,
+                  for every line, with no selection or calibration (the
+                  "what if we just used the foundation model" arm)
+
+The two Chronos-2 arms need the fm-service sidecar (``--fm-url``, default
+http://localhost:8100). With no drivers in these CSVs, Chronos-2 runs
+univariate here; the panel still gives it group context across lines.
 
 MASE and pinball are scaled by each series' in-sample naive MAE so they can be
 averaged across series of very different sizes.
@@ -50,7 +64,25 @@ CONFIGS = {
     "+blend": {"enable_ensemble_blending": True, "enable_global_gbm_model": False},
     "+gbm": {"enable_ensemble_blending": False, "enable_global_gbm_model": True},
     "+blend+gbm": {"enable_ensemble_blending": True, "enable_global_gbm_model": True},
+    "+conformal": {
+        "enable_ensemble_blending": True,
+        "enable_global_gbm_model": True,
+        "conformal_calibration_enabled": True,
+    },
+    "+cvwiden": {
+        "enable_ensemble_blending": True,
+        "enable_global_gbm_model": True,
+        "cv_coverage_widening_enabled": True,
+    },
+    "+fm": {
+        "enable_ensemble_blending": True,
+        "enable_global_gbm_model": True,
+        "enable_foundation_models": True,
+    },
 }
+DEFAULT = "+blend+gbm"
+RAW = "chronos2-raw"
+ORDER = [*CONFIGS, RAW]
 
 
 def load_series(path: Path) -> dict[str, tuple[str, pd.DataFrame]]:
@@ -75,7 +107,21 @@ def pinball(y: np.ndarray, q: np.ndarray, tau: float) -> float:
     return float(np.mean(np.maximum(tau * d, (tau - 1) * d)))
 
 
-def run(path: Path, holdout: int, seed: int) -> pd.DataFrame:
+def _score(actual, p10, p50, p90, scale) -> dict:
+    return {
+        "mase": float(np.mean(np.abs(actual - p50))) / scale,
+        "pinball": (pinball(actual, p10, 0.1) + pinball(actual, p90, 0.9)) / 2 / scale,
+        "coverage80": float(np.mean((actual >= p10) & (actual <= p90))),
+        # Where the misses fall: both ~0.10 for a calibrated band.
+        "below_p10": float(np.mean(actual < p10)),
+        "above_p90": float(np.mean(actual > p90)),
+        # Signed mean error over the scale (+ = forecast too low).
+        "bias": float(np.mean(actual - p50)) / scale,
+        "width": float(np.mean(p90 - p10)) / scale,
+    }
+
+
+def run(path: Path, holdout: int, seed: int, configs: dict) -> pd.DataFrame:
     engine = create_engine("sqlite:///:memory:")
     import app.models  # noqa: F401 -- register mappers
 
@@ -93,8 +139,16 @@ def run(path: Path, holdout: int, seed: int) -> pd.DataFrame:
 
     base_analysis = resolve_analysis_settings(db, business_unit_id=None)
     results = []
-    for config, toggles in CONFIGS.items():
-        analysis = dataclasses.replace(base_analysis, **toggles)
+    from app.config import settings
+
+    analysis_fields = {f.name for f in dataclasses.fields(base_analysis)}
+    for config, toggles in configs.items():
+        # Toggles the AnalysisProfile does not carry are process settings.
+        for key in {k for c in configs.values() for k in c} - analysis_fields:
+            setattr(settings, key, bool(toggles.get(key, False)))
+        analysis = dataclasses.replace(
+            base_analysis, **{k: v for k, v in toggles.items() if k in analysis_fields}
+        )
         registry = registry_for_analysis(analysis)
         train_by_line, periods_by_line, dates_by_line = {}, {}, {}
         for code, (_, g) in series.items():
@@ -108,7 +162,7 @@ def run(path: Path, holdout: int, seed: int) -> pd.DataFrame:
 
         panel = None
         t0 = time.time()
-        if analysis.enable_global_gbm_model:
+        if analysis.enable_global_gbm_model or analysis.enable_foundation_models:
             effective = {
                 li.id: compute_effective_series(
                     li, train_by_line[li.id], dates_by_line[li.id], analysis
@@ -155,10 +209,21 @@ def run(path: Path, holdout: int, seed: int) -> pd.DataFrame:
                 "config": config,
                 "series": code,
                 "model": out.selected_model,
-                "mase": float(np.mean(np.abs(actual - p50))) / scale,
-                "pinball": (pinball(actual, p10, 0.1) + pinball(actual, p90, 0.9)) / 2 / scale,
-                "coverage80": float(np.mean((actual >= p10) & (actual <= p90))),
+                **_score(actual, p10, p50, p90, scale),
             })
+            fm = getattr(panel, "foundation", None) if panel is not None else None
+            if fm is not None and fm.status == "ok":
+                raw = fm.forecasts.get((li.id, periods_by_line[li.id][-1]))
+                if raw is not None and len(raw.p50) >= holdout:
+                    results.append({
+                        "config": RAW,
+                        "series": code,
+                        "model": "chronos2",
+                        **_score(actual, raw.p10[:holdout], raw.p50[:holdout], raw.p90[:holdout], scale),
+                    })
+        if panel is not None and getattr(panel, "foundation", None) is not None:
+            fm = panel.foundation
+            print(f"    chronos2: {fm.status} {fm.skip_reason or ''}", file=sys.stderr)
         print(f"  {config}: {time.time() - t0:.1f}s", file=sys.stderr)
     db.close()
     return pd.DataFrame(results)
@@ -174,26 +239,44 @@ def main() -> None:
         help="Also break results down by this '-'-separated part of the account code "
         "(e.g. 1 for SYN-<shape>-<n> from synthetic_panel.py)",
     )
+    parser.add_argument("--fm-url", default="http://localhost:8100", help="fm-service base URL")
+    parser.add_argument("--out", type=Path, default=None, help="also write per-series rows to this CSV")
+    parser.add_argument("--no-fm", action="store_true", help="skip the Chronos-2 arms")
     args = parser.parse_args()
+
+    from app.config import settings
+
+    settings.fm_service_url = args.fm_url
+    settings.fm_service_timeout_seconds = 1800.0
+    configs = {k: v for k, v in CONFIGS.items() if not (args.no_fm and v.get("enable_foundation_models"))}
 
     frames = []
     for path in args.csv:
         print(f"{path.name}:", file=sys.stderr)
-        df = run(path, args.holdout, args.seed)
+        df = run(path, args.holdout, args.seed, configs)
         df["dataset"] = path.name
         frames.append(df)
     df = pd.concat(frames)
+    if args.out is not None:
+        df.to_csv(args.out, index=False)
     summary = df.groupby("config").agg(
         series=("series", "count"),
         mean_mase=("mase", "mean"),
         median_mase=("mase", "median"),
         mean_pinball=("pinball", "mean"),
         coverage80=("coverage80", "mean"),
-    ).reindex(list(CONFIGS))
-    base = summary.loc["baseline"]
-    summary["mase_vs_base"] = summary["mean_mase"] / base["mean_mase"] - 1
-    summary["pinball_vs_base"] = summary["mean_pinball"] / base["mean_pinball"] - 1
-    summary["ships"] = (summary["mase_vs_base"] < 0) & (summary["pinball_vs_base"] <= 0)
+    ).reindex([c for c in ORDER if c in set(df["config"])])
+    base = summary.loc[DEFAULT]
+    summary["mase_vs_default"] = summary["mean_mase"] / base["mean_mase"] - 1
+    summary["pinball_vs_default"] = summary["mean_pinball"] / base["mean_pinball"] - 1
+    # Ship gate (Phase D): beat the production default on MASE without
+    # regressing pinball or 80% coverage (coverage judged by distance to 0.8).
+    cov_gap = (summary["coverage80"] - 0.8).abs()
+    summary["ships"] = (
+        (summary["mase_vs_default"] < 0)
+        & (summary["pinball_vs_default"] <= 0)
+        & (cov_gap <= abs(base["coverage80"] - 0.8) + 1e-9)
+    )
     pd.set_option("display.width", 160)
     print(summary.round(4).to_string())
     if args.group_part is not None:
@@ -201,8 +284,10 @@ def main() -> None:
         by = df.pivot_table(index="group", columns="config", values=["mase", "pinball"], aggfunc="mean")
         print("\nby group (mean scaled MASE / pinball):")
         print(by.round(3).to_string())
-    print("\nselected models (+blend+gbm):")
-    print(df[df.config == "+blend+gbm"]["model"].value_counts().to_string())
+    for cfg in (DEFAULT, "+fm"):
+        if cfg in set(df["config"]):
+            print(f"\nselected models ({cfg}):")
+            print(df[df.config == cfg]["model"].value_counts().to_string())
 
 
 if __name__ == "__main__":

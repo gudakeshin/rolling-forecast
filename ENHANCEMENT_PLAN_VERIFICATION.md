@@ -97,9 +97,132 @@ Deviations from the plan text are called out in **Deviation** rows.
 | 6.4 | Value dashboard: cycle time trend, FVA vs naive, override rate | `test_value_metrics.py`, `ValueMetrics.test.tsx` |
 | 6.4 | **Deviation:** "% of review time on flagged lines" is measured as the share of review *actions* on lines the AI flagged; the app records actions, not time spent | `value_metrics.py` (`flagged_review_share`) |
 
+## Foundation models, Phase D — Chronos-2 ship decision (2026-11-26)
+
+`backend/scripts/backtest_roster.py`, 6-month holdout, against the
+production default (`+blend+gbm`). Two new arms: `+fm` (Chronos-2 enters
+selection through the two-stage screen, paired band and blending like any
+model) and `chronos2-raw` (Chronos-2's own zero-shot P10/P50/P90 for every
+line, no selection or calibration). Chronos-2 ran in the `fm-service`
+sidecar (`amazon/chronos-2@29ec376`, chronos-forecasting 2.3.2); every
+request succeeded. These CSVs carry no drivers, so Chronos-2 ran univariate
+with group context across lines; its covariate advantage is untested here.
+Scaled MASE / pinball (lower is better), 80% coverage (target 0.80), measured
+before the two roster fixes further down:
+
+| Dataset (series) | default MASE / pinball / cov | `+fm` vs default | `chronos2-raw` vs default |
+|---|---|---|---|
+| `test_actuals_data.csv` (33) | 0.793 / 0.210 / 0.80 | MASE +0.3%, pinball −0.5% | MASE +6.2%, pinball −1.4%, cov 0.81 |
+| `seed_data/sample_actuals.csv` (33) | 0.728 / 0.192 / 0.83 | MASE −0.8%, pinball +0.7% | MASE +17.1%, pinball +7.5% |
+| `seed_data/carl_zeiss_india_actuals.csv` (44) | 0.938 / 0.256 / 0.67 | identical (never selected) | MASE −8.7%, pinball −3.1%, cov 0.84 |
+| `synthetic_panel.py` (80; raw: 70) | 1.095 / 1.395 / 0.62 | MASE +0.1% | MASE −31%, pinball −82%, cov 0.67 |
+
+**Decision: do not ship.** `enable_foundation_models` stays `False`.
+- In selection (`+fm`) Chronos-2 changes nothing: it is chosen (alone or in
+  a blend) for 3 of 33 lines on one dataset and none elsewhere, because its
+  CV scores sit level with the per-series models (e.g. Zeiss OPEX-001: ETS
+  2.52, Chronos-2 2.47) while the GBM's sit far lower.
+- As a raw forecaster its large synthetic-panel win came from two defects in
+  the default roster, fixed below. Against the fixed default, on the same
+  lines: test_actuals MASE +17.2%, sample +22.3%, synthetic +3.7%, Zeiss
+  **−8.4%** (pinball −3.5%, 80% coverage 0.84 vs 0.67). Zeiss is the one
+  dataset where it is better, and its coverage gap there is worth a look;
+  that is not enough for a default. Lines too short for a 12-point context
+  get no Chronos-2 forecast at all.
+
+**Defects the backtest found in the default roster (fixed)**
+- **The Occam tie band rewarded erratic models.** With 2–3 CV folds, a
+  candidate that is good on one fold and terrible on another gets a large
+  paired SE, so it counted as "tied" with a much better model, and the
+  tie-break (simpler, non-benchmark first) picked it. On a 30-point
+  seasonal series ARIMA (folds 0.34 / 4.66, MASE 1.78) beat seasonal-naive
+  (0.37 / 0.45, MASE 0.40). Fix: the band never exceeds
+  `MAX_BAND_FRACTION = 0.25` of the best score (`model_registry._paired_band`).
+  `test_cv_weighting::test_erratic_model_is_not_tied_with_a_much_better_benchmark`,
+  `test_band_cap_still_lets_a_close_simpler_model_win`.
+- **ARIMA shipped explosive fits.** The order search fits with
+  `enforce_stationarity=False`, and on short seasonal history AIC preferred
+  ARIMA(2,1,1)×(1,1,1,12), forecasting 5,132 → −2,034,832 in six months.
+  Fix: fits with an AR root on or inside the unit circle are rejected
+  (`arima._explosive`). `test_arima_explosive.py` (fails without the guard).
+
+Default roster (`+blend+gbm`) before → after both fixes:
+
+| Dataset | MASE | pinball | 80% coverage |
+|---|---|---|---|
+| `test_actuals_data.csv` | 0.792 → 0.718 (−9.3%) | 0.210 → 0.194 (−7.6%) | 0.80 → 0.82 |
+| `sample_actuals.csv` | 0.728 → 0.697 (−4.3%) | 0.192 → 0.186 (−3.1%) | 0.83 → 0.80 |
+| `carl_zeiss_india_actuals.csv` | 0.938 → 0.936 (−0.2%) | 0.256 → 0.257 (+0.4%) | 0.67 → 0.67 |
+| synthetic panel | 1.095 → 0.751 (−31%) | 1.395 → 0.242 (−83%) | 0.62 → 0.66 |
+
+Synthetic per shape: additive seasonal MASE 3.44 → 1.01, multiplicative
+seasonal pinball 7.41 → 0.05; the other shapes are unchanged. Zeiss is flat
+within noise.
+
+**Follow-up items, each measured on the same four datasets (2026-11-26)**
+
+- **TimesFM 2.5 and Timestral-28M** (zero-shot, run in a separate eval
+  environment, not in the app; `google/timesfm-2.5-200m-pytorch`,
+  `mistralai/Timestral-28M`). Against the fixed default, MASE / pinball /
+  80% coverage:
+
+  | Dataset | default | Chronos-2 | TimesFM 2.5 | Timestral-28M |
+  |---|---|---|---|---|
+  | test_actuals | 0.718 / 0.194 / 0.82 | 0.841 / 0.207 / 0.81 | 0.849 / 0.206 / 0.82 | 0.869 / 0.219 / 0.84 |
+  | sample | 0.697 / 0.186 / 0.80 | 0.852 / 0.207 / 0.82 | 0.879 / 0.210 / 0.78 | 0.907 / 0.217 / 0.80 |
+  | Zeiss | 0.936 / 0.257 / 0.67 | 0.857 / 0.248 / 0.85 | 0.848 / 0.235 / 0.86 | 0.890 / 0.257 / 0.86 |
+  | synthetic | 0.751 / 0.242 / 0.66 | 0.752 / 0.246 / 0.67 | 0.721 / 0.169 / 0.81 | 0.658 / 0.159 / 0.85 |
+
+  **Decision: none ships.** All three foundation models trail the default
+  by 17–30% MASE on the two seed-like datasets and lead it on Zeiss and the
+  synthetic panel; they behave as near-substitutes of one another. TimesFM
+  2.5 is no better a challenger than Chronos-2, and Timestral stays
+  evaluation-only (licence cap, public preview). What all three do better
+  is coverage, which points at the default's bands, not its point forecasts.
+- **Conformal calibration** (`conformal_calibration_enabled`, off by
+  default, whose config comment asks for exactly this coverage report).
+  On, it made coverage *worse* everywhere (test 0.82 → 0.71, sample 0.80 →
+  0.77, Zeiss 0.67 → 0.65, synthetic 0.66 → 0.59) and pinball worse on 3 of
+  4: three CV folds are too few, too correlated residuals for per-horizon
+  quantiles. **Stays off.** (`backtest_roster.py` arm `+conformal`.)
+- **Zeiss coverage 0.67.** Misses fall on both sides (below P10 21%, above
+  P90 12%): the models' own in-sample bands are too narrow out of sample.
+  New opt-in `cv_coverage_widening_enabled` widens a band by the coverage
+  its model achieved in rolling-origin CV (a single rate, far more stable
+  than conformal quantiles; widen-only, capped at 2x;
+  `interval_calibration.widen_for_cv_coverage`,
+  `test_cv_coverage_widening.py`). Zeiss 0.67 → **0.76**, synthetic 0.66 →
+  0.69, but test 0.82 → 0.86 and sample 0.80 → 0.86 over-cover, and pinball
+  rises 1–7% on every dataset. **Off by default**: it trades sharpness for
+  coverage, which the ship rule does not allow. In production the existing
+  realized-coverage rescale corrects bands from actual vintages after
+  `conformal_realized_min_cycles` (3) closed cycles, which is the honest
+  fix for a dataset like Zeiss; the CV widening is for a company that needs
+  calibrated bands before it has that history.
+- **ARIMA order search: unit-root tests and drift.** Implemented (KPSS for
+  d, STL seasonal strength >= 0.64 for D, AIC only among models with the
+  same d and D, drift via `trend="c"` when one difference is taken), then
+  **reverted**: pooled over the 190 lines the default's MASE moved 0.7784 →
+  0.7787 (40 lines better, 44 worse) and pinball −2%, but Zeiss coverage
+  fell 0.67 → 0.63 and the baseline roster's coverage 0.69 → 0.66 (the
+  undifferenced fits KPSS allows give tighter, stationary bands). No MASE
+  win, so the gate rejects it. The explosive-root guard above is what
+  removed ARIMA's real failures.
+- **GBM CV folds are unpaired (kept, documented).** The panel GBM is scored
+  on fixed 3-step folds (`panel_forecast.N_FOLDS`/`FOLD_HORIZON`), every
+  other model at the run's horizon; short folds are easier (Zeiss fold-1
+  MASE 0.20 for the GBM vs ~3 for the rest), so its score is optimistic.
+  Scoring it on the shared windows made holdout MASE worse on 3 of 4
+  datasets (sample 0.728 → 0.840, Zeiss 0.938 → 1.050, synthetic 1.095 →
+  1.163; test improved 0.793 → 0.705): long folds on short history starve
+  each fold's panel refit. Kept as is; the misleading "more conservative"
+  docstring in `GlobalGBMModel.evaluate_cv_panel` now states this.
+- **Synthetic misses are mostly above P90 (22%)**: the default runs low on
+  trending shapes. Not addressed here.
+
 ## Whole-app gates (plan "Verification")
 
-- `pytest -q --cov=app --cov-fail-under=60`: 705 passed, coverage 75%.
+- `pytest -q --cov=app --cov-fail-under=60`: 779 passed, 4 skipped, coverage 76.4% (2026-11-26).
 - `ruff check app tests alembic` and `mypy app alembic`: clean.
 - `npm run typecheck && npm run lint && npm test`: clean, **0 lint warnings** (the 18 earlier warnings, all from commits dated 2026-02-22 to 2026-09-20, were fixed).
 - `npx playwright test` against a live stack: all e2e pass, in CI and locally on a fresh database.

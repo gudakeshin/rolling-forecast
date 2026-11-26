@@ -273,10 +273,18 @@ class GlobalGBMModel(IForecastModel):
         panel_forecast.build_global_panel_context), not per line — so this is
         a dict lookup, not a recomputation. ``n_folds``/``fold_horizon`` are
         accepted for interface parity with evaluate_cv but ignored: the panel
-        CV uses one fixed fold structure shared across every line, which only
-        ever makes this model's reported score MORE conservative than a
-        line-specific fold count would justify, never less — documented v1
-        simplification (see the Phase 2.1 plan doc).
+        CV uses one fixed structure for every line (3 folds of 3 steps,
+        ``panel_forecast.N_FOLDS``/``FOLD_HORIZON``).
+
+        That is NOT more conservative than the per-series models' CV, which
+        is scored at the run's horizon (12 months in production): 3-step
+        folds are easier, so this score is optimistic, and the registry
+        compares it with the unpaired band (fold horizons differ). Scoring the
+        GBM on the shared windows instead was measured and rejected (Phase D,
+        ENHANCEMENT_PLAN_VERIFICATION.md): long folds on short history starve
+        each fold's panel refit of training rows, and holdout accuracy got
+        worse on 3 of 4 datasets. Keep the fixed folds unless a backtest says
+        otherwise.
         """
         result = panel.per_line_cv_results.get(line_item_id)
         if result is not None:
