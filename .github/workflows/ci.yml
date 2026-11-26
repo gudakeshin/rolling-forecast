@@ -52,15 +52,12 @@ jobs:
         run: |
           pip install pip-audit bandit
           # Fail on new vulns; ignore known unfixed transitive issues
-          # (starlette awaiting FastAPI pin bump; chromadb has no fix release yet)
+          # (chromadb has no fix release yet; starlette ones fixed by 1.10)
           pip-audit -r requirements.lock \
-            --ignore-vuln GHSA-wj6h-64fc-37mp \
             --ignore-vuln PYSEC-2026-311 \
             --ignore-vuln PYSEC-2026-161 \
             --ignore-vuln PYSEC-2026-249 \
             --ignore-vuln PYSEC-2026-248 \
-            --ignore-vuln CVE-2026-48818 \
-            --ignore-vuln CVE-2026-48817 \
             `# 2026-10-29 chromadb 1.5.9 (latest), no fix release: all three are in` \
             `# Chroma's HTTP server (RBAC/tenant checks, update-collection). We only` \
             `# use the embedded PersistentClient (services/vector_store.py).` \

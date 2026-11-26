@@ -213,6 +213,7 @@ anyio==4.14.2 \
     --hash=sha256:cfa139f3ed1a23ee8f88a145ddb5ac7605b8bbfd8592baacd7ce3d8bb4313c7f
     # via
     #   anthropic
+    #   fastapi
     #   httpx
     #   httpx2
     #   langsmith
@@ -756,11 +757,10 @@ et-xmlfile==2.0.0 \
     --hash=sha256:dab3f4764309081ce75662649be815c4c9081e88f0837825f90fd28317d4da54
     # via
     #   openpyxl
-fastapi==0.129.0 \
-    --hash=sha256:61315cebd2e65df5f97ec298c888f9de30430dd0612d59d6480beafbc10655af \
-    --hash=sha256:b4946880e48f462692b31c083be0432275cbfb6e2274566b1be91479cc1a84ec
-    # via
-    #   -r requirements.txt
+fastapi==0.165.0 \
+    --hash=sha256:896f48462042bb4f162147eb8fac7e858753dc1f486765709baf105d70e4fc5b \
+    --hash=sha256:dd94d4128319c1e1d50535ab023ab698f850a4d2822f0e181747b46f4ff3c0ab
+    # via -r requirements.txt
 filelock==4.2.4 \
     --hash=sha256:301241438c57936ef93f4243a94f2559022268bfcf9b375a9a72eb0f8db8358e \
     --hash=sha256:c6d8663535e1650ee430507b4ffbac7b464dd64b7647ea0112a9f406499d163d
@@ -2569,6 +2569,7 @@ opentelemetry-api==1.45.2 \
     #   -r requirements.txt
     #   anthropic
     #   chromadb
+    #   fastapi
     #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-instrumentation
     #   opentelemetry-instrumentation-asgi
@@ -2599,13 +2600,11 @@ opentelemetry-instrumentation==0.66b2 \
 opentelemetry-instrumentation-asgi==0.66b2 \
     --hash=sha256:9c5ec36e6b898f18e6b07b5077c2a3bafa9abf69de98e729797b9efa465f8aa3 \
     --hash=sha256:da8a2df4589976ad483feaec150a78ec7d1947754e420b838a4942361e465bfb
-    # via
-    #   opentelemetry-instrumentation-fastapi
+    # via opentelemetry-instrumentation-fastapi
 opentelemetry-instrumentation-fastapi==0.66b2 \
     --hash=sha256:401eb9fe58cc86015ac0a6682dcaf1b4bcea32c428969853d02171d6650d1774 \
     --hash=sha256:bd226e0196990999eef77380a64527a26f35b621e681c3cad860984ecc3c23f5
-    # via
-    #   -r requirements.txt
+    # via -r requirements.txt
 opentelemetry-proto==1.45.2 \
     --hash=sha256:03a7ca1b43f89fd5b965d5975902bb2515c0c86e2428b456836e9a6149c6235a \
     --hash=sha256:bd8d23cf770605b0af9b7be2071d26a464fea289d35429abfd2a66226114ad64
@@ -2975,11 +2974,10 @@ prometheus-client==0.25.0 \
     # via
     #   -r requirements.txt
     #   prometheus-fastapi-instrumentator
-prometheus-fastapi-instrumentator==7.1.0 \
-    --hash=sha256:978130f3c0bb7b8ebcc90d35516a6fe13e02d2eb358c8f83887cdef7020c31e9 \
-    --hash=sha256:be7cd61eeea4e5912aeccb4261c6631b3f227d8924542d79eaf5af3f439cbe5e
-    # via
-    #   -r requirements.txt
+prometheus-fastapi-instrumentator==8.1.0 \
+    --hash=sha256:b77f3043665e8d28e2bbd21017506195a43d9adf1d402d01bf95b494b7e560e1 \
+    --hash=sha256:b9f40b2cff3f7891ca0610b3ae4fc6ec723fd326b04bb659819aaeb821a0fc7d
+    # via -r requirements.txt
 propcache==0.5.4 \
     --hash=sha256:004e685b315646c410771836e72a44f143bbe624f29653a42687815069a303d5 \
     --hash=sha256:02c0a34f16889cf800f10f0247a564d8ce6eeab6ffcd7c87198f769067eb8432 \
@@ -4057,6 +4055,10 @@ scipy==1.17.0 \
     # via
     #   scikit-learn
     #   statsmodels
+setuptools==84.2.1 \
+    --hash=sha256:3ff8b3b5492a0aa66960f4419365a86b84e013070d4313e4d4a6894f5d64d6bc \
+    --hash=sha256:ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2
+    # via -r requirements.txt
 shellingham==1.5.4 \
     --hash=sha256:7ecfff8f2fd72616f7481040475a65b2bf8af90a56c89140852d1120324e8686 \
     --hash=sha256:8dbca0739d487e5bd35ab3ca4b36e11c4078f3a234bfce294b0a0291363404de
@@ -4083,7 +4085,8 @@ sniffio==1.3.1 \
 soupsieve==4.1.3 \
     --hash=sha256:13f70186c8f40bf8d0ff7bbab09a18fb149600b465269207b5e5b588f55fda08 \
     --hash=sha256:7a390d1a57d1ab7bb228531e9b8a750a5ebf87db774e0ef6faeeac057d22a5bf
-    # via beautifulsoup4
+    # via
+    #   beautifulsoup4
 sqlalchemy==2.0.46 \
     --hash=sha256:09168817d6c19954d3b7655da6ba87fcb3a62bb575fb396a81a8b6a9fadfe8b5 \
     --hash=sha256:0cc3117db526cad3e61074100bd2867b533e2c7dc1569e95c14089735d6fb4fe \
@@ -4154,20 +4157,20 @@ sqlparse==0.6.0 \
     --hash=sha256:b861c0288ce2fa56209a9a6412d2e066ac664b3873b89c26c9d8415e8e32996f
     # via
     #   -r requirements.txt
-sse-starlette==3.2.0 \
-    --hash=sha256:5876954bd51920fc2cd51baee47a080eb88a37b5b784e615abb0b283f801cdbf \
-    --hash=sha256:8127594edfb51abe44eac9c49e59b0b01f1039d0c7461c6fd91d4e03b70da422
-    # via
-    #   -r requirements.txt
+sse-starlette==3.7.1 \
+    --hash=sha256:9a8256e3e80a0fdc8d1dec14f2bb0b3f304c99f23a6d4d26c61ff50145761597 \
+    --hash=sha256:c1bb3af0508c6c24cd4ab6257047654bbec01456a424bed36b36e8020cd7a37f
+    # via -r requirements.txt
 stanio==0.5.1 \
     --hash=sha256:348d52f947dec431e118f4b601c4c5296929b86401d4d4dd5aa9373b0d4ae4ac \
     --hash=sha256:99ad590daa5834681245c2b651716ec2e06223853661ada21430c621521c849f
     # via
     #   cmdstanpy
-starlette==0.52.1 \
-    --hash=sha256:0029d43eb3d273bc4f83a08720b4912ea4b071087a3b48db01b7c839f7954d74 \
-    --hash=sha256:834edd1b0a23167694292e94f597773bc3f89f362be6effee198165a35d62933
+starlette==1.10.0 \
+    --hash=sha256:478c0ab3b4ced6e82719849c118fa406f0278a3499c1a898cd15cd31bdc38ce4 \
+    --hash=sha256:b8399098d4c1e3522734f7235dc79b1fc967f96cf139c81e0fa30479e0685f9b
     # via
+    #   -r requirements.txt
     #   fastapi
     #   prometheus-fastapi-instrumentator
     #   sse-starlette

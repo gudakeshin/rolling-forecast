@@ -1,5 +1,7 @@
 # Core
-fastapi>=0.115.0
+fastapi>=0.165.0
+# Security floor: starlette < 1.3.1 (CVE-2026-54283, CVE-2026-48818).
+starlette>=1.6.0
 uvicorn[standard]>=0.32.0
 sqlalchemy>=2.0.0
 alembic>=1.14.0
@@ -74,7 +76,7 @@ psycopg2-binary>=2.9.0
 opentelemetry-api>=1.28.0
 opentelemetry-sdk>=1.28.0
 opentelemetry-instrumentation-fastapi>=0.49b0
-prometheus-fastapi-instrumentator>=7.0.0,<8.0.0
+prometheus-fastapi-instrumentator>=8.0.0,<9.0.0
 prometheus-client>=0.21.0
 
 # Job queue (optional — requires REDIS_URL)
@@ -90,3 +92,7 @@ email-validator>=2.0.0
 # Lint / typecheck (CI)
 ruff>=0.8.0
 mypy>=1.13.0
+# Locked (with hashes) rather than left to the base image: python:3.11-slim's
+# setuptools vendors jaraco.context 5.3 and wheel 0.45 (CVE-2026-23949,
+# CVE-2026-24049); several runtime deps still import setuptools/pkg_resources.
+setuptools>=84.2.1
