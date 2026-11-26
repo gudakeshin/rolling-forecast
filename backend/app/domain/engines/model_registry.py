@@ -243,9 +243,30 @@ def _paired_band(
     With ≤ 3 paired folds the SE is under-powered, so the band is floored at
     5% of the best score. ``paired=False`` (fold structures differ, e.g. the
     panel model's fixed folds) falls back to the unpaired SE of the two
-    models' folds.
+    models' folds. Either way the band never exceeds ``MAX_BAND_FRACTION``
+    of the best score.
     """
     floor = 0.05 * abs(best_score) if np.isfinite(best_score) else 0.0
+    cap = MAX_BAND_FRACTION * abs(best_score) if np.isfinite(best_score) else float("inf")
+    return min(_raw_paired_band(best_folds, cand_folds, floor, paired=paired), max(cap, floor))
+
+
+#: A candidate more than this fraction worse than the best score is never
+#: "tied" with it, however noisy its folds. Without the cap, a model that is
+#: erratic across folds earned a wide SE and with it a wide tolerance: on a
+#: 30-point seasonal series ARIMA (folds 0.34 / 4.66, MASE 1.78) counted as
+#: tied with seasonal-naive (0.37 / 0.45, MASE 0.40), and the Occam
+#: tie-break then picked ARIMA, 4.5x worse, because it is not a benchmark.
+MAX_BAND_FRACTION = 0.25
+
+
+def _raw_paired_band(
+    best_folds: list[float | None],
+    cand_folds: list[float | None],
+    floor: float,
+    *,
+    paired: bool,
+) -> float:
     if not paired:
         pooled = _finite_folds(best_folds) + _finite_folds(cand_folds)
         return _selection_band(pooled, min(len(best_folds), len(cand_folds)))
