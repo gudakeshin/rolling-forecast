@@ -25,6 +25,8 @@ scores the withheld months:
     +short        the production default: +range plus Chronos-2 for new and
                   short lines (foundation_short_lines_enabled); run with
                   --new-lines N to score it on simulated new lines
+    +supf         the production default plus Andrews' sup-F break test on
+                  STL-adjusted data (supf_break_test_enabled)
     +fm+range     +fm, with each non-Chronos-2 line's P10/P90 averaged with
                   Chronos-2's (foundation_range_blend_enabled)
     +fm+range-nowiden  the same without CV-coverage widening
@@ -115,6 +117,14 @@ CONFIGS = {
         "foundation_range_blend_enabled": True,
         "foundation_short_lines_enabled": True,
     },
+    "+supf": {
+        "enable_ensemble_blending": True,
+        "enable_global_gbm_model": True,
+        "cv_coverage_widening_enabled": True,
+        "foundation_range_blend_enabled": True,
+        "foundation_short_lines_enabled": True,
+        "supf_break_test_enabled": True,
+    },
     "+fm+range": {
         "enable_ensemble_blending": True,
         "enable_global_gbm_model": True,
@@ -167,6 +177,9 @@ def _score(actual, p10, p50, p90, scale) -> dict:
         # Signed mean error over the scale (+ = forecast too low).
         "bias": float(np.mean(actual - p50)) / scale,
         "width": float(np.mean(p90 - p10)) / scale,
+        # CRPS from the three quantiles (2 x mean pinball over 0.1/0.5/0.9).
+        "crps": 2.0 * (pinball(actual, p10, 0.1) + pinball(actual, p50, 0.5)
+                       + pinball(actual, p90, 0.9)) / 3.0 / scale,
     }
 
 

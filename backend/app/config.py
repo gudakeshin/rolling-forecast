@@ -127,6 +127,10 @@ class Settings(BaseSettings):
     outlier_cleaning_enabled: bool = True
     outlier_mad_z: float = 3.5
     # Structural break: require this many post-break points before truncating
+    # Structural breaks: Andrews' sup-F (level + slope) on STL-adjusted data
+    # instead of CUSUM with a Chow fallback whose best-of-many-splits p-value
+    # over-detects. Off until the backtest decides.
+    supf_break_test_enabled: bool = False
     structural_break_min_post_points: int = 12
     # Split-conformal interval calibration from CV fold residuals.
     # Off by default so an upgrade never silently changes published bands;

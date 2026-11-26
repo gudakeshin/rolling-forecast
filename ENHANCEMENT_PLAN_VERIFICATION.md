@@ -366,6 +366,62 @@ widths (> 1 critical, > 0.5 warning). From the existing
 `ForecastAccuracyRecord.within_p10_p90`. `app/services/vintage_anomalies.py`,
 `test_vintage_anomalies.py`.
 
+## Phase F — remaining roadmap (2026-11-26)
+
+Audit first: Postgres in CI, quantity × price driver links and a
+report-level tracking signal already existed.
+
+- **CI.** `npm ci` only (the lockfile is in sync, so the `|| npm install`
+  fallback could only hide drift); a new `images` job builds the backend
+  and frontend production images and fails on fixable HIGH/CRITICAL
+  findings from Trivy (`aquasecurity/trivy-action`). FUTURE.md's coverage
+  gate corrected to 60 (suite ~77%). The job is untested until CI runs it.
+- **MinT covariance.** `estimate_leaf_correlation` correlated demeaned
+  *levels*, so any two trending or seasonal lines looked ~perfectly
+  correlated (two independent-noise lines with a shared trend: levels
+  r > 0.99). It now correlates naive-forecast residuals (seasonal
+  differences with ≥ 16 periods, else first differences) and shrinks toward
+  the category prior with the Schäfer–Strimmer intensity instead of a fixed
+  0.45: the same pair gives |r| < 0.3; 400 periods of true r = 0.8 give
+  lambda < 0.05. O(T n²), no T × n × n array. Also feeds the executive risk
+  envelope. `test_mint_residual_covariance.py`.
+- **Process diagnostics** in Accuracy Tracking ("Bias & Overrides" tab),
+  from closed vintages: per-line tracking signal (|TS| > 4 flagged),
+  revision stability (mean absolute revision as % of the actual, share of
+  revisions that reverse the previous one), and override FVA by person and
+  by reason theme (keyword buckets of the free-text reason).
+  `app/services/accuracy_diagnostics.py`, `test_accuracy_diagnostics.py`.
+- **CRPS** from P10/P50/P90 (2 × mean pinball) in the backtest scoring and
+  as a band score in Accuracy Tracking. Sample paths not added: the
+  engines and Chronos-2 here return quantiles.
+- **Structural breaks.** Andrews' sup-F (level + slope, 15% trimming,
+  5% critical value 11.79) on STL-adjusted data, behind
+  `supf_break_test_enabled`. Simulated, 36 points, 200 series each, rate a
+  break is reported:
+
+  | Series | CUSUM + Chow (current) | sup-F |
+  |---|---|---|
+  | trend + noise, no break | 0.38 | 0.07 |
+  | trend + seasonality, no break | 1.00 | 0.05 |
+  | trend + AR(1) noise, no break | 0.94 | 0.50 |
+  | level shift at 20 | 1.00 (median index 24) | 1.00 (median index 20) |
+
+  The current Chow fallback reads the best of ~24 splits against a
+  single-test p-value; each false break truncates the history a line is
+  forecast from. Multi-origin backtest vs the production default
+  (`+short`), 730 line-origins, 95% CI: pooled MASE −1.7% [−4.5, +1.5],
+  pinball −1.3% [−3.0, +0.4], coverage 0.74 → 0.76; test −5.9%
+  [−12.8, +0.7] and sample −7.7% [−15.9, +0.2] lean better, Zeiss and
+  synthetic flat. It changes the selected model on 46% of line-origins yet
+  moves accuracy within noise, so it does not pass the gate: **stays off**.
+  It is the statistically correct test, and the leading candidate to re-run
+  on more lines.
+- **Not done:** holiday and working-day effects (needs per-company holiday
+  calendars and a backtest; monthly working days vary only ~20–23);
+  splitting `api/dashboard.py` and the large panels, and renaming the 23
+  `test_phase*.py` files (churn that collides with parallel sessions; do as
+  a dedicated change).
+
 ## Whole-app gates (plan "Verification")
 
 - `pytest -q --cov=app --cov-fail-under=60`: 779 passed, 4 skipped, coverage 76.4% (2026-11-26).
