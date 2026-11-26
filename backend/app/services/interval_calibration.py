@@ -329,3 +329,50 @@ def widen_for_cv_coverage(
         "scale": round(scale, 4),
         "target": target,
     }
+
+
+def blend_with_foundation_range(
+    point: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    fm_lower: np.ndarray,
+    fm_upper: np.ndarray,
+    *,
+    weight: float = 0.5,
+    non_negative: bool = False,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]] | None:
+    """Average the selected model's P10/P90 with Chronos-2's (quantile averaging).
+
+    The point forecast stays the selected model's: Chronos-2 lost on MASE on
+    the backtest, but its bands covered 0.81-0.86, where the default's
+    covered 0.59-0.72 from earlier origins. Averaging quantiles of the two
+    keeps a sharp band where they agree and widens it where they disagree.
+    ``weight`` is the foundation model's share. The result always contains
+    the point. Returns None when the foundation path is unusable.
+    """
+    point = np.asarray(point, dtype=float)
+    n = len(point)
+    fl = np.asarray(fm_lower, dtype=float)
+    fu = np.asarray(fm_upper, dtype=float)
+    if n == 0 or len(fl) == 0 or len(fu) == 0 or not (0.0 < weight <= 1.0):
+        return None
+    if len(fl) < n:
+        fl = np.concatenate([fl, np.full(n - len(fl), fl[-1])])
+    if len(fu) < n:
+        fu = np.concatenate([fu, np.full(n - len(fu), fu[-1])])
+    fl, fu = np.minimum(fl[:n], fu[:n]), np.maximum(fl[:n], fu[:n])
+    if not (np.all(np.isfinite(fl)) and np.all(np.isfinite(fu))):
+        return None
+    w = float(weight)
+    new_lower = (1.0 - w) * np.asarray(lower, dtype=float) + w * fl
+    new_upper = (1.0 - w) * np.asarray(upper, dtype=float) + w * fu
+    if non_negative:
+        new_lower = np.maximum(new_lower, 0.0)
+    new_lower = np.minimum(new_lower, point)
+    new_upper = np.maximum(new_upper, point)
+    old_width = float(np.mean(np.asarray(upper, dtype=float) - np.asarray(lower, dtype=float)))
+    new_width = float(np.mean(new_upper - new_lower))
+    return new_lower, new_upper, {
+        "weight": round(w, 4),
+        "width_ratio": round(new_width / old_width, 4) if old_width > 1e-12 else None,
+    }

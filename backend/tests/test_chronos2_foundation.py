@@ -439,3 +439,21 @@ def test_registry_gate_skips_batch_entirely(db_session, monkeypatch):
     )
     assert out is None
     assert called == []
+
+
+def test_range_blend_builds_batch_without_making_chronos2_a_candidate(db_session, monkeypatch):
+    """The range blend needs Chronos-2's paths, not Chronos-2 in selection."""
+    from app.services import panel_forecast
+
+    sentinel = FoundationPanelContext.unavailable("stub")
+    monkeypatch.setattr(settings, "foundation_range_blend_enabled", True)
+    monkeypatch.setattr(
+        "app.services.foundation_forecast.build_foundation_context", lambda *a, **k: sentinel
+    )
+    reg = ModelRegistry(enable_foundation_models=False)
+    out = panel_forecast.build_global_panel_context(
+        db_session, line_items=[], effective_series_by_line={}, periods_by_line={},
+        cal_cfg=None, version_id="v", horizon=3, random_seed=42, registry=reg,
+    )
+    assert out is not None and out.foundation is sentinel
+    assert reg.get(CHRONOS2_NAME) is None

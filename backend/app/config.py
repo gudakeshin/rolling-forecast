@@ -163,6 +163,16 @@ class Settings(BaseSettings):
     # its AnalysisProfile. When on, it competes through the same two-stage
     # cost gate, paired-SE band and blending as every other model.
     enable_foundation_models: bool = False
+    # Range blend: keep the selected model's point forecast but average its
+    # P10/P90 with Chronos-2's (interval_calibration.blend_with_foundation_range).
+    # Builds the run's Chronos-2 batch on its own, without making Chronos-2 a
+    # selection candidate (that stays enable_foundation_models); skipped on
+    # lines where Chronos-2 is itself selected or blended. On by default since
+    # the multi-origin backtest (ENHANCEMENT_PLAN_VERIFICATION.md): pinball
+    # -5.3% [-8.2, -2.9], 80% coverage 0.70 -> 0.74, points unchanged. With
+    # fm-service down a run carries on without it (circuit breaker, skip reason).
+    foundation_range_blend_enabled: bool = True
+    foundation_range_blend_weight: float = 0.5
     fm_service_url: str = "http://fm-service:8100"
     # One HTTP call carries every line and CV origin of a run, so the
     # timeout is per run, not per line.

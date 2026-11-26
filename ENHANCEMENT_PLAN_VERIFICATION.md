@@ -232,7 +232,7 @@ from 0.80 than the default's +2 points. An arm that changes only bands
 (MASE CI exactly zero) ships if pinball is not significantly worse and
 coverage moves closer to 0.80.
 
-Change vs the default (+blend+gbm), 95% CI; 190 lines, 760 line-origins:
+Change vs the default (+blend+gbm), 95% CI; 190 lines, 730 line-origins:
 
 | Dataset | Default MASE / pinball / cov | +cvwiden pinball, cov | +conformal pinball, cov | +arima_kpss MASE, pinball, cov |
 |---|---|---|---|---|
@@ -258,6 +258,46 @@ Change vs the default (+blend+gbm), 95% CI; 190 lines, 760 line-origins:
   crosses zero, so no significant win; it is the closest call (sample
   pinball significantly better, test MASE −3.9% but noisy) and worth a
   re-test with more lines.
+
+### Chronos-2 range blend (2026-11-26)
+
+`foundation_range_blend_enabled` keeps the selected model's point forecast
+and averages its P10/P90 with Chronos-2's, 50/50
+(`interval_calibration.blend_with_foundation_range`; the point always stays
+inside the band; skipped where Chronos-2 is itself selected or blended). The
+run builds the Chronos-2 batch for it without making Chronos-2 a selection
+candidate, which stays `enable_foundation_models`
+(`panel_forecast.build_global_panel_context`,
+`test_range_blend_builds_batch_without_making_chronos2_a_candidate`).
+
+Same multi-origin backtest (730 line-origins), vs the default (`+cvwiden`),
+95% CI:
+
+| Arm | MASE | Pinball | Coverage | Below P10 / above P90 |
+|---|---|---|---|---|
+| default (`+cvwiden`) | 1.170 | 0.364 | 0.70 | 0.10 / 0.20 |
+| `+fm` (Chronos-2 in selection) | **+0.9% [+0.3, +1.6]** | +1.2% [+0.3, +2.3] | 0.69 | 0.10 / 0.21 |
+| `+fm+range` | +0.9% [+0.3, +1.6] | −4.3% [−7.4, −1.8] | 0.74 | 0.06 / 0.20 |
+| **`+range`** (band only) | 0 | **−5.3% [−8.2, −2.9]** | **0.74** | 0.06 / 0.20 |
+| `+range-nowiden` | 0 | −5.0% [−8.4, −2.3] | 0.72 | 0.07 / 0.22 |
+| `chronos2-raw` | +4.6% [+1.1, +8.3] | −1.1% [−5.3, +2.7] | 0.73 | 0.03 / 0.24 |
+
+Per dataset (`+range` pinball): test −8.0% [−13.6, −3.1], sample −15.4%
+[−21.7, −8.8], synthetic −3.5% [−7.8, −0.3], Zeiss −1.3% [−4.4, +2.0].
+
+- **`+range` passes the gate** (bands only, pinball significantly better,
+  coverage closer to 0.80), on top of widening, which adds coverage at no
+  pinball cost. **Now on by default**
+  (`foundation_range_blend_enabled = True`); `fm-service` runs in both
+  compose files without a profile. Tests run without the sidecar
+  (`FOUNDATION_RANGE_BLEND_ENABLED=false` in `tests/conftest.py`).
+- **Chronos-2 should not be a selection candidate**: where it wins the
+  1-SE screen (7% of lines) it makes MASE significantly worse.
+- The gain is almost all on the low side (misses below P10 10% → 6%). The
+  remaining miss is above P90 (20%), the default under-forecasting trends.
+- Backtest fix: a toggle no arm in a run named kept the process default
+  (so `+range-nowiden` first ran with widening on); every arm's keys are
+  now set on every run.
 
 ## Whole-app gates (plan "Verification")
 

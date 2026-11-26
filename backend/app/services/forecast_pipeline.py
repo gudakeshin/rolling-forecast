@@ -37,6 +37,7 @@ from app.services.period_calendar import FiscalCalendarConfig, period_to_date
 from app.services.interval_calibration import (
     apply_bands,
     conformal_bands,
+    blend_with_foundation_range,
     widen_for_cv_coverage,
     rescale_for_realized_coverage,
 )
@@ -609,6 +610,50 @@ class LineForecast:
     was_sparse: bool = False
     had_structural_break: bool = False
     was_clamped: bool = False
+
+
+def _foundation_range_blend(
+    panel: "GlobalPanelContext | None",
+    line_item_id: int,
+    selected_model: str | None,
+    forecast_output: ForecastOutput,
+    *,
+    non_negative: bool,
+) -> tuple[Any, Any, dict[str, Any]] | None:
+    """The selected model's band averaged with Chronos-2's, or None.
+
+    Off unless ``foundation_range_blend_enabled``; skipped when the run has
+    no usable Chronos-2 forecast for this line, or when Chronos-2 already
+    produced (part of) this forecast.
+    """
+    if not settings.foundation_range_blend_enabled:
+        return None
+    from app.domain.engines.chronos2 import CHRONOS2_NAME, foundation_unavailable_reason
+
+    if CHRONOS2_NAME in str(selected_model or ""):
+        return None
+    if forecast_output.lower_bound is None or forecast_output.upper_bound is None:
+        return None
+    if foundation_unavailable_reason(panel, line_item_id) is not None:
+        return None
+    fm = panel.foundation  # type: ignore[union-attr]
+    fc = fm.forecasts.get((line_item_id, fm.production_origin_by_line[line_item_id]))
+    if fc is None:
+        return None
+    blended = blend_with_foundation_range(
+        forecast_output.point_forecast,
+        forecast_output.lower_bound,
+        forecast_output.upper_bound,
+        fc.p10,
+        fc.p90,
+        weight=settings.foundation_range_blend_weight,
+        non_negative=non_negative,
+    )
+    if blended is None:
+        return None
+    lower, upper, meta = blended
+    meta.update({k: fm.provenance.get(k) for k in ("model_id", "model_revision") if fm.provenance.get(k)})
+    return lower, upper, meta
 
 
 def _with_foundation_note(
@@ -1221,6 +1266,22 @@ def forecast_line_item(
                 forecast_output.lower_bound, forecast_output.upper_bound, widen_meta = widened
                 forecast_output.parameters = dict(forecast_output.parameters or {})
                 forecast_output.parameters["cv_coverage_widening"] = widen_meta
+        range_blend = _foundation_range_blend(
+            ctx.panel,
+            li.id,
+            selected_model,
+            forecast_output,
+            non_negative=not li.allow_negative,
+        )
+        if range_blend is not None:
+            forecast_output.lower_bound, forecast_output.upper_bound, blend_meta = range_blend
+            forecast_output.parameters = dict(forecast_output.parameters or {})
+            forecast_output.parameters["foundation_range_blend"] = blend_meta
+            bounds_method = (
+                f"{bounds_method}+foundation_range"
+                if bounds_method != BOUNDS_METHOD_MODEL
+                else "foundation_range_blend"
+            )
         if (
             use_exog
             and exog_bundle is not None

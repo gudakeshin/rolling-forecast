@@ -18,11 +18,18 @@ scores the withheld months:
                   setting's comment asks for before turning it on
     +fm           +cvwiden plus Chronos-2 (enable_foundation_models), which
                   competes through the same selection, band and blending
+    +range        +cvwiden, with each line's P10/P90 averaged with Chronos-2's
+                  (foundation_range_blend_enabled); Chronos-2 is not a
+                  selection candidate, so point forecasts are unchanged
+    +range-nowiden  the same without CV-coverage widening
+    +fm+range     +fm, with each non-Chronos-2 line's P10/P90 averaged with
+                  Chronos-2's (foundation_range_blend_enabled)
+    +fm+range-nowiden  the same without CV-coverage widening
     chronos2-raw  Chronos-2's own zero-shot P10/P50/P90 from the +fm run,
                   for every line, with no selection or calibration (the
                   "what if we just used the foundation model" arm)
 
-The two Chronos-2 arms need the fm-service sidecar (``--fm-url``, default
+The Chronos-2 arms need the fm-service sidecar (``--fm-url``, default
 http://localhost:8100). With no drivers in these CSVs, Chronos-2 runs
 univariate here; the panel still gives it group context across lines.
 
@@ -55,6 +62,7 @@ from sqlalchemy.orm import sessionmaker  # noqa: E402
 from app.database import Base  # noqa: E402
 from app.domain.engines.model_registry import registry_for_analysis  # noqa: E402
 from app.models.line_item import LineItem  # noqa: E402
+from app.config import settings  # noqa: E402
 from app.services.analysis_profile import resolve_analysis_settings  # noqa: E402
 from app.services.forecast_pipeline import (  # noqa: E402
     LineForecastContext,
@@ -85,6 +93,30 @@ CONFIGS = {
         "enable_global_gbm_model": True,
         "cv_coverage_widening_enabled": True,
         "enable_foundation_models": True,
+    },
+    "+range": {
+        "enable_ensemble_blending": True,
+        "enable_global_gbm_model": True,
+        "cv_coverage_widening_enabled": True,
+        "foundation_range_blend_enabled": True,
+    },
+    "+range-nowiden": {
+        "enable_ensemble_blending": True,
+        "enable_global_gbm_model": True,
+        "foundation_range_blend_enabled": True,
+    },
+    "+fm+range": {
+        "enable_ensemble_blending": True,
+        "enable_global_gbm_model": True,
+        "cv_coverage_widening_enabled": True,
+        "enable_foundation_models": True,
+        "foundation_range_blend_enabled": True,
+    },
+    "+fm+range-nowiden": {
+        "enable_ensemble_blending": True,
+        "enable_global_gbm_model": True,
+        "enable_foundation_models": True,
+        "foundation_range_blend_enabled": True,
     },
 }
 DEFAULT = "+cvwiden"
@@ -162,12 +194,13 @@ def run(
 
     base_analysis = resolve_analysis_settings(db, business_unit_id=None)
     results = []
-    from app.config import settings
 
     analysis_fields = {f.name for f in dataclasses.fields(base_analysis)}
     for config, toggles in configs.items():
         # Toggles the AnalysisProfile does not carry are process settings.
-        for key in {k for c in configs.values() for k in c} - analysis_fields:
+        # Every arm's keys, not only this run's: a toggle no arm in this run
+        # names would otherwise keep the process default.
+        for key in {k for c in CONFIGS.values() for k in c} - analysis_fields:
             setattr(settings, key, bool(toggles.get(key, False)))
         analysis = dataclasses.replace(
             base_analysis, **{k: v for k, v in toggles.items() if k in analysis_fields}
@@ -205,7 +238,11 @@ def _run_origin(
     used = [items[c] for c in series if items[c].id in train_by_line]
 
     panel = None
-    if analysis.enable_global_gbm_model or analysis.enable_foundation_models:
+    if (
+        analysis.enable_global_gbm_model
+        or analysis.enable_foundation_models
+        or settings.foundation_range_blend_enabled
+    ):
         effective = {
             li.id: compute_effective_series(
                 li, train_by_line[li.id], dates_by_line[li.id], analysis
@@ -324,7 +361,6 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    from app.config import settings
 
     settings.fm_service_url = args.fm_url
     settings.fm_service_timeout_seconds = 1800.0

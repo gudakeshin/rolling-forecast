@@ -141,7 +141,8 @@ def build_global_panel_context(
     registry: ModelRegistry,
 ) -> GlobalPanelContext | None:
     """Build the run's cross-series panel: the global GBM and, when the
-    company's registry contains it, the Chronos-2 batch (Phase C).
+    company's registry contains it or ``foundation_range_blend_enabled`` is
+    on, the Chronos-2 batch (Phase C).
 
     Chronos-2 is attached as ``panel.foundation``. It is built even when the
     GBM panel is not (too few lines), in which case an otherwise empty panel
@@ -162,7 +163,11 @@ def build_global_panel_context(
     gbm_panel = _build_gbm_panel_context(db, **kwargs)
     from app.domain.engines.chronos2 import CHRONOS2_NAME
 
-    if registry.get(CHRONOS2_NAME) is None:
+    from app.config import settings
+
+    # The range blend needs Chronos-2's forecasts even when Chronos-2 is not
+    # a selection candidate (it changes bands only, never the point).
+    if registry.get(CHRONOS2_NAME) is None and not settings.foundation_range_blend_enabled:
         return gbm_panel
     from app.services.foundation_forecast import build_foundation_context
 

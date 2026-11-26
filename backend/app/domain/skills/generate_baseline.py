@@ -726,7 +726,11 @@ class GenerateBaselineSkill(BaseSkill):
         # Never allowed to fail a run — any exception here just leaves panel
         # None and every line falls back to the per-series roster as before.
         panel: Any = None
-        if analysis.enable_global_gbm_model:
+        if (
+            analysis.enable_global_gbm_model
+            or analysis.enable_foundation_models
+            or settings.foundation_range_blend_enabled
+        ):
             try:
                 from app.services.forecast_pipeline import compute_effective_series
                 from app.services.panel_forecast import build_global_panel_context
