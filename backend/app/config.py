@@ -141,8 +141,10 @@ class Settings(BaseSettings):
     conformal_realized_min_cycles: int = 3
     # Widen a model's own band when rolling-origin CV showed it covering less
     # than 80% out of sample (interval_calibration.widen_for_cv_coverage).
-    # Used when conformal calibration is off or could not run.
-    cv_coverage_widening_enabled: bool = False
+    # Used when conformal calibration is off or could not run. On by default
+    # since the multi-origin backtest (ENHANCEMENT_PLAN_VERIFICATION.md):
+    # pooled 80% coverage 0.64 -> 0.70, pinball -1%, point forecasts unchanged.
+    cv_coverage_widening_enabled: bool = True
     # Global cross-series panel model (gradient-boosted quantile regressors,
     # fit once across all line items in a version) and top-2 blending inside
     # the 1-SE selection band (inverse-MASE weights). On by default, and only

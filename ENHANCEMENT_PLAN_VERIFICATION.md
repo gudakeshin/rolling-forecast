@@ -220,6 +220,45 @@ within noise.
 - **Synthetic misses are mostly above P90 (22%)**: the default runs low on
   trending shapes. Not addressed here.
 
+### Multi-origin re-test of the close calls (2026-11-26)
+
+One holdout origin could not settle the ±1–2% calls above, so
+`backtest_roster.py` now scores 4 origins per line, 3 months apart (min 8
+training points), and compares each arm with the default by a paired
+bootstrap over *series* (each series' origins averaged first, so repeated
+origins add no false confidence; `test_backtest_roster_stats.py`). Ship gate:
+MASE CI below zero, pinball not significantly worse, coverage no further
+from 0.80 than the default's +2 points. An arm that changes only bands
+(MASE CI exactly zero) ships if pinball is not significantly worse and
+coverage moves closer to 0.80.
+
+Change vs the default (+blend+gbm), 95% CI; 190 lines, 760 line-origins:
+
+| Dataset | Default MASE / pinball / cov | +cvwiden pinball, cov | +conformal pinball, cov | +arima_kpss MASE, pinball, cov |
+|---|---|---|---|---|
+| test | 0.976 / 0.262 / 0.72 | −1.0% [−4.9, +2.9], 0.78 | +5.6% [−1.4, +14.1], 0.68 | −3.9% [−10.3, +0.3], −3.5% [−12.1, +2.0], 0.73 |
+| sample | 1.044 / 0.284 / 0.70 | −0.1% [−3.2, +2.4], 0.77 | **+9.3% [+1.6, +18.3]**, 0.68 | −1.9% [−5.3, +0.4], **−2.8% [−6.1, −0.2]**, 0.71 |
+| Zeiss | 0.961 / 0.281 / 0.62 | −2.1% [−4.7, +1.1], 0.71 | −3.8% [−11.6, +5.1], 0.71 | +0.0% [−1.3, +1.5], −0.8% [−2.8, +1.1], 0.61 |
+| synthetic | 1.443 / 0.505 / 0.59 | −0.8% [−2.3, +0.7], 0.63 | −0.2% [−3.2, +3.6], 0.58 | −0.2% [−2.5, +2.4], +1.4% [−0.5, +4.4], 0.58 |
+| **pooled** | 1.170 / 0.367 / 0.64 | −1.0% [−2.2, +0.3], **0.70** | +1.2% [−1.7, +4.4], 0.65 | −1.0% [−2.5, +0.6], −0.2% [−1.9, +1.6], 0.64 |
+
+- **The default under-covers at earlier origins**: 0.64 pooled, against
+  0.66–0.82 at the single latest origin. With less history the bands are
+  too narrow everywhere, not only on Zeiss.
+- **CV-coverage widening flips to a pass.** Point forecasts are unchanged,
+  coverage moves toward 0.80 on all four datasets (pooled 0.64 → 0.70) and
+  pinball is lower on all four (pooled −1.0%, CI includes 0). The single
+  origin's pinball rise on test/sample came from the one origin where those
+  bands were already wide enough. **Now on by default**
+  (`cv_coverage_widening_enabled = True`); `backtest_roster.py`'s default
+  arm is `+cvwiden`, and `+blend+gbm` is the old default without it.
+- **Conformal stays off**: pinball significantly worse on sample, coverage
+  no better pooled.
+- **ARIMA KPSS/drift stays reverted**: pooled MASE −1.0% with a CI that
+  crosses zero, so no significant win; it is the closest call (sample
+  pinball significantly better, test MASE −3.9% but noisy) and worth a
+  re-test with more lines.
+
 ## Whole-app gates (plan "Verification")
 
 - `pytest -q --cov=app --cov-fail-under=60`: 779 passed, 4 skipped, coverage 76.4% (2026-11-26).
