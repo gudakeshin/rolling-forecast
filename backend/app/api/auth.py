@@ -3,7 +3,7 @@
 import secrets
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -21,12 +21,19 @@ from app.schemas.auth import (
     LogoutRequest,
     RefreshRequest,
     SwitchCompanyRequest,
+    SwitchCompanyResponse,
     TokenResponse,
     UserCreate,
     UserResponse,
 )
 from app.services.audit import record_audit
-from app.services.company_membership import ensure_active_membership, list_memberships, switch_active_company
+from app.services.company_membership import (
+    apply_session_company,
+    ensure_active_membership,
+    list_memberships,
+    session_company_for,
+    switch_active_company,
+)
 from app.services.permissions import require_permission
 from app.services.tenant_scope import push_tenant_scope, scope_for_user
 from app.services.token_store import (
@@ -51,10 +58,45 @@ def create_access_token(data: dict) -> str:
     return token
 
 
+def _access_claims(db: Session, user: User, company_id: str | None = None) -> dict:
+    """Claims for a new access token. ``cid`` pins the session's company, so
+    switching company in one tab or device does not move the others."""
+    claims: dict = {"sub": user.id, "role": user.role.name if user.role else "analyst"}
+    cid = session_company_for(db, user, company_id)
+    if cid:
+        claims["cid"] = cid
+    return claims
+
+
+REFRESH_COOKIE = "rf_refresh"
+REFRESH_COOKIE_PATH = "/api/auth"
+COOKIE_MODE_HEADER = "x-auth-cookie"
+
+
+def _cookie_mode(request: Request) -> bool:
+    """The browser app asks for the refresh token as an httpOnly cookie, so
+    script on the page (an XSS payload included) can never read it. Other API
+    clients keep receiving it in the response body."""
+    return request.headers.get(COOKIE_MODE_HEADER) == "1"
+
+
+def _deliver(request: Request, response: Response, tokens: TokenResponse) -> TokenResponse:
+    if _cookie_mode(request) and tokens.refresh_token:
+        response.set_cookie(
+            REFRESH_COOKIE,
+            tokens.refresh_token,
+            max_age=settings.jwt_refresh_days * 24 * 60 * 60,
+            httponly=True,
+            secure=settings.is_production,
+            samesite="strict",
+            path=REFRESH_COOKIE_PATH,
+        )
+        tokens.refresh_token = None
+    return tokens
+
+
 def _token_pair(db: Session, user: User) -> TokenResponse:
-    access, _jti, _exp = _mint_access(
-        {"sub": user.id, "role": user.role.name if user.role else "analyst"}
-    )
+    access, _jti, _exp = _mint_access(_access_claims(db, user))
     refresh = issue_refresh_token(db, user.id)
     return TokenResponse(
         access_token=access,
@@ -95,6 +137,9 @@ async def get_current_user(
     user = db.query(User).filter(User.id == user_id).first()
     if user is None or not user.is_active:
         raise HTTPException(status_code=401, detail="User not found or inactive")
+    # The token's company (cid) wins over the User row's default company, for
+    # this request only. A revoked membership falls back to the default.
+    apply_session_company(db, user, payload.get("cid"))
     # Fail-closed session-level tenant scoping for the rest of this request
     # (chat included -- it resolves through this same dependency). See
     # app/services/tenant_scope.py. Each request runs in its own asyncio
@@ -105,7 +150,9 @@ async def get_current_user(
 
 @router.post("/login", response_model=TokenResponse)
 @limiter.limit("10/minute")
-async def login(request: Request, body: LoginRequest, db: Session = Depends(get_db)):
+async def login(
+    request: Request, response: Response, body: LoginRequest, db: Session = Depends(get_db)
+):
     user = db.query(User).filter(User.username == body.username).first()
     if not user or not user.hashed_password or not pwd_context.verify(body.password, user.hashed_password):
         raise HTTPException(
@@ -122,20 +169,23 @@ async def login(request: Request, body: LoginRequest, db: Session = Depends(get_
         actor_username=user.username,
         commit=True,
     )
-    return _token_pair(db, user)
+    return _deliver(request, response, _token_pair(db, user))
 
 
 @router.post("/refresh", response_model=TokenResponse)
 @limiter.limit("30/minute")
 async def refresh_tokens(
     request: Request,
+    response: Response,
     body: RefreshRequest,
     db: Session = Depends(get_db),
 ):
     """Rotate refresh token and issue a new access token."""
-    _ = request
+    presented = body.refresh_token or request.cookies.get(REFRESH_COOKIE)
+    if not presented:
+        raise HTTPException(status_code=401, detail="No refresh token")
     try:
-        new_refresh, user_id = rotate_refresh_token(db, body.refresh_token)
+        new_refresh, user_id = rotate_refresh_token(db, presented)
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e)) from e
 
@@ -143,15 +193,18 @@ async def refresh_tokens(
     if not user:
         raise HTTPException(status_code=401, detail="User not found or inactive")
 
-    access, _jti, _exp = _mint_access(
-        {"sub": user.id, "role": user.role.name if user.role else "analyst"}
-    )
-    return TokenResponse(
-        access_token=access,
-        refresh_token=new_refresh,
-        user_id=user.id,
-        username=user.username,
-        role=user.role.name if user.role else "analyst",
+    access, _jti, _exp = _mint_access(_access_claims(db, user, body.company_id))
+    apply_session_company(db, user, body.company_id)
+    return _deliver(
+        request,
+        response,
+        TokenResponse(
+            access_token=access,
+            refresh_token=new_refresh,
+            user_id=user.id,
+            username=user.username,
+            role=user.role.name if user.role else "analyst",
+        ),
     )
 
 
@@ -159,16 +212,17 @@ async def refresh_tokens(
 @limiter.limit("30/minute")
 async def logout(
     request: Request,
+    response: Response,
     body: LogoutRequest | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(security_optional),
     db: Session = Depends(get_db),
 ):
     """Revoke the current access token (jti) and refresh-token family."""
-    _ = request
     access = credentials.credentials if credentials else None
     revoke_access_from_bearer(db, access)
-    refresh = body.refresh_token if body else None
+    refresh = (body.refresh_token if body else None) or request.cookies.get(REFRESH_COOKIE)
     revoke_refresh_token(db, refresh)
+    response.delete_cookie(REFRESH_COOKIE, path=REFRESH_COOKIE_PATH)
     return {"ok": True}
 
 
@@ -309,22 +363,26 @@ async def get_me(current_user: User = Depends(get_current_user), db: Session = D
     return resp
 
 
-@router.post("/switch-company", response_model=UserResponse)
+@router.post("/switch-company", response_model=SwitchCompanyResponse)
 async def switch_company(
     body: SwitchCompanyRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Switch the caller's active company/role to one they hold a membership
-    for. A plain DB write -- every permission check reads business_unit_id/
-    role live off the User row, so this takes effect on the very next
-    request with no re-login needed."""
+    """Switch the caller's session to a company they hold a membership for.
+
+    Returns a new access token whose ``cid`` claim pins that company for this
+    session only. The User row's company is also updated, but only as the
+    default a fresh login starts in: other tabs and devices keep the company
+    in their own token."""
     try:
         updated = switch_active_company(db, current_user, body.company_id)
     except ValueError:
         raise HTTPException(404, "Company not found")
-    resp = UserResponse.model_validate(updated)
+    access, _jti, _exp = _mint_access(_access_claims(db, updated, body.company_id))
+    resp = SwitchCompanyResponse.model_validate(updated)
     resp.companies = list_memberships(db, updated)
+    resp.access_token = access
     return resp
 
 
@@ -568,6 +626,7 @@ class SSOExchangeRequest(BaseModel):
 @limiter.limit("20/minute")
 async def oidc_exchange(
     request: Request,
+    response: Response,
     body: SSOExchangeRequest,
     db: Session = Depends(get_db),
 ):
@@ -581,7 +640,7 @@ async def oidc_exchange(
     user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found or inactive")
-    return _token_pair(db, user)
+    return _deliver(request, response, _token_pair(db, user))
 
 
 @router.get("/sso/status")

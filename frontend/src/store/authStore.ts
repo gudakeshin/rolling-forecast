@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { createJSONStorage, persist } from 'zustand/middleware';
+import { tabScopedTokenStorage } from './sessionToken';
 import type { User, TokenResponse } from '../types/auth';
 import { apiGet } from '../api/client';
 
@@ -14,11 +15,12 @@ export type Capability =
 
 interface AuthState {
   token: string | null;
-  refreshToken: string | null;
   user: User | null;
   isAuthenticated: boolean;
   login: (response: TokenResponse) => void;
-  setTokens: (access: string, refresh: string | null) => void;
+  /** Replace this tab's access token. The refresh token never reaches
+   * script: it lives in an httpOnly cookie. */
+  setTokens: (access: string) => void;
   setUser: (user: User) => void;
   logout: () => void;
   /** Fetch /auth/me and hydrate capability flags. */
@@ -29,14 +31,12 @@ export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
       token: null,
-      refreshToken: null,
       user: null,
       isAuthenticated: false,
 
       login: (response: TokenResponse) => {
         set({
           token: response.access_token,
-          refreshToken: response.refresh_token ?? null,
           isAuthenticated: true,
           user: {
             id: response.user_id,
@@ -50,10 +50,9 @@ export const useAuthStore = create<AuthState>()(
         });
       },
 
-      setTokens: (access, refresh) => {
+      setTokens: (access) => {
         set({
           token: access,
-          refreshToken: refresh,
           isAuthenticated: Boolean(access),
         });
       },
@@ -64,19 +63,19 @@ export const useAuthStore = create<AuthState>()(
 
       logout: () => {
         const access = get().token;
-        const refresh = get().refreshToken;
-        // Best-effort server revoke — raw fetch avoids client↔store import cycles
-        if (access || refresh) {
-          void fetch('/api/auth/logout', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(access ? { Authorization: `Bearer ${access}` } : {}),
-            },
-            body: JSON.stringify({ refresh_token: refresh }),
-          }).catch(() => undefined);
-        }
-        set({ token: null, refreshToken: null, user: null, isAuthenticated: false });
+        // Best-effort server revoke (the refresh cookie is sent automatically
+        // and cleared by the response). Raw fetch avoids client↔store cycles.
+        void fetch('/api/auth/logout', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Auth-Cookie': '1',
+            ...(access ? { Authorization: `Bearer ${access}` } : {}),
+          },
+          body: JSON.stringify({}),
+        }).catch(() => undefined);
+        set({ token: null, user: null, isAuthenticated: false });
       },
 
       fetchMe: async () => {
@@ -92,9 +91,9 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'forecast-auth',
+      storage: createJSONStorage(() => tabScopedTokenStorage),
       partialize: (state) => ({
         token: state.token,
-        refreshToken: state.refreshToken,
         user: state.user,
         isAuthenticated: state.isAuthenticated,
       }),
