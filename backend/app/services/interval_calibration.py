@@ -270,3 +270,62 @@ def apply_bands(
         **bands.to_metadata(),
     }
     return lower, upper, diagnostics
+
+
+def widen_for_cv_coverage(
+    point: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    cv_coverage: float | None,
+    n_points: int,
+    *,
+    target: float = 1.0 - DEFAULT_ALPHA,
+    min_points: int = 9,
+    max_scale: float = 2.0,
+    non_negative: bool = False,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]] | None:
+    """Widen a model's own P10-P90 band by how often it covered out of sample.
+
+    Engine bands come from in-sample residuals, which understate
+    out-of-sample error. Rolling-origin CV already scores each model's band
+    on held-out windows (``coverage_80``). One coverage number is far more
+    stable than the per-horizon quantiles split-conformal needs: with three
+    folds, conformal calibration made coverage worse on every backtest
+    dataset (Phase D, ENHANCEMENT_PLAN_VERIFICATION.md), while this needs
+    only a rate.
+
+    Only widens (scale >= 1): a band that over-covered in CV is left alone,
+    because CV windows sit on history the model was fitted near, so a high
+    CV rate is weak evidence that the published band is too wide. The
+    scale is the Gaussian width ratio from ``cv_coverage`` to ``target``,
+    the same interpolator ``rescale_for_realized_coverage`` uses, clamped to
+    ``max_scale``. Returns None when nothing changes.
+    """
+    if cv_coverage is None or not np.isfinite(cv_coverage) or n_points < min_points:
+        return None
+    if cv_coverage >= target:
+        return None
+    from scipy.stats import norm
+
+    coverage = float(min(max(cv_coverage, 0.01), 0.999))
+    have = float(norm.ppf(0.5 + coverage / 2.0))
+    want = float(norm.ppf(0.5 + target / 2.0))
+    if have <= 1e-9:
+        scale = max_scale
+    else:
+        scale = float(min(max(want / have, 1.0), max_scale))
+    if scale <= 1.0 + 1e-6:
+        return None
+    point = np.asarray(point, dtype=float)
+    new_lower = point - (point - np.asarray(lower, dtype=float)) * scale
+    new_upper = point + (np.asarray(upper, dtype=float) - point) * scale
+    if non_negative:
+        new_lower = np.maximum(new_lower, 0.0)
+    new_lower = np.minimum(new_lower, point)
+    new_upper = np.maximum(new_upper, point)
+    return new_lower, new_upper, {
+        "cv_coverage_80": round(float(cv_coverage), 4),
+        "cv_points": int(n_points),
+        "scale": round(scale, 4),
+        "target": target,
+    }

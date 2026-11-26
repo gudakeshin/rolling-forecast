@@ -139,6 +139,10 @@ class Settings(BaseSettings):
     conformal_min_residuals_total: int = 8
     # Closed cycles of realized vintages before realized coverage overrides CV.
     conformal_realized_min_cycles: int = 3
+    # Widen a model's own band when rolling-origin CV showed it covering less
+    # than 80% out of sample (interval_calibration.widen_for_cv_coverage).
+    # Used when conformal calibration is off or could not run.
+    cv_coverage_widening_enabled: bool = False
     # Global cross-series panel model (gradient-boosted quantile regressors,
     # fit once across all line items in a version) and top-2 blending inside
     # the 1-SE selection band (inverse-MASE weights). On by default, and only

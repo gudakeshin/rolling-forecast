@@ -37,6 +37,7 @@ from app.services.period_calendar import FiscalCalendarConfig, period_to_date
 from app.services.interval_calibration import (
     apply_bands,
     conformal_bands,
+    widen_for_cv_coverage,
     rescale_for_realized_coverage,
 )
 from app.services.reconciliation import (
@@ -658,6 +659,17 @@ def _sparse_history_pool(
     return pool
 
 
+def _cv_coverage_of(selection_result: Any, model_name: str | None) -> list[tuple[float, int]]:
+    """(CV coverage_80, number of CV points) for one candidate, if known."""
+    for c in getattr(selection_result, "comparisons", []) or []:
+        if c.model_name == model_name:
+            cov = getattr(c, "coverage_80", None)
+            n = sum(len(v) for v in (c.fold_residuals or {}).values())
+            if cov is not None and np.isfinite(cov) and n > 0:
+                return [(float(cov), int(n))]
+    return []
+
+
 def forecast_line_item(
     db: Session,
     li: LineItem,
@@ -882,8 +894,12 @@ def forecast_line_item(
         # Resolve the calibration set only now: a heuristic nudge may have moved
         # `selected_model` off the statistical best, and calibrating published
         # bands with another model's errors would be worse than not calibrating.
+        # (coverage_80, CV points) of each model behind the published band, for
+        # widen_for_cv_coverage below; a blend adds its partner's.
+        cv_coverage_evidence: list[tuple[float, int]] = []
         if selection_result is not None:
             cv_residuals = selection_result.residuals_for(selected_model)
+            cv_coverage_evidence.extend(_cv_coverage_of(selection_result, selected_model))
 
         exog_bundle = None
         use_exog = False
@@ -1077,6 +1093,9 @@ def forecast_line_item(
                         pooled_residuals.setdefault(h, [])
                         pooled_residuals[h] = pooled_residuals[h] + list(vals)
                     cv_residuals = pooled_residuals
+                    cv_coverage_evidence.extend(
+                        _cv_coverage_of(selection_result, partner_comp.model_name)
+                    )
 
                     blended_params = dict(forecast_output.parameters or {})
                     blended_params["ensemble_blend"] = ensemble_info
@@ -1179,6 +1198,29 @@ def forecast_line_item(
                 bounds_method = BOUNDS_METHOD_CONFORMAL
             elif out.comparison is not None:
                 out.comparison["calibration_skipped"] = "insufficient_cv_residuals"
+        if (
+            bounds_method == BOUNDS_METHOD_MODEL
+            and settings.cv_coverage_widening_enabled
+            and cv_coverage_evidence
+            and forecast_output.lower_bound is not None
+            and forecast_output.upper_bound is not None
+        ):
+            total_points = sum(n for _, n in cv_coverage_evidence)
+            pooled_cov = (
+                sum(c * n for c, n in cv_coverage_evidence) / total_points if total_points else None
+            )
+            widened = widen_for_cv_coverage(
+                forecast_output.point_forecast,
+                forecast_output.lower_bound,
+                forecast_output.upper_bound,
+                pooled_cov,
+                total_points,
+                non_negative=not li.allow_negative,
+            )
+            if widened is not None:
+                forecast_output.lower_bound, forecast_output.upper_bound, widen_meta = widened
+                forecast_output.parameters = dict(forecast_output.parameters or {})
+                forecast_output.parameters["cv_coverage_widening"] = widen_meta
         if (
             use_exog
             and exog_bundle is not None
