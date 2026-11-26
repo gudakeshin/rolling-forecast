@@ -376,3 +376,27 @@ def blend_with_foundation_range(
         "weight": round(w, 4),
         "width_ratio": round(new_width / old_width, 4) if old_width > 1e-12 else None,
     }
+
+
+def crps_from_quantiles(
+    actual: float, quantiles: dict[float, float | None]
+) -> float | None:
+    """CRPS approximated from a few predictive quantiles.
+
+    CRPS = 2 * integral over tau of the pinball loss, so with quantiles at
+    levels tau_1..tau_k it is approximated by 2 * mean_k pinball_tau_k
+    (Gneiting and Raftery 2007, eq. 22). With P10/P50/P90 this weights the
+    median and both tails equally; it reduces to the absolute error when
+    only the median is known. Missing quantiles are skipped; None if none
+    are usable.
+    """
+    losses = []
+    for tau, q in quantiles.items():
+        if q is None or not math.isfinite(float(q)):
+            continue
+        d = float(actual) - float(q)
+        losses.append(max(tau * d, (tau - 1.0) * d))
+    if not losses:
+        return None
+    return 2.0 * sum(losses) / len(losses)
+
