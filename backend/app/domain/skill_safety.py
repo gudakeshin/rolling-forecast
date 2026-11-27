@@ -55,6 +55,8 @@ READ_ONLY_SKILLS: frozenset[str] = frozenset({
     "get_forecast_settings",
     "get_custom_kpis",
     "list_actuals_datasets",
+    "preview_forecast",
+    "list_model_disagreements",
 })
 
 #: Skills whose output carries text from outside the user's own messages.

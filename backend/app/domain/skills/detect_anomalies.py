@@ -46,8 +46,11 @@ class DetectAnomaliesSkill(BaseSkill):
                 },
                 "method": {
                     "type": "string",
-                    "description": "Detection method: zscore, iqr, trend_deviation, stl_mad, all",
-                    "enum": ["zscore", "iqr", "trend_deviation", "stl_mad", "all"],
+                    "description": (
+                        "Detection method: zscore, iqr, trend_deviation, stl_mad, vintage_band "
+                        "(actuals outside the P10-P90 an earlier forecast published), all"
+                    ),
+                    "enum": ["zscore", "iqr", "trend_deviation", "stl_mad", "vintage_band", "all"],
                     "default": "all",
                 },
                 "sensitivity": {
@@ -235,7 +238,37 @@ class DetectAnomaliesSkill(BaseSkill):
                     values, periods, li, "actuals", thresholds["trend_pct"]
                 ))
 
+        if method in ("vintage_band", "all"):
+            anomalies.extend(self._vintage_band_detection(db, line_items))
+
         return anomalies
+
+    def _vintage_band_detection(self, db: Session, line_items: list[LineItem]) -> list[dict]:
+        """Actuals outside the P10-P90 the closest earlier forecast published (Phase E5)."""
+        from app.services.vintage_anomalies import vintage_band_misses
+
+        by_id = {li.id: li for li in line_items}
+        out: list[dict[str, Any]] = []
+        for li_id, misses in vintage_band_misses(db, list(by_id)).items():
+            li = by_id[li_id]
+            for m in misses:
+                widths = m["band_widths_outside"]
+                out.append({
+                    "line_item": li.name,
+                    "category": li.category,
+                    "period": m["period"],
+                    "value": m["value"],
+                    "source": "actuals",
+                    "method": "vintage_band",
+                    "severity": m["severity"],
+                    "score": float(widths) if widths is not None else 99.0,
+                    "note": (
+                        f"Actual {m['direction']} the P10-P90 forecast {m['horizon_offset']} "
+                        f"month(s) earlier ({m['p10']:,.0f} to {m['p90']:,.0f})"
+                        + (f", {widths:.1f} band widths outside" if widths is not None else "")
+                    ),
+                })
+        return out
 
     def _scan_forecast(
         self, db: Session, version_id: str, params: dict, method: str, thresholds: dict, user=None
