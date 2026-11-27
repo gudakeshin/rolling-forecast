@@ -49,6 +49,8 @@ ANALYSIS_PROFILE_FIELDS: dict[str, type] = {
     "enable_benchmark_models": bool,
     "enable_global_gbm_model": bool,
     "enable_foundation_models": bool,
+    "working_day_adjustment_enabled": bool,
+    "holiday_country": str,
 }
 
 _KEY_PREFIX = "analysis."
@@ -78,6 +80,8 @@ class AnalysisSettings:
     enable_benchmark_models: bool
     enable_global_gbm_model: bool
     enable_foundation_models: bool
+    working_day_adjustment_enabled: bool = False
+    holiday_country: str = ""
 
 
 def _decode(field_type: type, raw: str) -> Any:
@@ -135,6 +139,15 @@ def validate_analysis_patch(patch: dict[str, Any]) -> dict[str, Any]:
         if field_type in (int, float) and not isinstance(value, (int, float)):
             raise ValueError(f"'{name}' must be a number")
         coerced[name] = field_type(value)
+        if name == "holiday_country" and coerced[name]:
+            coerced[name] = coerced[name].strip().upper()
+            import holidays
+
+            if coerced[name] not in holidays.list_supported_countries():
+                raise ValueError(
+                    f"'holiday_country' must be an ISO country code with a holiday calendar "
+                    f"(e.g. US, IN, GB, DE), not {value!r}"
+                )
     return coerced
 
 

@@ -461,6 +461,9 @@ class EffectiveSeriesResult:
     cleaned_periods: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     flags: list[str] = field(default_factory=list)
+    # Set when the values above are per-working-day (working_days.py); the
+    # forecast is scaled back by the future periods' counts.
+    working_day_effect: Any = None
 
 
 def compute_effective_series(
@@ -538,6 +541,15 @@ def compute_effective_series(
         ),
     )
     effective_values = cleaning.cleaned
+    working_day_effect = None
+    if (
+        forced is None
+        and analysis_settings is not None
+        and getattr(analysis_settings, "working_day_adjustment_enabled", False)
+    ):
+        working_day_effect, effective_values = _working_day_adjust(
+            effective_values, effective_dates, getattr(analysis_settings, "holiday_country", "") or None
+        )
     if cleaning.n_cleaned:
         warnings.append(
             f"Winsorized {cleaning.n_cleaned} outlier(s) for '{li.name}' "
@@ -558,7 +570,58 @@ def compute_effective_series(
         cleaned_periods=list(cleaning.cleaned_periods),
         warnings=warnings,
         flags=flags,
+        working_day_effect=working_day_effect,
     )
+
+
+def _working_day_adjust(
+    values: pd.Series, dates: pd.DatetimeIndex, country: str | None
+) -> tuple[Any, pd.Series]:
+    """(effect, per-working-day values) when the line has a significant
+    working-day elasticity, else (None, values unchanged)."""
+    from app.services.period_calendar import date_to_period, get_calendar_config
+    from app.services.working_days import estimate_effect, working_days
+
+    try:
+        cal = get_calendar_config()
+        periods = [date_to_period(d.date(), cal) for d in dates]
+        wd = working_days(periods, cal, country)
+        effect = estimate_effect(
+            np.asarray(values, dtype=float), wd, season=seasonal_period_length()
+        )
+    except Exception as e:  # a calendar problem never fails a line
+        logger.debug("working-day test skipped: %s", e)
+        return None, values
+    if effect is None:
+        return None, values
+    adjusted = pd.Series(effect.adjust(np.asarray(values, dtype=float), wd), index=values.index)
+    return effect, adjusted
+
+
+def _restore_working_days(
+    forecast_output: ForecastOutput, effect: Any, cal_cfg: Any, country: str | None
+) -> dict[str, Any] | None:
+    """Scale a per-working-day forecast back by the future periods' counts."""
+    from app.services.working_days import working_days
+
+    periods = [str(p) for p in forecast_output.periods]
+    try:
+        factor = effect.restore_factor(working_days(periods, cal_cfg, country))
+    except Exception as e:
+        logger.warning("working-day restore failed, forecast left per-day: %s", e)
+        return None
+    forecast_output.point_forecast = np.asarray(forecast_output.point_forecast, dtype=float) * factor
+    if forecast_output.lower_bound is not None:
+        forecast_output.lower_bound = np.asarray(forecast_output.lower_bound, dtype=float) * factor
+    if forecast_output.upper_bound is not None:
+        forecast_output.upper_bound = np.asarray(forecast_output.upper_bound, dtype=float) * factor
+    return {
+        "beta": round(effect.beta, 4),
+        "t_stat": round(effect.t_stat, 2),
+        "mean_working_days": round(effect.mean_wd, 2),
+        "holiday_country": country,
+        "factors": [round(float(f), 4) for f in factor],
+    }
 
 
 @dataclass
@@ -1383,6 +1446,17 @@ def forecast_line_item(
                 if exog_spec is not None:
                     exog_spec["exog_variance_inflated"] = True
                     forecast_output.parameters["exog_spec"] = exog_spec
+
+        if effective.working_day_effect is not None:
+            wd_meta = _restore_working_days(
+                forecast_output,
+                effective.working_day_effect,
+                cal_cfg,
+                (getattr(ctx.analysis, "holiday_country", "") or None) if ctx.analysis is not None else None,
+            )
+            if wd_meta is not None:
+                forecast_output.parameters = dict(forecast_output.parameters or {})
+                forecast_output.parameters["working_day_adjustment"] = wd_meta
 
         cv_mape = selection_mape if selection_mape is not None else None
         in_sample = (

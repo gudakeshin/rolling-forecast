@@ -27,6 +27,8 @@ scores the withheld months:
                   --new-lines N to score it on simulated new lines
     +supf         the production default plus Andrews' sup-F break test on
                   STL-adjusted data (supf_break_test_enabled)
+    +wd           the production default plus working-day adjustment
+                  (working_day_adjustment_enabled, weekdays only)
     +fm+range     +fm, with each non-Chronos-2 line's P10/P90 averaged with
                   Chronos-2's (foundation_range_blend_enabled)
     +fm+range-nowiden  the same without CV-coverage widening
@@ -124,6 +126,14 @@ CONFIGS = {
         "foundation_range_blend_enabled": True,
         "foundation_short_lines_enabled": True,
         "supf_break_test_enabled": True,
+    },
+    "+wd": {
+        "enable_ensemble_blending": True,
+        "enable_global_gbm_model": True,
+        "cv_coverage_widening_enabled": True,
+        "foundation_range_blend_enabled": True,
+        "foundation_short_lines_enabled": True,
+        "working_day_adjustment_enabled": True,
     },
     "+fm+range": {
         "enable_ensemble_blending": True,

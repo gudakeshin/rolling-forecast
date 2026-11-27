@@ -416,11 +416,41 @@ report-level tracking signal already existed.
   moves accuracy within noise, so it does not pass the gate: **stays off**.
   It is the statistically correct test, and the leading candidate to re-run
   on more lines.
-- **Not done:** holiday and working-day effects (needs per-company holiday
-  calendars and a backtest; monthly working days vary only ~20–23);
-  splitting `api/dashboard.py` and the large panels, and renaming the 23
+- **Not done:** splitting `api/dashboard.py` and the large panels, and renaming the 23
   `test_phase*.py` files (churn that collides with parallel sessions; do as
   a dedicated change).
+
+### Working-day and holiday effects (2026-11-27)
+
+`app/services/working_days.py`. Working days per fiscal period = Mon–Fri in
+the period's dates minus the company's public holidays (`holiday_country`,
+ISO code, validated; `holidays` was already pinned for Prophet; empty =
+weekdays only). Per line, the seasonal difference of log values is
+regressed on the seasonal difference of log working days, so month-of-year
+seasonality drops out and only year-to-year calendar shifts remain. A line
+with a significant elasticity (t > 2, beta capped at 1.25, ≥ 25 positive
+points) is modelled per working day — before the panel GBM and Chronos-2
+batches, so every model sees the same scale — and the forecast is scaled
+back by the future periods' counts (`working_day_adjustment` in the line's
+metadata). A 4-4-5 calendar's periods are whole weeks, so without holidays
+nothing is adjusted (a 53-week year's 6-week period is).
+
+Held-out simulation (48 months, 12-month horizon, 3% noise, US holidays,
+full auto selection; 40 series each):
+
+| True elasticity | Lines adjusted | MASE without → with |
+|---|---|---|
+| 0 | 0% | 0.753 → 0.753 (no change) |
+| 0.6 | 75% | 0.982 → 0.927 (−5.6%) |
+| 1.0 | 90% | 1.089 → 0.810 (−25.6%) |
+
+On the four backtest datasets only 1–2 lines per dataset qualify, about the
+false-positive rate, i.e. they carry no working-day effect; the multi-origin
+backtest (`+wd` vs `+short`) is neutral: pooled MASE −0.07% [−0.6, +0.5],
+pinball −0.05% [−0.3, +0.2]. It does not pass the MASE-win gate on data
+without the effect, so `working_day_adjustment_enabled` stays **off** by
+default; a company turns it on (and sets `holiday_country`) in its
+AnalysisProfile. `test_working_days.py`.
 
 ## Whole-app gates (plan "Verification")
 

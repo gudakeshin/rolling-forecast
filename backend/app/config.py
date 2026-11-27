@@ -131,6 +131,13 @@ class Settings(BaseSettings):
     # instead of CUSUM with a Chow fallback whose best-of-many-splits p-value
     # over-detects. Off until the backtest decides.
     supf_break_test_enabled: bool = False
+    # Working-day effects (app/services/working_days.py): a line whose
+    # year-on-year changes track the change in working days is forecast per
+    # working day and scaled back by the future periods' counts. Off until the
+    # backtest decides. holiday_country: ISO code for public holidays ("" =
+    # weekdays only); a company sets its own through the AnalysisProfile.
+    working_day_adjustment_enabled: bool = False
+    holiday_country: str = ""
     structural_break_min_post_points: int = 12
     # Split-conformal interval calibration from CV fold residuals.
     # Off by default so an upgrade never silently changes published bands;
