@@ -331,7 +331,7 @@ no shared files, and together they deliver a visibly better product in one cycle
   and cannot win inside the 1-SE band against a simpler model (the Occam guarantee must hold).
 - Backtest harness over `test_actuals_data.csv`: report MASE and pinball per model, old vs new
   roster. Ship only if the new roster wins on MASE **and** does not regress pinball.
-- `pytest backend/tests/test_phase1_selection.py` unchanged — selection policy must not drift.
+- `pytest backend/tests/test_model_selection_policy.py` unchanged — selection policy must not drift.
 
 **Phase 3 (scheduling)**
 - `docker compose up` with `REDIS_URL` set; assert cron jobs register and a forced run produces a new

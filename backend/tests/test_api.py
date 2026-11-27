@@ -4,10 +4,12 @@ import os
 
 import pytest
 
-# Must set env BEFORE importing the app (prometheus is gated on APP_ENV)
+# Must set env BEFORE importing the app (prometheus is gated on APP_ENV).
+# DATABASE_URL is left alone: conftest has already created the app engine, so
+# overriding it here changed nothing for this module but leaked into every
+# child process the session spawns (they then opened an empty database).
 os.environ["APP_ENV"] = "test"
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-ci-at-least-32-chars")
-os.environ["DATABASE_URL"] = "sqlite:///./test_api_rolling_forecast.db"
 os.environ.setdefault("SEED_DEMO_USERS", "true")
 
 from fastapi.testclient import TestClient
@@ -18,12 +20,13 @@ from app.database import Base, engine
 
 @pytest.fixture(scope="module", autouse=True)
 def setup_db():
-    """Create test database."""
+    """Make sure the app database has its tables.
+
+    No teardown: this is the session-wide app database other TestClient tests
+    share, so dropping its tables here broke whichever tests ran later.
+    """
     Base.metadata.create_all(engine)
     yield
-    Base.metadata.drop_all(engine)
-    if os.path.exists("test_api_rolling_forecast.db"):
-        os.remove("test_api_rolling_forecast.db")
 
 
 @pytest.fixture

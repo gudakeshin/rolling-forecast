@@ -446,6 +446,13 @@ def test_line_fit_task_survives_a_real_spawned_process(db_session):
     )
     assert pickle.loads(pickle.dumps(task)).ctx.horizon == 3
 
+    # The child opens its own session on the app database (DATABASE_URL), not
+    # this test's in-memory one. Create its tables here rather than relying on
+    # an earlier TestClient test having started the app (test order varies).
+    from app.database import Base, engine
+
+    Base.metadata.create_all(engine)
+
     pool = fit_parallel.create_fit_pool(1)
     try:
         out = pool.submit(fit_parallel.fit_line_task, task).result(timeout=120)

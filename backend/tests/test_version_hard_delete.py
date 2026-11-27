@@ -4,7 +4,7 @@ approval_steps/anomaly_dismissals/accuracy_records/review_undo_snapshots all
 disappear with it -- and must refuse when another version branched from it
 (parent_version_id), or when the caller belongs to a different company.
 Basic delete/refuse-non-draft contract is covered by
-tests/test_phase6b_7.py::test_delete_version_endpoint; this file covers the
+tests/test_identity_decomposition_and_what_if.py::test_delete_version_endpoint; this file covers the
 cascade/lineage/company-scope specifics that need a richer fixture graph.
 
 model_metadata is the one that actually caught a real bug during manual
