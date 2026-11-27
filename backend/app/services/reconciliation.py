@@ -320,26 +320,32 @@ def estimate_leaf_correlation(
     for rec in records:
         series[rec.line_item_id][rec.period] = float(rec.value)
 
-    # Align on common periods
-    period_sets = [set(series[lid].keys()) for lid in leaf_ids if series[lid]]
-    if not period_sets:
+    # Estimate only among leaves that have actuals in this dataset. A leaf with
+    # none (a new line, or one missing from the upload) has no evidence, so it
+    # keeps the prior; building it into the sample used to raise KeyError and
+    # break every caller (what-if, overrides, branches) for the company.
+    observed = [i for i, lid in enumerate(leaf_ids) if series[lid]]
+    if len(observed) < 2:
         return prior
-    common = set.intersection(*period_sets) if period_sets else set()
+    common = set.intersection(*(set(series[leaf_ids[i]]) for i in observed))
     if len(common) < 4:
         return prior
 
     periods = sorted(common)
     X = np.column_stack(
-        [[series[lid][p] for p in periods] for lid in leaf_ids]
-    )  # T × n
+        [[series[leaf_ids[i]][p] for p in periods] for i in observed]
+    )  # T × observed
     lag = _RESIDUAL_SEASON if len(periods) >= _RESIDUAL_SEASON + 4 else 1
     E = X[lag:] - X[:-lag]  # naive-forecast residuals
     if E.shape[0] < 4:
         return prior
-    shrunk, _lam = shrink_correlation(E, prior)
+    sub = np.ix_(observed, observed)
+    shrunk, _lam = shrink_correlation(E, prior[sub])
     if shrunk is None:
         return prior
-    return _nearest_correlation(shrunk)
+    R = prior.copy()
+    R[sub] = shrunk
+    return _nearest_correlation(R)
 
 
 def shrink_correlation(

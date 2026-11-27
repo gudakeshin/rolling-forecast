@@ -863,3 +863,37 @@ def test_what_if_rejects_unknown_method(db_session, seed_users):
             db_session, base_version_id="x", scenario_label="s",
             shocks=[DriverShock(driver_id=1, mode="pct", value=1.0)], actor=None, method="magic",
         )
+
+
+def test_what_if_and_reconciliation_survive_a_line_without_actuals(db_session, seed_users):
+    """A company line with no actuals in the version's dataset used to make
+    reconciliation raise KeyError, so what-ifs (and overrides, branches) failed."""
+    from app.services.reconciliation import reconcile_version
+
+    li, d, base = _foundation_whatif_fixture(db_session, seed_users)
+    db_session.add_all([
+        LineItem(account_code="REV-NEW-NOACT", name="New line, no actuals yet", category="Revenue", display_order=8),
+        LineItem(account_code="REV-OTHER", name="Other revenue", category="Revenue", display_order=9),
+    ])
+    db_session.flush()
+    other = db_session.query(LineItem).filter(LineItem.account_code == "REV-OTHER").one()
+    for i in range(24):
+        db_session.add(ActualsRecord(
+            dataset_id=base.actuals_dataset_id, line_item_id=other.id,
+            period=f"{2023 + i // 12}-{i % 12 + 1:02d}", value=50.0 + (i * 7) % 11,
+        ))
+    db_session.commit()
+
+    reconcile_version(db_session, base.id)  # used to raise KeyError
+
+    out = create_what_if_scenario(
+        db_session, base_version_id=base.id, scenario_label="noact",
+        shocks=[DriverShock(driver_id=d.id, mode="absolute", value=10.0)],
+        actor=seed_users["admin"],
+    )
+    row = (
+        db_session.query(ForecastLineResult)
+        .filter(ForecastLineResult.version_id == out["scenario_version_id"], ForecastLineResult.line_item_id == li.id)
+        .first()
+    )
+    assert row.p50 == pytest.approx(220.0)  # link coefficient 2.0 * 10 on top of 200
