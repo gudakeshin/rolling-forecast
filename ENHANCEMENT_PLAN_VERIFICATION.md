@@ -429,6 +429,35 @@ report-level tracking signal already existed.
   they test (e.g. `test_phase9_discovery.py` → `test_driver_discovery.py`);
   same 837 tests collected.
 
+### Phase E follow-ups: skills, review metric, browser tests (2026-11-27)
+
+- **Agent skills.** `preview_forecast` (instant Chronos-2 preview of a
+  dataset; opens the preview panel) and `list_model_disagreements` (lines
+  the second opinion flags, with how review treated them; opens the review
+  queue), both read-only, with `.md` definitions. `detect_anomalies` gains a
+  `vintage_band` method (in `all`): actuals outside the P10–P90 of the
+  closest earlier forecast, the same check as the anomaly dashboard.
+  `test_foundation_skills.py`.
+- **Review metric (E2).** `second_opinion.review_stats` per version:
+  flagged lines, how many reviewed or overridden, and the plan's measure,
+  the share of reviewed lines that were flagged. In the review dashboard
+  summary (and its header) and the skill's answer.
+- **Fix found on the way.** The review queue picked flagged lines by the
+  "Models disagree" text in `ai_reasoning`, but opening the review
+  dashboard re-runs AI triage and rewrites that text (as do rescoring and
+  the review skill), so flagged lines silently dropped out of the queue.
+  The queue, its badge, the metric and the skill now read the
+  `second_opinion` entry in the line's model metadata, written once at
+  generation (`second_opinion.disagreeing_opinions`;
+  `test_flag_survives_review_triage_rewriting_ai_reasoning`).
+- **Playwright** (`frontend/e2e/foundation.spec.ts`): a rejected access
+  token is renewed from the httpOnly refresh cookie, which page script
+  cannot read, and with neither the cookie nor a valid tab token the app
+  returns to sign-in; the review queue shows the "Models disagree" badge;
+  uploading actuals from the composer opens the instant preview with the
+  upload's dataset id. The CI stack has no Chronos-2 sidecar, so the two
+  Chronos-2 responses are stubbed; the login, cookie and upload are real.
+
 ### Working-day and holiday effects (2026-11-27)
 
 `app/services/working_days.py`. Working days per fiscal period = Mon–Fri in
