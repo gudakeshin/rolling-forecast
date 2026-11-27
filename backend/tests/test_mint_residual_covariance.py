@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from app.models.actuals import ActualsDataset, ActualsRecord
 from app.models.line_item import LineItem
@@ -61,3 +62,51 @@ def test_degenerate_inputs():
     flat = np.column_stack([np.zeros(10), np.arange(10.0)])
     R, _ = shrink_correlation(flat, target)
     assert R is not None and R[0, 1] == 0.0  # no-variance column stays at the target
+
+
+def _two_lines_and_one_without_actuals(db_session):
+    a = LineItem(account_code="MX-A", name="A", category="Revenue")
+    b = LineItem(account_code="MX-B", name="B", category="Revenue")
+    new = LineItem(account_code="MX-NEW", name="New line", category="Revenue")
+    db_session.add_all([a, b, new])
+    ds = ActualsDataset(source_type="t", source_name="mx", file_hash="mx", row_count=0,
+                        period_start="2024-01", period_end="2025-12", periods_count=24)
+    db_session.add(ds)
+    db_session.flush()
+    rng = np.random.default_rng(7)
+    shared = rng.normal(0, 10, 24)
+    for i in range(24):
+        p = f"{2024 + i // 12}-{i % 12 + 1:02d}"
+        db_session.add(ActualsRecord(dataset_id=ds.id, line_item_id=a.id, period=p, value=1000 + i + shared[i]))
+        db_session.add(ActualsRecord(dataset_id=ds.id, line_item_id=b.id, period=p, value=500 + i + shared[i]))
+    db_session.commit()
+    return a, b, new, ds
+
+
+def test_a_line_without_actuals_keeps_the_prior(db_session):
+    """A leaf with no actuals in the dataset (a new line, or one missing from
+    the upload) used to raise KeyError, which broke what-ifs, overrides and
+    branches for the whole company."""
+    a, b, new, ds = _two_lines_and_one_without_actuals(db_session)
+    ids = [a.id, new.id, b.id]
+    cats = {a.id: "Revenue", b.id: "Revenue", new.id: "Revenue"}
+    R = estimate_leaf_correlation(db_session, ids, dataset_id=ds.id, categories=cats)
+    assert R.shape == (3, 3)
+    assert np.allclose(np.diag(R), 1.0)
+    # The two lines with history get their estimated (strong, shared-shock) correlation.
+    assert R[0, 2] > 0.5
+    # The new line has no evidence, so it keeps the same-category prior.
+    assert R[0, 1] == pytest.approx(0.35, abs=0.05) and R[1, 2] == pytest.approx(0.35, abs=0.05)
+    assert np.all(np.linalg.eigvalsh(R) > 0)
+
+
+def test_only_one_line_with_actuals_falls_back_to_the_prior(db_session):
+    a, _b, new, ds = _two_lines_and_one_without_actuals(db_session)
+    other = LineItem(account_code="MX-OTHER", name="Other", category="Opex")
+    db_session.add(other)
+    db_session.commit()
+    R = estimate_leaf_correlation(
+        db_session, [a.id, new.id, other.id], dataset_id=ds.id,
+        categories={a.id: "Revenue", new.id: "Revenue", other.id: "Opex"},
+    )
+    assert R.shape == (3, 3) and R[0, 2] == 0.0  # different categories, no evidence

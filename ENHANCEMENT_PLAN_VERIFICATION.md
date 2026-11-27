@@ -348,6 +348,23 @@ it cannot serve (< 12 points, no usable driver column, service down) fall
 back to the link coefficients, and the result says so.
 `app/services/foundation_what_if.py`, `test_identity_decomposition_and_what_if.py`.
 
+**Live check against the real Chronos-2 (2026-11-27).** 20 lines with a
+known driver effect (36 months, +10 shock, 5 seeds each). Foundation method
+vs truth, average change over 6 months:
+
+| Case | Truth | Foundation | Links (true coefficient) |
+|---|---|---|---|
+| y = 500 + 3·driver | +30 | +5 to +21 | +30 |
+| same, driver lagged 2 | 0, 0, +30… | lag shape partly, +5 to +16 | exact |
+| spurious link | 0 | −8 to +4 | +30 (wrong) |
+| y ∝ driver (elasticity 1) | ≈ +95 | +4 to +48 | exact |
+
+Chronos-2 gets the direction right but captures only ~15–70% of the effect
+(typically ~40%), unstably across seeds; it does say "no effect" where the
+link is spurious. Keep `links` as the default; treat `foundation` as a check
+on whether a driver matters, not as the effect size. The run also exposed
+a reconciliation crash (below).
+
 ### E4 — Instant preview
 
 `GET /panel/forecast-preview/{dataset_id}`: one Chronos-2 call over every
@@ -457,6 +474,18 @@ report-level tracking signal already existed.
   uploading actuals from the composer opens the instant preview with the
   upload's dataset id. The CI stack has no Chronos-2 sidecar, so the two
   Chronos-2 responses are stubbed; the login, cookie and upload are real.
+
+### Fix: reconciliation with lines that have no actuals (2026-11-27)
+
+`reconciliation.estimate_leaf_correlation` built its sample from every leaf
+line, so a leaf with no actuals in the version's dataset (a new line, or one
+missing from the upload) raised `KeyError`. Generation caught it and
+silently skipped MinT; what-if scenarios, overrides and branches did not,
+and failed for that company. The correlation is now estimated among the
+leaves that have actuals, and the rest keep the same-category prior.
+Reproduced first (the new tests fail on the old code with the same
+`KeyError`); `test_mint_residual_covariance.py`,
+`test_what_if_and_reconciliation_survive_a_line_without_actuals`.
 
 ### Working-day and holiday effects (2026-11-27)
 
