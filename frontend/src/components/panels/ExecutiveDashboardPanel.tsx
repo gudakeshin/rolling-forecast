@@ -14,6 +14,7 @@ import {
 import { usePanelStore } from '../../store/panelStore';
 import { useCan } from '../../store/authStore';
 import { toast } from '../../store/toastStore';
+import { apiDownload } from '../../api/client';
 import { DataTable, downloadCsv, type DataTableColumn } from '../ui/DataTable';
 import { chartTheme } from '../../theme/chartTheme';
 import { CustomKpis } from './CustomKpis';
@@ -786,23 +787,11 @@ export function ExecutiveDashboardPanel({ data, onRefresh: _onRefresh }: { data:
                 }
                 setIsExporting(true);
                 try {
-                  const token = localStorage.getItem('forecast-auth');
-                  let authHeader = '';
-                  try {
-                    const parsed = token ? JSON.parse(token) : null;
-                    authHeader = parsed?.state?.token ? `Bearer ${parsed.state.token}` : '';
-                  } catch { /* ignore */ }
-                  const res = await fetch(`/api/executive/board-pack/${d.version.id}?format=${format}`, {
-                    headers: authHeader ? { Authorization: authHeader } : {},
-                  });
-                  if (!res.ok) throw new Error('Export failed');
-                  const blob = await res.blob();
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = `${d.version.name || 'forecast'}_board_pack.${format}`;
-                  a.click();
-                  URL.revokeObjectURL(url);
+                  // Through the API client: this tab's token, and a refresh on 401.
+                  await apiDownload(
+                    `/executive/board-pack/${d.version.id}?format=${format}`,
+                    `${d.version.name || 'forecast'}_board_pack.${format}`,
+                  );
                   toast.success('Board pack downloaded');
                 } catch (e: any) {
                   toast.error(e.message || 'Board pack export failed');

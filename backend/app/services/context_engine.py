@@ -11,10 +11,8 @@ Provides a unified interface for:
 import logging
 import os
 import uuid
-from pathlib import Path
 from typing import Any
 
-import aiofiles
 from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
@@ -34,29 +32,35 @@ async def save_uploaded_document(
     tags: list[str] | None = None,
 ) -> tuple[Document, str]:
     """Save an uploaded file to disk as a 'processing' Document, not yet
-    indexed. Returns (document, stored file path) for `process_document`."""
-    os.makedirs(settings.context_upload_dir, exist_ok=True)
+    indexed. Returns (document, stored file path) for `process_document`.
 
-    file_type = document_processor.detect_file_type(file.filename or "unknown.txt")
+    Goes through ``upload_safety.save_upload`` like every other upload: an
+    extension allowlist, a streamed size cap (no whole-file read into
+    memory), a magic-byte check, and a UUID file name.
+    """
+    from app.services.upload_safety import save_upload
+
+    saved = await save_upload(
+        file,
+        dest_dir=settings.context_upload_dir,
+        allowed_extensions=set(document_processor.SUPPORTED_TYPES),
+    )
+    file_path = saved["stored_path"]
+    file_type = document_processor.detect_file_type(saved["original_name"])
     doc_id = str(uuid.uuid4())
-    ext = Path(file.filename or "file").suffix
-    stored_filename = f"{doc_id}{ext}"
-    file_path = os.path.join(settings.context_upload_dir, stored_filename)
-
-    content = await file.read()
-    async with aiofiles.open(file_path, "wb") as f:
-        await f.write(content)
+    stored_filename = saved["stored_name"]
+    content_size = saved["size_bytes"]
 
     doc = Document(
         id=doc_id,
         user_id=user_id,
         conversation_id=conversation_id,
         filename=stored_filename,
-        original_name=file.filename or "unknown",
+        original_name=saved["original_name"],
         file_type=file_type,
         scope=scope,
         status="processing",
-        file_size_bytes=len(content),
+        file_size_bytes=content_size,
         tags=tags or [],
     )
     db.add(doc)

@@ -23,6 +23,7 @@ FROM nginx:alpine AS production
 
 # Copy custom nginx config
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY security-headers.conf /etc/nginx/snippets/security-headers.conf
 
 # Copy built assets
 COPY --from=builder /app/dist /usr/share/nginx/html

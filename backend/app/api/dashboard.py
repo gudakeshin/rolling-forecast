@@ -2114,6 +2114,21 @@ async def get_accuracy_tracking(
         else seasonal_naive_wape - published_wape
     )
 
+    from app.services.interval_calibration import crps_from_quantiles
+
+    crps_vals: list[float] = []
+    crps_actual = 0.0
+    if vintage_rows:
+        for rec, _li in vintage_rows:
+            c = crps_from_quantiles(
+                float(rec.actual),
+                {0.1: rec.predicted_p10, 0.5: rec.predicted_p50, 0.9: rec.predicted_p90},
+            )
+            if c is not None:
+                crps_vals.append(c)
+                crps_actual += abs(float(rec.actual))
+    crps_pct = round(sum(crps_vals) / crps_actual * 100, 2) if crps_vals and crps_actual > 1e-12 else None
+
     overall = {
         "avg_mape": round(sum(all_mapes) / len(all_mapes), 2) if all_mapes else 0,
         "median_mape": round(sorted(all_mapes)[len(all_mapes) // 2], 2) if all_mapes else 0,
@@ -2127,9 +2142,34 @@ async def get_accuracy_tracking(
         "fva_vs_seasonal_naive": round(fva_vs_seasonal, 2) if fva_vs_seasonal is not None else None,
         "bias_direction": "over" if aggregate_bias_pct > 1 else "under" if aggregate_bias_pct < -1 else "neutral",
         "hit_rate": round(hit_count / len(accuracy_items) * 100, 1) if accuracy_items else 0,
+        # CRPS from the stored P10/P50/P90, scaled like WAPE (sum over sum of
+        # |actual|), so the whole band is scored, not just the median.
+        "crps_pct": crps_pct,
         "total_comparisons": len(accuracy_items),
         "source": "vintage" if vintage_rows else "live",
     }
+
+    # Process diagnostics across every closed vintage of this version's lines
+    # (Phase F): bias / tracking signal, revision stability, FVA by user and
+    # reason. Scoped to lines the caller can see.
+    from app.services.accuracy_diagnostics import diagnostics as accuracy_diagnostics
+
+    scoped_lines = line_item_scope_filter(
+        db.query(LineItem.id, LineItem.name)
+        .join(ForecastLineResult, ForecastLineResult.line_item_id == LineItem.id)
+        .filter(ForecastLineResult.version_id == version_id)
+        .distinct(),
+        current_user,
+        LineItem,
+    ).all()
+    names = {lid: name for lid, name in scoped_lines}
+    diag = accuracy_diagnostics(db, list(names))
+    for row in diag["bias_signals"]:
+        row["line_item_name"] = names.get(row["line_item_id"])
+    for row in diag["revision_stability"]["lines"]:
+        row["line_item_name"] = names.get(row["line_item_id"])
+    diag["bias_signals"] = diag["bias_signals"][:20]
+    diag["revision_stability"]["lines"] = diag["revision_stability"]["lines"][:20]
 
     return PanelDataResponse(
         panel_type="accuracy_tracking",
@@ -2147,6 +2187,7 @@ async def get_accuracy_tracking(
                 key=lambda x: -x["mape"],
             )[:15],
             "items": accuracy_items[:100],
+            "diagnostics": diag,
         },
     )
 
@@ -2697,6 +2738,9 @@ async def get_anomaly_dashboard(
 
     # ── Detect anomalies per line item ────────────────
     anomaly_items: list[dict] = []
+    from app.services.vintage_anomalies import vintage_band_misses
+
+    band_misses = vintage_band_misses(db, list(li_groups))
 
     dismissed_ids = {
         row.anomaly_id
@@ -2834,6 +2878,30 @@ async def get_anomaly_dashboard(
             except Exception:
                 pass
 
+        # ── Method 6: Actual outside a prior vintage's band (Phase E5) ──
+        sev_score = {"critical": 3.0, "warning": 2.0, "info": 1.0}
+        for miss in band_misses.get(li_id, []):
+            side = "above" if miss["direction"] == "above" else "below"
+            widths = miss["band_widths_outside"]
+            findings.append({
+                "type": "vintage_band_miss",
+                "severity": miss["severity"],
+                "score": (widths if widths is not None else 3.0) * 30 * mat_weight
+                + sev_score[miss["severity"]],
+                "headline": f"Actual landed {side} the forecast range in {miss['period']}",
+                "detail": (
+                    f"The {miss['period']} actual of {formatCurrency(miss['value'])} is {side} the "
+                    f"P10-P90 of {formatCurrency(miss['p10'])} to {formatCurrency(miss['p90'])} that the "
+                    f"forecast made {miss['horizon_offset']} month(s) earlier published"
+                    + (f" ({widths:.1f} band widths outside)." if widths is not None else ".")
+                    + " Either something unusual happened, or the band was too narrow."
+                ),
+                "period": miss["period"],
+                "value": miss["value"],
+                "expected": miss["expected"],
+                "vintage_version_id": miss["vintage_version_id"],
+            })
+
         # ── Method 5: Wide prediction intervals ──────
         for r in group:
             if r.p10 is not None and r.p90 is not None and abs(r.p50) > 1e-10:
@@ -2895,6 +2963,15 @@ async def get_anomaly_dashboard(
                 "type": "override",
                 "label": "Adjust forecast",
                 "detail": f"Override the forecast for {li.name} if the model projection doesn't match known business plans.",
+            })
+        if "vintage_band_miss" in finding_types:
+            actions.append({
+                "type": "investigate",
+                "label": "Explain the miss",
+                "detail": (
+                    f"Find out what drove {li.name} outside its forecast range — a one-off, a "
+                    "data issue, or a change the forecast should now carry."
+                ),
             })
         if "high_uncertainty" in finding_types:
             actions.append({

@@ -68,6 +68,9 @@ const AdminConsolePanel = lazy(() =>
 const WhyThisNumberPanel = lazy(() =>
   import('./WhyThisNumberPanel').then((m) => ({ default: memo(m.WhyThisNumberPanel) })),
 );
+const ForecastPreviewPanel = lazy(() =>
+  import('./ForecastPreviewPanel').then((m) => ({ default: memo(m.ForecastPreviewPanel) })),
+);
 
 function PanelChunkFallback() {
   return (
@@ -98,6 +101,7 @@ const panelIcons: Record<string, any> = {
   approvals: CheckSquare,
   admin_console: Shield,
   why_this_number: Lightbulb,
+  forecast_preview: Sparkles,
 };
 
 // Panel types that fetch nothing from the server — they own their data.
@@ -168,6 +172,8 @@ function panelDataUrl(panelType: string, panelParams: Record<string, any>): stri
       return `/context/document-panel/${panelParams.conversation_id || 'default'}`;
     case 'why_this_number':
       return `/panel/why-this-number/${panelParams.result_id}`;
+    case 'forecast_preview':
+      return `/panel/forecast-preview/${panelParams.dataset_id}`;
     default:
       return null;
   }
@@ -433,6 +439,8 @@ function PanelContent({
       return <DocumentLibraryPanel data={data} />;
     case 'why_this_number':
       return <WhyThisNumberPanel data={data} />;
+    case 'forecast_preview':
+      return <ForecastPreviewPanel data={data} />;
     default:
       return (
         <pre className="text-xs text-surface-400 whitespace-pre-wrap">

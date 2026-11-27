@@ -181,7 +181,11 @@ class MasterAgent:
             registry.definitions_generation,
             settings.anthropic_model,
             overrides_fp,
-            (model_registry.enable_benchmark_models, model_registry.enable_global_gbm_model),
+            (
+                model_registry.enable_benchmark_models,
+                model_registry.enable_global_gbm_model,
+                model_registry.enable_foundation_models,
+            ),
         )
         cached = _agent_cache.get(cache_key)
         if cached is not None:

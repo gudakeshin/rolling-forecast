@@ -22,6 +22,7 @@ const VALID_PANELS = new Set([
   'skill_editor',
   'admin_console',
   'why_this_number',
+  'forecast_preview',
 ]);
 
 const SLOT_PARAM: Record<PanelSlot, string> = { primary: 'panel', secondary: 'panel2' };

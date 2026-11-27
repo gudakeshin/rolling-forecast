@@ -93,6 +93,55 @@ def ensure_active_membership(db: Session, user: User) -> None:
     db.flush()
 
 
+def apply_session_company(db: Session, user: User, company_id: str | None) -> bool:
+    """Make ``company_id`` the user's company for THIS request only.
+
+    The access token carries the company the session chose (claim ``cid``).
+    The User row's business_unit_id/role_id stay the user's *default*
+    company (the one a fresh login starts in), so switching in one tab or
+    device no longer moves every other session.
+
+    Values are set with ``set_committed_value``: the instance does not become
+    dirty, so a commit later in the request never writes them back.
+
+    Returns False when the user no longer holds a membership there; the
+    caller then keeps the default company, which always has one.
+    """
+    from sqlalchemy.orm.attributes import set_committed_value
+
+    from app.models.user import Role
+
+    if not company_id or company_id == active_company_id(db, user):
+        return True
+    membership = (
+        db.query(CompanyMembership)
+        .filter(
+            CompanyMembership.user_id == user.id,
+            CompanyMembership.company_id == company_id,
+        )
+        .first()
+    )
+    if membership is None:
+        return False
+    bu = db.query(BusinessUnit).filter(BusinessUnit.company_id == company_id).first()
+    role = db.query(Role).filter(Role.id == membership.role_id).first()
+    if bu is None or role is None:
+        return False
+    set_committed_value(user, "business_unit_id", bu.id)
+    set_committed_value(user, "business_unit", bu.name)
+    set_committed_value(user, "role_id", role.id)
+    set_committed_value(user, "role", role)
+    return True
+
+
+def session_company_for(db: Session, user: User, requested: str | None) -> str | None:
+    """The company a newly minted token should carry: ``requested`` when the
+    user is a member there, otherwise their default company."""
+    if requested and is_member(db, user.id, requested):
+        return requested
+    return active_company_id(db, user)
+
+
 def switch_active_company(db: Session, user: User, company_id: str) -> User:
     """Switch `user`'s active company/role to one they hold a membership for.
 

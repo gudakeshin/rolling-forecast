@@ -200,3 +200,16 @@ def test_archival_api_roundtrip():
         )
         assert found.status_code == 200, found.text
         assert found.json()["hits"], "expected archival hit from the API"
+
+
+def test_company_less_user_cannot_write_the_shared_bucket(db_session, seed_users):
+    """The shared bucket reaches every company's prompts, so a user with no
+    company must not land there by default."""
+    analyst = seed_users["analyst"]
+    original = analyst.business_unit
+    analyst.business_unit = None
+    try:
+        with pytest.raises(ValueError, match="shared bucket"):
+            archival_memory.insert(db_session, analyst, "Cross-tenant note", provenance="agent")
+    finally:
+        analyst.business_unit = original

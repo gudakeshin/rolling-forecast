@@ -210,10 +210,20 @@ def _allowed_bu_values(business_unit: str | None) -> set[str]:
 
 
 def _resolve_business_unit(actor: User, business_unit: str | None) -> str:
-    """Scope a write to the actor's BU unless they may write across BUs."""
+    """Scope a write to the actor's BU unless they may write across BUs.
+
+    The shared bucket (SHARED_BU) is read by every company, so only a
+    platform admin may write to it. A company-less actor used to land there
+    by default, which let one tenant's text reach every other tenant's prompts.
+    """
     requested = (business_unit or "").strip()
     actor_bu = (getattr(actor, "business_unit", None) or "").strip()
     if not requested:
+        if not actor_bu and not can_view_all_bus(actor):
+            raise ValueError(
+                "Cannot write archival memory without a company: the shared bucket "
+                "is visible to every company and only a platform admin may write to it"
+            )
         return actor_bu
     if requested == actor_bu or can_view_all_bus(actor):
         return requested

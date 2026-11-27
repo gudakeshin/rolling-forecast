@@ -1,6 +1,11 @@
 import { useAuthStore } from '../store/authStore';
+import { companyIdFromToken } from '../store/sessionToken';
 
 const BASE_URL = '/api';
+
+/** Asks the auth endpoints to deliver the refresh token as an httpOnly
+ * cookie instead of in the response body. */
+export const AUTH_COOKIE_HEADER = 'X-Auth-Cookie';
 
 let refreshInFlight: Promise<boolean> | null = null;
 
@@ -8,17 +13,22 @@ async function tryRefreshAccessToken(): Promise<boolean> {
   if (refreshInFlight) return refreshInFlight;
 
   refreshInFlight = (async () => {
-    const refresh = useAuthStore.getState().refreshToken;
-    if (!refresh) return false;
     try {
       const res = await fetch(`${BASE_URL}/auth/refresh`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh_token: refresh }),
+        // The refresh token travels only as an httpOnly cookie (set by login),
+        // so no script on this page can read it.
+        headers: { 'Content-Type': 'application/json', [AUTH_COOKIE_HEADER]: '1' },
+        credentials: 'same-origin',
+        // Keep this tab's company: without it the server would fall back to
+        // the user's default, i.e. whichever company another tab picked last.
+        body: JSON.stringify({
+          company_id: companyIdFromToken(useAuthStore.getState().token),
+        }),
       });
       if (!res.ok) return false;
       const data = await res.json();
-      useAuthStore.getState().setTokens(data.access_token, data.refresh_token ?? null);
+      useAuthStore.getState().setTokens(data.access_token);
       return true;
     } catch {
       return false;
@@ -34,6 +44,7 @@ async function fetchApi(url: string, options: RequestInit = {}, retried = false)
   const token = useAuthStore.getState().token;
 
   const headers: Record<string, string> = {
+    [AUTH_COOKIE_HEADER]: '1',
     ...((options.headers as Record<string, string>) || {}),
   };
 

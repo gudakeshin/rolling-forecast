@@ -20,6 +20,18 @@ from app.domain.engines.base_model import (
 logger = logging.getLogger(__name__)
 
 
+def _explosive(fitted: Any) -> bool:
+    """True when the fitted AR polynomial has a root on or inside the unit
+    circle. The search fits with ``enforce_stationarity=False``, so on short
+    history AIC can prefer such a fit, whose forecast then diverges (a
+    30-point seasonal series went 5,132 -> -2,034,832 in six steps)."""
+    try:
+        roots = np.asarray(getattr(fitted, "arroots", []), dtype=complex)
+    except Exception:
+        return False
+    return bool(roots.size) and bool(np.any(np.abs(roots) <= 1.0 + 1e-6))
+
+
 class ARIMAModel(IForecastModel):
     """ARIMA/SARIMA model using statsmodels SARIMAX."""
 
@@ -93,6 +105,8 @@ class ARIMAModel(IForecastModel):
                             enforce_invertibility=False,
                         )
                         fitted = model.fit(disp=False, maxiter=100)
+                        if _explosive(fitted):
+                            continue
                         if fitted.aic < best_aic:
                             best_aic = fitted.aic
                             best_order = order

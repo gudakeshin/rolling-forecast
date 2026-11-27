@@ -52,15 +52,12 @@ jobs:
         run: |
           pip install pip-audit bandit
           # Fail on new vulns; ignore known unfixed transitive issues
-          # (starlette awaiting FastAPI pin bump; chromadb has no fix release yet)
+          # (chromadb has no fix release yet; starlette ones fixed by 1.10)
           pip-audit -r requirements.lock \
-            --ignore-vuln GHSA-wj6h-64fc-37mp \
             --ignore-vuln PYSEC-2026-311 \
             --ignore-vuln PYSEC-2026-161 \
             --ignore-vuln PYSEC-2026-249 \
             --ignore-vuln PYSEC-2026-248 \
-            --ignore-vuln CVE-2026-48818 \
-            --ignore-vuln CVE-2026-48817 \
             `# 2026-10-29 chromadb 1.5.9 (latest), no fix release: all three are in` \
             `# Chroma's HTTP server (RBAC/tenant checks, update-collection). We only` \
             `# use the embedded PersistentClient (services/vector_store.py).` \
@@ -113,6 +110,62 @@ jobs:
           echo "script head: $HEAD_REV"
           grep -q "$HEAD_REV" /tmp/current.txt
 
+  fm-service:
+    # Chronos-2 sidecar: build the image (weights pinned + sha256-checked at
+    # build), then a contract test against the running container.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: fm-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Unit tests (batching rules, no torch)
+        run: |
+          pip install "fastapi>=0.115,<1" "pydantic>=2.7,<3" "numpy>=1.26,<3" pytest
+          python -m pytest -q tests/test_batching.py
+      - name: Build image
+        run: docker build -t rolling-forecast-fm:ci .
+      - name: Contract test
+        run: |
+          docker run -d --name fm -p 8100:8100 rolling-forecast-fm:ci
+          for i in $(seq 1 90); do curl -sf http://127.0.0.1:8100/healthz && break; sleep 2; done
+          python tests/contract_test.py http://127.0.0.1:8100
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs fm || true
+
+  images:
+    # Build the production images and scan them. Fails on fixable HIGH or
+    # CRITICAL vulnerabilities in the OS packages or app dependencies.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            context: backend
+            target: ""
+          - name: frontend
+            context: frontend
+            target: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build ${{ matrix.name }} image
+        run: |
+          docker build ${{ matrix.target && format('--target {0}', matrix.target) || '' }} \
+            -t rolling-forecast-${{ matrix.name }}:ci ${{ matrix.context }}
+      - name: Trivy scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: rolling-forecast-${{ matrix.name }}:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
   frontend:
     runs-on: ubuntu-latest
     defaults:
@@ -125,7 +178,7 @@ jobs:
           node-version: "20"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci || npm install
+      - run: npm ci
       - name: Typecheck
         run: npx tsc --noEmit
       - name: ESLint
@@ -174,7 +227,7 @@ jobs:
       - name: Install & build frontend
         working-directory: frontend
         run: |
-          npm ci || npm install
+          npm ci
           npm run build
           npx playwright install --with-deps chromium
       - name: Start frontend preview

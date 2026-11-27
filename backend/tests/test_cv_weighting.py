@@ -224,3 +224,27 @@ def test_unpairable_folds_fall_back_to_unpaired_band():
     winner, *_ = _pick_best([complex_, panel], rule="mase_pinball_complexity")
     assert winner == "panel"  # mismatched fold structure → pooled SE, as before
     assert math.isfinite(band)
+
+
+def test_erratic_model_is_not_tied_with_a_much_better_benchmark():
+    # From the synthetic seasonal backtest: two folds, ARIMA good on one and
+    # terrible on the other. The paired SE (~2.1) used to put it "inside the
+    # band" of seasonal-naive, and the benchmark-loses-ties rule then picked
+    # ARIMA at 4.5x the MASE.
+    from app.domain.engines.model_registry import MAX_BAND_FRACTION
+
+    snaive = _cmp("seasonal_naive", [0.3697, 0.4485], rank=5)
+    snaive.is_benchmark = True
+    arima = _cmp("arima", [0.3409, 4.6608], rank=30)
+    assert _paired_band(snaive.fold_mases, arima.fold_mases, snaive.mase) == pytest.approx(
+        MAX_BAND_FRACTION * snaive.mase
+    )
+    winner, *_ = _pick_best([snaive, arima], rule="mase_pinball_complexity")
+    assert winner == "seasonal_naive"
+
+
+def test_band_cap_still_lets_a_close_simpler_model_win():
+    best = _cmp("complex", [1.0, 1.4], rank=40)
+    simple = _cmp("simple", [1.3, 1.2], rank=10)  # ~4% worse, folds disagree
+    winner, *_ = _pick_best([best, simple], rule="mase_pinball_complexity")
+    assert winner == "simple"

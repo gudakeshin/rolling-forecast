@@ -46,7 +46,14 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       switchCompany: async (companyId: string) => {
         set({ isLoading: true });
         try {
-          await apiPost('/auth/switch-company', { company_id: companyId });
+          const res = await apiPost<{ access_token?: string | null }>('/auth/switch-company', {
+            company_id: companyId,
+          });
+          // The new token pins the company for THIS tab only; other tabs keep
+          // their own token and company.
+          if (res?.access_token) {
+            useAuthStore.getState().setTokens(res.access_token);
+          }
           // The switch can change the role, and a role can carry
           // can_view_all_bus (e.g. reviewer/publisher) -- re-hydrate from
           // the refreshed user rather than trusting the old branch (admin

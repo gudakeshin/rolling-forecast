@@ -34,9 +34,12 @@ from app.services.driver_exog import build_exog_for_line
 from app.services.error_handlers import HistoryAnalysis, clamp_forecast_values
 from app.services.outlier_cleaning import clean_series_for_fit
 from app.services.period_calendar import FiscalCalendarConfig, period_to_date
+from app.services.second_opinion import disagree_flag, second_opinion
 from app.services.interval_calibration import (
     apply_bands,
     conformal_bands,
+    blend_with_foundation_range,
+    widen_for_cv_coverage,
     rescale_for_realized_coverage,
 )
 from app.services.reconciliation import (
@@ -458,6 +461,9 @@ class EffectiveSeriesResult:
     cleaned_periods: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     flags: list[str] = field(default_factory=list)
+    # Set when the values above are per-working-day (working_days.py); the
+    # forecast is scaled back by the future periods' counts.
+    working_day_effect: Any = None
 
 
 def compute_effective_series(
@@ -535,6 +541,15 @@ def compute_effective_series(
         ),
     )
     effective_values = cleaning.cleaned
+    working_day_effect = None
+    if (
+        forced is None
+        and analysis_settings is not None
+        and getattr(analysis_settings, "working_day_adjustment_enabled", False)
+    ):
+        working_day_effect, effective_values = _working_day_adjust(
+            effective_values, effective_dates, getattr(analysis_settings, "holiday_country", "") or None
+        )
     if cleaning.n_cleaned:
         warnings.append(
             f"Winsorized {cleaning.n_cleaned} outlier(s) for '{li.name}' "
@@ -555,7 +570,58 @@ def compute_effective_series(
         cleaned_periods=list(cleaning.cleaned_periods),
         warnings=warnings,
         flags=flags,
+        working_day_effect=working_day_effect,
     )
+
+
+def _working_day_adjust(
+    values: pd.Series, dates: pd.DatetimeIndex, country: str | None
+) -> tuple[Any, pd.Series]:
+    """(effect, per-working-day values) when the line has a significant
+    working-day elasticity, else (None, values unchanged)."""
+    from app.services.period_calendar import date_to_period, get_calendar_config
+    from app.services.working_days import estimate_effect, working_days
+
+    try:
+        cal = get_calendar_config()
+        periods = [date_to_period(d.date(), cal) for d in dates]
+        wd = working_days(periods, cal, country)
+        effect = estimate_effect(
+            np.asarray(values, dtype=float), wd, season=seasonal_period_length()
+        )
+    except Exception as e:  # a calendar problem never fails a line
+        logger.debug("working-day test skipped: %s", e)
+        return None, values
+    if effect is None:
+        return None, values
+    adjusted = pd.Series(effect.adjust(np.asarray(values, dtype=float), wd), index=values.index)
+    return effect, adjusted
+
+
+def _restore_working_days(
+    forecast_output: ForecastOutput, effect: Any, cal_cfg: Any, country: str | None
+) -> dict[str, Any] | None:
+    """Scale a per-working-day forecast back by the future periods' counts."""
+    from app.services.working_days import working_days
+
+    periods = [str(p) for p in forecast_output.periods]
+    try:
+        factor = effect.restore_factor(working_days(periods, cal_cfg, country))
+    except Exception as e:
+        logger.warning("working-day restore failed, forecast left per-day: %s", e)
+        return None
+    forecast_output.point_forecast = np.asarray(forecast_output.point_forecast, dtype=float) * factor
+    if forecast_output.lower_bound is not None:
+        forecast_output.lower_bound = np.asarray(forecast_output.lower_bound, dtype=float) * factor
+    if forecast_output.upper_bound is not None:
+        forecast_output.upper_bound = np.asarray(forecast_output.upper_bound, dtype=float) * factor
+    return {
+        "beta": round(effect.beta, 4),
+        "t_stat": round(effect.t_stat, 2),
+        "mean_working_days": round(effect.mean_wd, 2),
+        "holiday_country": country,
+        "factors": [round(float(f), 4) for f in factor],
+    }
 
 
 @dataclass
@@ -610,6 +676,128 @@ class LineForecast:
     was_clamped: bool = False
 
 
+def _second_opinion(
+    panel: "GlobalPanelContext | None",
+    line_item_id: int,
+    selected_model: str | None,
+    forecast_output: ForecastOutput,
+) -> dict[str, Any] | None:
+    """Chronos-2's band against this line's published P50 (Phase E2), or None."""
+    if not settings.second_opinion_enabled:
+        return None
+    from app.domain.engines.chronos2 import CHRONOS2_NAME, foundation_unavailable_reason
+
+    if CHRONOS2_NAME in str(selected_model or ""):
+        return None
+    if foundation_unavailable_reason(panel, line_item_id) is not None:
+        return None
+    fm = panel.foundation  # type: ignore[union-attr]
+    fc = fm.forecasts.get((line_item_id, fm.production_origin_by_line[line_item_id]))
+    if fc is None:
+        return None
+    return second_opinion(
+        forecast_output.point_forecast, fc.p10, fc.p50, fc.p90, list(forecast_output.periods)
+    )
+
+
+def _foundation_range_blend(
+    panel: "GlobalPanelContext | None",
+    line_item_id: int,
+    selected_model: str | None,
+    forecast_output: ForecastOutput,
+    *,
+    non_negative: bool,
+) -> tuple[Any, Any, dict[str, Any]] | None:
+    """The selected model's band averaged with Chronos-2's, or None.
+
+    Off unless ``foundation_range_blend_enabled``; skipped when the run has
+    no usable Chronos-2 forecast for this line, or when Chronos-2 already
+    produced (part of) this forecast.
+    """
+    if not settings.foundation_range_blend_enabled:
+        return None
+    from app.domain.engines.chronos2 import CHRONOS2_NAME, foundation_unavailable_reason
+
+    if CHRONOS2_NAME in str(selected_model or ""):
+        return None
+    if forecast_output.lower_bound is None or forecast_output.upper_bound is None:
+        return None
+    if foundation_unavailable_reason(panel, line_item_id) is not None:
+        return None
+    fm = panel.foundation  # type: ignore[union-attr]
+    fc = fm.forecasts.get((line_item_id, fm.production_origin_by_line[line_item_id]))
+    if fc is None:
+        return None
+    blended = blend_with_foundation_range(
+        forecast_output.point_forecast,
+        forecast_output.lower_bound,
+        forecast_output.upper_bound,
+        fc.p10,
+        fc.p90,
+        weight=settings.foundation_range_blend_weight,
+        non_negative=non_negative,
+    )
+    if blended is None:
+        return None
+    lower, upper, meta = blended
+    meta.update({k: fm.provenance.get(k) for k in ("model_id", "model_revision") if fm.provenance.get(k)})
+    return lower, upper, meta
+
+
+def _with_foundation_note(
+    parameters: dict[str, Any] | None,
+    registry: ModelRegistry,
+    panel: "GlobalPanelContext | None",
+) -> dict[str, Any] | None:
+    """Stamp Chronos-2 status/provenance onto a line's ModelMetadata.parameters.
+
+    Only when the company's registry contains chronos2: records the model id,
+    weight revision and service version the run used, or the reason it was
+    skipped (service down, circuit open, context not built), so a skipped
+    foundation model is visible per line rather than silently absent.
+    """
+    from app.domain.engines.chronos2 import CHRONOS2_NAME, foundation_unavailable_reason
+
+    if registry.get(CHRONOS2_NAME) is None:
+        return parameters
+    fm = getattr(panel, "foundation", None) if panel is not None else None
+    if fm is not None:
+        note = fm.metadata_note()
+    else:
+        note = {
+            "model": CHRONOS2_NAME,
+            "status": "unavailable",
+            "skip_reason": foundation_unavailable_reason(panel, None),
+        }
+    return {**(parameters or {}), "foundation_model": note}
+
+
+def _short_line_foundation_model(
+    ctx: "LineForecastContext", li_id: int, effective: "EffectiveSeriesResult"
+) -> Any | None:
+    """Chronos-2, ready to replace the forced-linear fallback of a short line.
+
+    The caller asks only for a short line (6 to ``min_history_months`` - 1
+    points) that has no global-GBM candidate, i.e. one that would otherwise be
+    forced to linear. On the new-line backtest that is the one place
+    Chronos-2's point forecast wins (MASE -32%); a flat average (< 6 points)
+    and the linear-vs-GBM contest keep their point and only take the range
+    blend. Needs ``foundation_short_lines_enabled``, an ``auto`` run and a
+    cached forecast. Uses the model directly rather than through the
+    registry: Chronos-2 stays out of selection unless
+    ``enable_foundation_models`` is on.
+    """
+    if not settings.foundation_short_lines_enabled or ctx.model_type != "auto":
+        return None
+    if effective.forced is not None or not effective.is_sparse:
+        return None
+    from app.domain.engines.chronos2 import Chronos2Model, foundation_unavailable_reason
+
+    if foundation_unavailable_reason(ctx.panel, li_id) is not None:
+        return None
+    return Chronos2Model()
+
+
 def _sparse_history_pool(
     registry: ModelRegistry, ctx: "LineForecastContext", line_item_id: int
 ) -> list[str]:
@@ -628,6 +816,17 @@ def _sparse_history_pool(
     if ctx.models_to_test:
         pool = [m for m in pool if m in ctx.models_to_test]
     return pool
+
+
+def _cv_coverage_of(selection_result: Any, model_name: str | None) -> list[tuple[float, int]]:
+    """(CV coverage_80, number of CV points) for one candidate, if known."""
+    for c in getattr(selection_result, "comparisons", []) or []:
+        if c.model_name == model_name:
+            cov = getattr(c, "coverage_80", None)
+            n = sum(len(v) for v in (c.fold_residuals or {}).values())
+            if cov is not None and np.isfinite(cov) and n > 0:
+                return [(float(cov), int(n))]
+    return []
 
 
 def forecast_line_item(
@@ -677,14 +876,17 @@ def forecast_line_item(
     try:
         effective_model_type = forced or model_type
         sparse_pool: list[str] = []
+        short_fm = None
         if forced is None and effective.is_sparse and model_type == "auto":
             # Short history under-powers per-series CV, so the only contest is
             # linear vs the global panel model (whose CV is panel-wide);
-            # without the panel model this line is forced to linear as before.
+            # without the panel model this line is forced to linear, or to
+            # Chronos-2 when foundation_short_lines_enabled.
             sparse_pool = _sparse_history_pool(registry, ctx, li.id)
             if "global_gbm" not in sparse_pool:
                 sparse_pool = []
-                effective_model_type = "linear"
+                short_fm = _short_line_foundation_model(ctx, li.id, effective)
+                effective_model_type = short_fm.name if short_fm is not None else "linear"
 
         comparison = None
         if effective_model_type == "auto":
@@ -726,16 +928,19 @@ def forecast_line_item(
                 )
         else:
             selected_model = effective_model_type
-            model = registry.get(selected_model)
+            model = short_fm if short_fm is not None else registry.get(selected_model)
             if model is None:
                 raise ValueError(f"Unknown model '{selected_model}'")
-            # zero/average: skip CV (deterministic, no useful MAPE)
-            if selected_model in ("zero", "average"):
+            # zero/average: skip CV (deterministic, no useful MAPE). A short
+            # line on Chronos-2 has too little history for a CV fold.
+            if selected_model in ("zero", "average") or short_fm is not None:
                 selection_mape = None
                 out.comparison = {
                     "best_model": selected_model,
                     "best_mape": None,
-                    "selection_method": "forced_edge_case",
+                    "selection_method": (
+                        "short_history_foundation" if short_fm is not None else "forced_edge_case"
+                    ),
                     "selection_rule": selection_rule,
                     "comparisons": [{
                         "model": selected_model,
@@ -854,8 +1059,12 @@ def forecast_line_item(
         # Resolve the calibration set only now: a heuristic nudge may have moved
         # `selected_model` off the statistical best, and calibrating published
         # bands with another model's errors would be worse than not calibrating.
+        # (coverage_80, CV points) of each model behind the published band, for
+        # widen_for_cv_coverage below; a blend adds its partner's.
+        cv_coverage_evidence: list[tuple[float, int]] = []
         if selection_result is not None:
             cv_residuals = selection_result.residuals_for(selected_model)
+            cv_coverage_evidence.extend(_cv_coverage_of(selection_result, selected_model))
 
         exog_bundle = None
         use_exog = False
@@ -871,6 +1080,10 @@ def forecast_line_item(
             and selected_model
             and selected_impl is not None
             and selected_impl.capabilities.supports_exog
+            # A panel model (Chronos-2) already scored its drivers inside the
+            # once-per-run batch; a per-line exog head-to-head would refit it
+            # fold by fold, which its contract forbids.
+            and not selected_impl.capabilities.is_panel_model
         ):
             future_periods = make_period_labels(effective_dates[-1], horizon)
             exog_bundle = build_exog_for_line(
@@ -951,17 +1164,25 @@ def forecast_line_item(
                         "required_points": needed,
                     }
 
-        forecast_output = registry.fit_and_predict(
-            selected_model,
-            effective_values,
-            effective_dates,
-            horizon,
-            random_seed=random_seed,
-            exog=(exog_bundle.exog_train if use_exog and exog_bundle is not None else None),
-            exog_future=(exog_bundle.exog_future if use_exog and exog_bundle is not None else None),
-            panel=ctx.panel,
-            line_item_id=li.id,
-        )
+        if short_fm is not None:
+            fm_params = short_fm.fit(
+                effective_values, effective_dates, panel=ctx.panel, line_item_id=li.id
+            )
+            forecast_output = short_fm.predict(
+                fm_params, horizon, effective_dates[-1], panel=ctx.panel
+            )
+        else:
+            forecast_output = registry.fit_and_predict(
+                selected_model,
+                effective_values,
+                effective_dates,
+                horizon,
+                random_seed=random_seed,
+                exog=(exog_bundle.exog_train if use_exog and exog_bundle is not None else None),
+                exog_future=(exog_bundle.exog_future if use_exog and exog_bundle is not None else None),
+                panel=ctx.panel,
+                line_item_id=li.id,
+            )
 
         # Ensemble-by-default: when a genuine runner-up sits inside the 1-SE
         # band of the winner, blend the two (inverse-MASE weights) instead of
@@ -1045,6 +1266,9 @@ def forecast_line_item(
                         pooled_residuals.setdefault(h, [])
                         pooled_residuals[h] = pooled_residuals[h] + list(vals)
                     cv_residuals = pooled_residuals
+                    cv_coverage_evidence.extend(
+                        _cv_coverage_of(selection_result, partner_comp.model_name)
+                    )
 
                     blended_params = dict(forecast_output.parameters or {})
                     blended_params["ensemble_blend"] = ensemble_info
@@ -1148,6 +1372,51 @@ def forecast_line_item(
             elif out.comparison is not None:
                 out.comparison["calibration_skipped"] = "insufficient_cv_residuals"
         if (
+            bounds_method == BOUNDS_METHOD_MODEL
+            and settings.cv_coverage_widening_enabled
+            and cv_coverage_evidence
+            and forecast_output.lower_bound is not None
+            and forecast_output.upper_bound is not None
+        ):
+            total_points = sum(n for _, n in cv_coverage_evidence)
+            pooled_cov = (
+                sum(c * n for c, n in cv_coverage_evidence) / total_points if total_points else None
+            )
+            widened = widen_for_cv_coverage(
+                forecast_output.point_forecast,
+                forecast_output.lower_bound,
+                forecast_output.upper_bound,
+                pooled_cov,
+                total_points,
+                non_negative=not li.allow_negative,
+            )
+            if widened is not None:
+                forecast_output.lower_bound, forecast_output.upper_bound, widen_meta = widened
+                forecast_output.parameters = dict(forecast_output.parameters or {})
+                forecast_output.parameters["cv_coverage_widening"] = widen_meta
+        range_blend = _foundation_range_blend(
+            ctx.panel,
+            li.id,
+            selected_model,
+            forecast_output,
+            non_negative=not li.allow_negative,
+        )
+        if range_blend is not None:
+            forecast_output.lower_bound, forecast_output.upper_bound, blend_meta = range_blend
+            forecast_output.parameters = dict(forecast_output.parameters or {})
+            forecast_output.parameters["foundation_range_blend"] = blend_meta
+            bounds_method = (
+                f"{bounds_method}+foundation_range"
+                if bounds_method != BOUNDS_METHOD_MODEL
+                else "foundation_range_blend"
+            )
+        opinion = _second_opinion(ctx.panel, li.id, selected_model, forecast_output)
+        if opinion is not None:
+            forecast_output.parameters = dict(forecast_output.parameters or {})
+            forecast_output.parameters["second_opinion"] = opinion
+            if opinion["disagree"]:
+                out.flags.append(disagree_flag(opinion))
+        if (
             use_exog
             and exog_bundle is not None
             and forecast_output.lower_bound is not None
@@ -1177,6 +1446,17 @@ def forecast_line_item(
                 if exog_spec is not None:
                     exog_spec["exog_variance_inflated"] = True
                     forecast_output.parameters["exog_spec"] = exog_spec
+
+        if effective.working_day_effect is not None:
+            wd_meta = _restore_working_days(
+                forecast_output,
+                effective.working_day_effect,
+                cal_cfg,
+                (getattr(ctx.analysis, "holiday_country", "") or None) if ctx.analysis is not None else None,
+            )
+            if wd_meta is not None:
+                forecast_output.parameters = dict(forecast_output.parameters or {})
+                forecast_output.parameters["working_day_adjustment"] = wd_meta
 
         cv_mape = selection_mape if selection_mape is not None else None
         in_sample = (
@@ -1250,7 +1530,9 @@ def forecast_line_item(
                     ModelMetadata(
                         line_result_id=result_id,
                         model_type=selected_model,
-                        parameters=forecast_output.parameters,
+                        parameters=_with_foundation_note(
+                            forecast_output.parameters, registry, ctx.panel
+                        ),
                         training_window_start=periods[0] if periods else None,
                         training_window_end=periods[-1] if periods else None,
                         training_points=len(effective_values),

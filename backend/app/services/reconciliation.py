@@ -44,8 +44,9 @@ _Z80 = 1.2815515655446004
 
 # Same-category residual correlation prior when sample is thin
 _CATEGORY_RHO = 0.35
-# Shrinkage of sample correlation toward prior / identity
-_CORR_SHRINKAGE = 0.45
+# Season length for the naive-forecast residuals the correlation is
+# estimated on (seasonal differences when history allows).
+_RESIDUAL_SEASON = 12
 
 DEFAULT_CROSS_DIMS: tuple[str, ...] = ("business_unit", "geography", "product_line")
 
@@ -288,10 +289,16 @@ def estimate_leaf_correlation(
     dataset_id: str | None,
     categories: dict[int, str],
 ) -> np.ndarray:
-    """n×n correlation matrix for leaves.
+    """n×n correlation matrix of the leaves' forecast errors.
 
-    Prefers sample correlation of demeaned actuals (shrinkage toward a
-    category-block prior). Falls back to the prior alone when history is thin.
+    MinT's W is the covariance of base-forecast *errors*, so the sample
+    correlation is taken on naive-forecast residuals: seasonal differences
+    (y_t - y_{t-12}) when at least 16 common periods exist, otherwise first
+    differences. Correlating demeaned levels, as before, made any two
+    trending or seasonal lines look ~perfectly correlated whatever their
+    surprises did. The sample is shrunk toward the category-block prior with
+    the Schäfer–Strimmer intensity (estimated from the data, not a fixed
+    0.45). Falls back to the prior alone when history is thin.
     """
     n = len(leaf_ids)
     prior = _category_block_correlation(leaf_ids, categories)
@@ -325,21 +332,58 @@ def estimate_leaf_correlation(
     X = np.column_stack(
         [[series[lid][p] for p in periods] for lid in leaf_ids]
     )  # T × n
-    # Demean
-    X = X - X.mean(axis=0, keepdims=True)
-    # Drop near-zero variance columns for corr stability
-    std = X.std(axis=0, ddof=1)
-    std_safe = np.where(std < 1e-12, 1.0, std)
-    Z = X / std_safe
-    sample = np.corrcoef(Z, rowvar=False)
-    if sample.shape != (n, n) or not np.isfinite(sample).all():
+    lag = _RESIDUAL_SEASON if len(periods) >= _RESIDUAL_SEASON + 4 else 1
+    E = X[lag:] - X[:-lag]  # naive-forecast residuals
+    if E.shape[0] < 4:
         return prior
-    np.fill_diagonal(sample, 1.0)
-
-    delta = _CORR_SHRINKAGE
-    shrunk = (1.0 - delta) * sample + delta * prior
-    # Project to nearest PSD via eigenvalue clip
+    shrunk, _lam = shrink_correlation(E, prior)
+    if shrunk is None:
+        return prior
     return _nearest_correlation(shrunk)
+
+
+def shrink_correlation(
+    E: np.ndarray, target: np.ndarray
+) -> tuple[np.ndarray | None, float]:
+    """Schäfer–Strimmer (2005) shrinkage of a sample correlation toward ``target``.
+
+    ``E`` is T × n residuals. Returns ``(R, lambda)`` with
+    R = lambda * target + (1 - lambda) * sample off the diagonal, and the
+    analytic intensity
+
+        lambda* = sum_{i!=j} Var(r_ij) / sum_{i!=j} (r_ij - t_ij)^2,
+
+    clipped to [0, 1], where Var(r_ij) is estimated from the products of
+    the standardized residuals. Few periods or noisy correlations give a
+    large lambda (trust the prior); long, clear evidence a small one.
+    Columns with no variance are left at the target. ``(None, 1.0)`` when
+    nothing can be estimated.
+    """
+    E = np.asarray(E, dtype=float)
+    T, n = E.shape
+    if T < 4 or n == 0:
+        return None, 1.0
+    Xc = E - E.mean(axis=0, keepdims=True)
+    sd = Xc.std(axis=0, ddof=1)
+    live = sd > 1e-12
+    Z = np.zeros_like(Xc)
+    Z[:, live] = Xc[:, live] / sd[live]
+    # w_kij = z_ki z_kj; sum_k (w_kij - w_bar_ij)^2 = sum_k w_kij^2 - T w_bar_ij^2.
+    # Matrix products keep this O(T n^2) without a T x n x n array.
+    w_bar = (Z.T @ Z) / T
+    Z2 = Z * Z
+    sample = (T / (T - 1.0)) * w_bar
+    var_r = (T / (T - 1.0) ** 3) * np.clip(Z2.T @ Z2 - T * w_bar**2, 0.0, None)
+    off = ~np.eye(n, dtype=bool) & np.outer(live, live)
+    target = np.asarray(target, dtype=float)
+    denom = float(((sample - target)[off] ** 2).sum())
+    lam = 1.0 if denom <= 1e-12 else float(np.clip(var_r[off].sum() / denom, 0.0, 1.0))
+    R = target.copy()
+    R[off] = lam * target[off] + (1.0 - lam) * sample[off]
+    np.fill_diagonal(R, 1.0)
+    if not np.isfinite(R).all():
+        return None, 1.0
+    return R, lam
 
 
 def _category_block_correlation(

@@ -18,7 +18,11 @@ class TokenResponse(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    # Omitted by the browser app, which sends the httpOnly cookie instead.
+    refresh_token: str | None = None
+    # The company this tab/session is working in. Honoured only when the user
+    # holds a membership there; otherwise the token carries their default.
+    company_id: str | None = None
 
 
 class LogoutRequest(BaseModel):
@@ -65,6 +69,12 @@ class UserResponse(BaseModel):
 
 class SwitchCompanyRequest(BaseModel):
     company_id: str
+
+
+class SwitchCompanyResponse(UserResponse):
+    # A new access token pinned to the chosen company. The client must use it
+    # from now on; other tabs and devices keep their own token and company.
+    access_token: str | None = None
 
 
 class GrantMembershipRequest(BaseModel):

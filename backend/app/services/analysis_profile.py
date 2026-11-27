@@ -7,8 +7,8 @@ fall through to the global `app.config.settings` default whenever no
 per-business-unit override exists. No new table or migration -- the existing
 generic key/value override table is typed enough for this.
 
-Every field is read per-call. `enable_benchmark_models` and
-`enable_global_gbm_model` decide which models a registry *contains*, so they
+Every field is read per-call. `enable_benchmark_models`,
+`enable_global_gbm_model` and `enable_foundation_models` decide which models a registry *contains*, so they
 are applied by picking that company's registry
 (`app.domain.engines.model_registry.registry_for_analysis`), one cached
 registry per gate combination.
@@ -48,6 +48,9 @@ ANALYSIS_PROFILE_FIELDS: dict[str, type] = {
     "enable_ensemble_blending": bool,
     "enable_benchmark_models": bool,
     "enable_global_gbm_model": bool,
+    "enable_foundation_models": bool,
+    "working_day_adjustment_enabled": bool,
+    "holiday_country": str,
 }
 
 _KEY_PREFIX = "analysis."
@@ -76,6 +79,9 @@ class AnalysisSettings:
     enable_ensemble_blending: bool
     enable_benchmark_models: bool
     enable_global_gbm_model: bool
+    enable_foundation_models: bool
+    working_day_adjustment_enabled: bool = False
+    holiday_country: str = ""
 
 
 def _decode(field_type: type, raw: str) -> Any:
@@ -133,6 +139,15 @@ def validate_analysis_patch(patch: dict[str, Any]) -> dict[str, Any]:
         if field_type in (int, float) and not isinstance(value, (int, float)):
             raise ValueError(f"'{name}' must be a number")
         coerced[name] = field_type(value)
+        if name == "holiday_country" and coerced[name]:
+            coerced[name] = coerced[name].strip().upper()
+            import holidays
+
+            if coerced[name] not in holidays.list_supported_countries():
+                raise ValueError(
+                    f"'holiday_country' must be an ISO country code with a holiday calendar "
+                    f"(e.g. US, IN, GB, DE), not {value!r}"
+                )
     return coerced
 
 

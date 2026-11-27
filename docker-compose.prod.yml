@@ -70,6 +70,11 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  fm-service:
+    environment:
+      - FM_TORCH_THREADS=${FM_TORCH_THREADS:-4}
+    restart: unless-stopped
+
   frontend:
     build:
       context: ./frontend

@@ -750,3 +750,116 @@ def test_what_if_future_base_falls_back_to_last_actual(db_session, seed_users):
         assert r.p50 == pytest.approx(105.0)
         assert r.model_p50 == pytest.approx(100.0)
     assert out["line_items"][0]["effect_source"] == "discovery_link"
+
+
+def _foundation_whatif_fixture(db_session, seed_users, *, n_history: int = 24):
+    """A line with actuals, a driver with history and a staged future, and a
+    baseline version over the next three periods."""
+    li = LineItem(account_code="REV-WHATIF-FM", name="Revenue fm", category="Revenue", display_order=7)
+    db_session.add(li)
+    hist = [f"{2023 + i // 12}-{i % 12 + 1:02d}" for i in range(n_history)]
+    ds = ActualsDataset(
+        source_type="test", source_name="whatif-fm", file_hash=f"whatif-fm-{n_history}",
+        row_count=n_history, period_start=hist[0], period_end=hist[-1], periods_count=n_history,
+    )
+    db_session.add(ds)
+    db_session.flush()
+    for i, p in enumerate(hist):
+        db_session.add(ActualsRecord(dataset_id=ds.id, line_item_id=li.id, period=p, value=100.0 + i))
+    base = ForecastVersion(
+        name="Base FM", status="draft", version_type="scheduled", scenario="base", horizon_months=3,
+        created_by=seed_users["admin"].id, created_at=datetime.now(timezone.utc),
+        actuals_dataset_id=ds.id,
+    )
+    db_session.add(base)
+    db_session.flush()
+    d = create_driver(db_session, key=f"drv_fm_{n_history}", name="FM Driver", driver_type="macro", actor=seed_users["admin"])
+    db_session.flush()
+    upsert_driver_values(db_session, driver_id=d.id, rows=[{"period": p, "value": 50.0} for p in hist])
+    future = ["2025-01", "2025-02", "2025-03"]
+    upsert_driver_values(
+        db_session, driver_id=d.id, rows=[{"period": p, "value": 50.0} for p in future],
+        value_type="forecast", version_id=base.id,
+    )
+    assert_link(
+        db_session, driver_id=d.id, line_item_id=li.id, relation="level", coefficient=2.0,
+        status="active", actor=seed_users["admin"],
+    )
+    for p in future:
+        db_session.add(ForecastLineResult(
+            version_id=base.id, line_item_id=li.id, period=p, p10=180.0, p50=200.0, p90=220.0, model_p50=200.0,
+        ))
+    db_session.commit()
+    return li, d, base
+
+
+def _fake_chronos(monkeypatch, calls: list):
+    """Chronos-2 stand-in: P50 = 200 + (mean future driver - 50) * 4."""
+    from app.services import foundation_client
+    from app.services.foundation_client import FoundationBatchResult, QuantilePath
+
+    def fake(series):
+        calls.append(series)
+        out = {}
+        for s in series:
+            fut = next(iter(s["future_covariates"].values()))
+            level = 200.0 + (sum(fut) / len(fut) - 50.0) * 4.0
+            h = s["prediction_length"]
+            out[s["id"]] = QuantilePath(p10=(level - 20,) * h, p50=(level,) * h, p90=(level + 20,) * h)
+        return FoundationBatchResult(provenance={}, forecasts=out)
+
+    monkeypatch.setattr(foundation_client, "forecast_batch", fake)
+
+
+def test_what_if_foundation_method_applies_the_reforecast_difference(db_session, seed_users, monkeypatch):
+    li, d, base = _foundation_whatif_fixture(db_session, seed_users)
+    calls: list = []
+    _fake_chronos(monkeypatch, calls)
+    out = create_what_if_scenario(
+        db_session, base_version_id=base.id, scenario_label="fm-up",
+        shocks=[DriverShock(driver_id=d.id, mode="absolute", value=10.0)],
+        actor=seed_users["admin"], method="foundation",
+    )
+    assert len(calls) == 1 and {s["id"] for s in calls[0]} == {f"{li.id}@base", f"{li.id}@shock"}
+    rows = {
+        r.period: r
+        for r in db_session.query(ForecastLineResult)
+        .filter(ForecastLineResult.version_id == out["scenario_version_id"], ForecastLineResult.line_item_id == li.id)
+        .all()
+    }
+    # Shocked run minus base run: (60 - 50) * 4 = +40, on top of the published 200
+    # (not the link's coefficient 2.0 * 10 = +20).
+    for p in ("2025-01", "2025-02", "2025-03"):
+        assert rows[p].p50 == pytest.approx(240.0)
+        assert rows[p].p10 == pytest.approx(220.0) and rows[p].p90 == pytest.approx(260.0)
+        assert rows[p].model_p50 == pytest.approx(200.0)
+    assert out["method"] == "foundation"
+    assert out["line_items"][0]["effect_source"] == "chronos2_reforecast"
+
+
+def test_what_if_foundation_falls_back_to_links_on_short_history(db_session, seed_users, monkeypatch):
+    li, d, base = _foundation_whatif_fixture(db_session, seed_users, n_history=8)
+    calls: list = []
+    _fake_chronos(monkeypatch, calls)
+    out = create_what_if_scenario(
+        db_session, base_version_id=base.id, scenario_label="fm-short",
+        shocks=[DriverShock(driver_id=d.id, mode="absolute", value=10.0)],
+        actor=seed_users["admin"], method="foundation",
+    )
+    assert calls == []
+    assert "foundation_note" in out
+    row = (
+        db_session.query(ForecastLineResult)
+        .filter(ForecastLineResult.version_id == out["scenario_version_id"], ForecastLineResult.line_item_id == li.id)
+        .first()
+    )
+    assert row.p50 == pytest.approx(220.0)  # link coefficient 2.0 * 10
+    assert out["line_items"][0]["effect_source"] == "discovery_link"
+
+
+def test_what_if_rejects_unknown_method(db_session, seed_users):
+    with pytest.raises(ValueError):
+        create_what_if_scenario(
+            db_session, base_version_id="x", scenario_label="s",
+            shocks=[DriverShock(driver_id=1, mode="pct", value=1.0)], actor=None, method="magic",
+        )

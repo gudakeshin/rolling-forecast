@@ -270,3 +270,133 @@ def apply_bands(
         **bands.to_metadata(),
     }
     return lower, upper, diagnostics
+
+
+def widen_for_cv_coverage(
+    point: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    cv_coverage: float | None,
+    n_points: int,
+    *,
+    target: float = 1.0 - DEFAULT_ALPHA,
+    min_points: int = 9,
+    max_scale: float = 2.0,
+    non_negative: bool = False,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]] | None:
+    """Widen a model's own P10-P90 band by how often it covered out of sample.
+
+    Engine bands come from in-sample residuals, which understate
+    out-of-sample error. Rolling-origin CV already scores each model's band
+    on held-out windows (``coverage_80``). One coverage number is far more
+    stable than the per-horizon quantiles split-conformal needs: with three
+    folds, conformal calibration made coverage worse on every backtest
+    dataset (Phase D, ENHANCEMENT_PLAN_VERIFICATION.md), while this needs
+    only a rate.
+
+    Only widens (scale >= 1): a band that over-covered in CV is left alone,
+    because CV windows sit on history the model was fitted near, so a high
+    CV rate is weak evidence that the published band is too wide. The
+    scale is the Gaussian width ratio from ``cv_coverage`` to ``target``,
+    the same interpolator ``rescale_for_realized_coverage`` uses, clamped to
+    ``max_scale``. Returns None when nothing changes.
+    """
+    if cv_coverage is None or not np.isfinite(cv_coverage) or n_points < min_points:
+        return None
+    if cv_coverage >= target:
+        return None
+    from scipy.stats import norm
+
+    coverage = float(min(max(cv_coverage, 0.01), 0.999))
+    have = float(norm.ppf(0.5 + coverage / 2.0))
+    want = float(norm.ppf(0.5 + target / 2.0))
+    if have <= 1e-9:
+        scale = max_scale
+    else:
+        scale = float(min(max(want / have, 1.0), max_scale))
+    if scale <= 1.0 + 1e-6:
+        return None
+    point = np.asarray(point, dtype=float)
+    new_lower = point - (point - np.asarray(lower, dtype=float)) * scale
+    new_upper = point + (np.asarray(upper, dtype=float) - point) * scale
+    if non_negative:
+        new_lower = np.maximum(new_lower, 0.0)
+    new_lower = np.minimum(new_lower, point)
+    new_upper = np.maximum(new_upper, point)
+    return new_lower, new_upper, {
+        "cv_coverage_80": round(float(cv_coverage), 4),
+        "cv_points": int(n_points),
+        "scale": round(scale, 4),
+        "target": target,
+    }
+
+
+def blend_with_foundation_range(
+    point: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    fm_lower: np.ndarray,
+    fm_upper: np.ndarray,
+    *,
+    weight: float = 0.5,
+    non_negative: bool = False,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]] | None:
+    """Average the selected model's P10/P90 with Chronos-2's (quantile averaging).
+
+    The point forecast stays the selected model's: Chronos-2 lost on MASE on
+    the backtest, but its bands covered 0.81-0.86, where the default's
+    covered 0.59-0.72 from earlier origins. Averaging quantiles of the two
+    keeps a sharp band where they agree and widens it where they disagree.
+    ``weight`` is the foundation model's share. The result always contains
+    the point. Returns None when the foundation path is unusable.
+    """
+    point = np.asarray(point, dtype=float)
+    n = len(point)
+    fl = np.asarray(fm_lower, dtype=float)
+    fu = np.asarray(fm_upper, dtype=float)
+    if n == 0 or len(fl) == 0 or len(fu) == 0 or not (0.0 < weight <= 1.0):
+        return None
+    if len(fl) < n:
+        fl = np.concatenate([fl, np.full(n - len(fl), fl[-1])])
+    if len(fu) < n:
+        fu = np.concatenate([fu, np.full(n - len(fu), fu[-1])])
+    fl, fu = np.minimum(fl[:n], fu[:n]), np.maximum(fl[:n], fu[:n])
+    if not (np.all(np.isfinite(fl)) and np.all(np.isfinite(fu))):
+        return None
+    w = float(weight)
+    new_lower = (1.0 - w) * np.asarray(lower, dtype=float) + w * fl
+    new_upper = (1.0 - w) * np.asarray(upper, dtype=float) + w * fu
+    if non_negative:
+        new_lower = np.maximum(new_lower, 0.0)
+    new_lower = np.minimum(new_lower, point)
+    new_upper = np.maximum(new_upper, point)
+    old_width = float(np.mean(np.asarray(upper, dtype=float) - np.asarray(lower, dtype=float)))
+    new_width = float(np.mean(new_upper - new_lower))
+    return new_lower, new_upper, {
+        "weight": round(w, 4),
+        "width_ratio": round(new_width / old_width, 4) if old_width > 1e-12 else None,
+    }
+
+
+def crps_from_quantiles(
+    actual: float, quantiles: dict[float, float | None]
+) -> float | None:
+    """CRPS approximated from a few predictive quantiles.
+
+    CRPS = 2 * integral over tau of the pinball loss, so with quantiles at
+    levels tau_1..tau_k it is approximated by 2 * mean_k pinball_tau_k
+    (Gneiting and Raftery 2007, eq. 22). With P10/P50/P90 this weights the
+    median and both tails equally; it reduces to the absolute error when
+    only the median is known. Missing quantiles are skipped; None if none
+    are usable.
+    """
+    losses = []
+    for tau, q in quantiles.items():
+        if q is None or not math.isfinite(float(q)):
+            continue
+        d = float(actual) - float(q)
+        losses.append(max(tau * d, (tau - 1.0) * d))
+    if not losses:
+        return None
+    return 2.0 * sum(losses) / len(losses)
+

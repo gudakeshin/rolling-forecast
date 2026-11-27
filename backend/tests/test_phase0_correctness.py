@@ -284,4 +284,6 @@ def test_worker_settings_job_timeout():
     from app.workers.arq_worker import WorkerSettings
 
     assert WorkerSettings.job_timeout >= 3600
-    assert WorkerSettings.max_jobs == 1
+    # Runs are off the event loop now (thread + process pool), so the
+    # forecast queue takes more than one job at a time.
+    assert WorkerSettings.max_jobs > 1

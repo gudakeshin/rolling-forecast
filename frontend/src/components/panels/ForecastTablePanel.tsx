@@ -123,6 +123,8 @@ interface ForecastRow {
   model_type: string;
   model_mape?: number;
   is_overridden: boolean;
+  // Review queue: Chronos-2's range disagrees with this line (second opinion).
+  models_disagree?: boolean;
   override_value?: number;
   override_count?: number;
   indent_level?: number;
@@ -851,6 +853,15 @@ function ForecastLineItemCell({
         <span className={`truncate ${row.is_subtotal ? 'font-bold text-white' : ''}`}>
           {row.line_item_name}
         </span>
+        {row.models_disagree && (
+          <span
+            className="ml-1 px-1.5 py-0.5 rounded text-[10px] bg-amber-500/15 text-amber-400 flex-shrink-0"
+            title="The forecast is outside Chronos-2's P10–P90 for most of the horizon"
+            data-testid="models-disagree-badge"
+          >
+            Models disagree
+          </span>
+        )}
       </div>
     </div>
   );

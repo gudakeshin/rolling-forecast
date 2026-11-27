@@ -41,6 +41,7 @@ interface Props {
         seasonal_naive_wape?: number | null;
         fva_vs_naive?: number | null;
         fva_vs_seasonal_naive?: number | null;
+        crps_pct?: number | null;
       };
       model_performance: any[];
       category_accuracy: any[];
@@ -49,9 +50,30 @@ interface Props {
       bias_trend?: any[];
       items: any[];
       version?: { id: string; name: string };
+      diagnostics?: Diagnostics;
     };
   };
   onRefresh?: () => void;
+}
+
+interface Diagnostics {
+  bias_signals: Array<{
+    line_item_id: number;
+    line_item_name?: string;
+    n: number;
+    bias_pct: number | null;
+    tracking_signal: number;
+    biased: boolean;
+    direction: 'over' | 'under' | null;
+  }>;
+  revision_stability: {
+    mean_abs_revision_pct: number | null;
+    flip_rate: number | null;
+    n_revisions: number;
+    lines: Array<{ line_item_id: number; line_item_name?: string; mean_abs_revision_pct: number; flip_rate: number | null }>;
+  };
+  fva_by_user: Array<{ user: string; overrides: number; helped_share: number; value_added: number; fva_pct: number | null }>;
+  fva_by_reason: Array<{ reason_theme: string; overrides: number; helped_share: number; value_added: number; fva_pct: number | null }>;
 }
 
 function formatPct(val: number): string {
@@ -80,7 +102,8 @@ const ChartTooltip = ({ active, payload, label }: any) => {
 
 export function AccuracyTrackingPanel({ data, onRefresh }: Props) {
   const { overall, model_performance, category_accuracy, mape_trend, top_deviations, bias_trend, items } = data.data;
-  const [activeTab, setActiveTab] = useState<'overview' | 'models' | 'deviations'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'models' | 'deviations' | 'process'>('overview');
+  const diag = data.data.diagnostics;
   const [rescoring, setRescoring] = useState(false);
   const openPanel = usePanelStore((s) => s.openPanel);
   const panelVersionId = usePanelStore((s) => s.panelParams.version_id);
@@ -210,6 +233,12 @@ export function AccuracyTrackingPanel({ data, onRefresh }: Props) {
           icon={Target}
         />
       </div>
+      {overall.crps_pct != null && (
+        <p className="text-[11px] text-surface-500 -mt-2" title="CRPS from P10/P50/P90, as % of actuals; lower is better">
+          Band score (CRPS): {formatPct(overall.crps_pct)} of actuals. It scores the whole P10–P90 band, not only the
+          point, so it rewards bands that are both narrow and honest.
+        </p>
+      )}
 
       {(overall.published_wape != null || overall.fva_vs_naive != null) && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -258,6 +287,7 @@ export function AccuracyTrackingPanel({ data, onRefresh }: Props) {
           { id: 'overview', label: 'Trend & Categories' },
           { id: 'models', label: 'Model Compare' },
           { id: 'deviations', label: 'Top Deviations' },
+          { id: 'process', label: 'Bias & Overrides' },
         ]}
         value={activeTab}
         onChange={setActiveTab}
@@ -431,6 +461,110 @@ export function AccuracyTrackingPanel({ data, onRefresh }: Props) {
               ) : null
             }
           />
+        </div>
+      )}
+
+      {activeTab === 'process' && (
+        <div className="space-y-3" data-testid="accuracy-process">
+          <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl p-4">
+            <h4 className="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-1">Persistent bias</h4>
+            <p className="text-[11px] text-surface-500 mb-2">
+              Tracking signal = running sum of errors ÷ mean absolute error, on the best-informed vintage of each
+              closed period. Beyond ±4 the forecast sits on one side, not just noise.
+            </p>
+            {diag?.bias_signals?.length ? (
+              <table className="w-full text-xs">
+                <tbody>
+                  {diag.bias_signals.slice(0, 10).map((b) => (
+                    <tr key={b.line_item_id} className="border-t border-surface-800">
+                      <td className="py-1 text-surface-200">{b.line_item_name ?? b.line_item_id}</td>
+                      <td className="py-1 text-right text-surface-400">
+                        {b.bias_pct != null ? `${b.bias_pct > 0 ? '+' : ''}${b.bias_pct.toFixed(1)}%` : '-'}
+                      </td>
+                      <td className={`py-1 text-right ${b.biased ? 'text-amber-400 font-medium' : 'text-surface-400'}`}>
+                        TS {b.tracking_signal.toFixed(1)}
+                        {b.biased && ` · ${b.direction === 'over' ? 'over' : 'under'}-forecasting`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="text-surface-500 text-xs">Needs at least 4 closed periods per line.</p>
+            )}
+          </div>
+
+          <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl p-4">
+            <h4 className="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-1">Revision stability</h4>
+            {diag?.revision_stability?.n_revisions ? (
+              <>
+                <p className="text-xs text-surface-300 mb-2">
+                  Each vintage moved a period's forecast by {diag.revision_stability.mean_abs_revision_pct?.toFixed(1)}% of
+                  its actual on average
+                  {diag.revision_stability.flip_rate != null &&
+                    `; ${Math.round(diag.revision_stability.flip_rate * 100)}% of moves reversed the previous one`}
+                  .
+                </p>
+                <table className="w-full text-xs">
+                  <tbody>
+                    {diag.revision_stability.lines.slice(0, 5).map((r) => (
+                      <tr key={r.line_item_id} className="border-t border-surface-800">
+                        <td className="py-1 text-surface-200">{r.line_item_name ?? r.line_item_id}</td>
+                        <td className="py-1 text-right text-surface-400">{r.mean_abs_revision_pct.toFixed(1)}% per revision</td>
+                        <td className="py-1 text-right text-surface-400">
+                          {r.flip_rate != null ? `${Math.round(r.flip_rate * 100)}% reversals` : '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            ) : (
+              <p className="text-surface-500 text-xs">Needs a period forecast by two or more vintages that has since closed.</p>
+            )}
+          </div>
+
+          <div className="bg-surface-800/60 border border-surface-700/50 rounded-xl p-4">
+            <h4 className="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-1">Override value added</h4>
+            <p className="text-[11px] text-surface-500 mb-2">
+              Model error minus published error on closed periods: positive means the override helped.
+            </p>
+            {diag?.fva_by_user?.length ? (
+              <div className="grid grid-cols-2 gap-3">
+                {(
+                  [
+                    ['By person', diag.fva_by_user.map((r) => ({ key: r.user, ...r }))],
+                    ['By reason', diag.fva_by_reason.map((r) => ({ key: r.reason_theme, ...r }))],
+                  ] as const
+                ).map(([title, rows]) => (
+                  <table key={title} className="w-full text-xs">
+                    <thead>
+                      <tr className="text-surface-500 text-left">
+                        <th className="py-1 font-medium">{title}</th>
+                        <th className="py-1 font-medium text-right">Helped</th>
+                        <th className="py-1 font-medium text-right">FVA</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((r) => (
+                        <tr key={r.key} className="border-t border-surface-800">
+                          <td className="py-1 text-surface-200">
+                            {r.key} <span className="text-surface-500">({r.overrides})</span>
+                          </td>
+                          <td className="py-1 text-right text-surface-400">{Math.round(r.helped_share * 100)}%</td>
+                          <td className={`py-1 text-right ${r.value_added >= 0 ? 'text-deloitte-green' : 'text-red-400'}`}>
+                            {r.fva_pct != null ? `${r.fva_pct > 0 ? '+' : ''}${r.fva_pct.toFixed(1)}%` : formatCurrency(r.value_added)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ))}
+              </div>
+            ) : (
+              <p className="text-surface-500 text-xs">No overrides on periods that have closed yet.</p>
+            )}
+          </div>
         </div>
       )}
 

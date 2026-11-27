@@ -406,3 +406,51 @@ def test_scope_without_a_company_sees_no_company_less_rows(client):
     finally:
         reset_tenant_scope(token)
         db.close()
+
+
+def test_every_table_with_a_tenant_column_is_in_the_net():
+    """A new company-owned table must be registered with the tenant net or
+    exempted with a reason; forgetting it silently opens a cross-company read."""
+    import app.models  # noqa: F401 -- configure every mapper
+    from app.database import Base
+    from app.services.tenant_scope import TENANT_NET_EXEMPT_TABLES, plain_scoped_models
+
+    registered = {m.__tablename__ for m in plain_scoped_models()}
+    with_tenant_column = {
+        m.local_table.name
+        for m in Base.registry.mappers
+        if "business_unit_id" in m.columns.keys()
+    }
+    missing = with_tenant_column - registered - set(TENANT_NET_EXEMPT_TABLES)
+    assert not missing, f"tables with business_unit_id missing from the tenant net: {sorted(missing)}"
+
+
+def test_heuristics_are_hidden_from_other_companies(client):
+    from app.database import SessionLocal
+    from app.models.heuristic import LearnedHeuristic
+    from app.models.user import User
+    from app.services.tenant_scope import push_tenant_scope, reset_tenant_scope, scope_for_user
+
+    fx = _make_scoped_fixtures("heur")
+    db = SessionLocal()
+    try:
+        rows = [
+            LearnedHeuristic(kind="error_bias", statement=f"bias {bu}", business_unit_id=bu)
+            for bu in (fx["bu_a_id"], fx["bu_b_id"])
+        ]
+        db.add_all(rows)
+        db.commit()
+        heur_ids = [r.id for r in rows]
+
+        user_a = db.query(User).filter(User.username == fx["username"]).first()
+        token = push_tenant_scope(scope_for_user(user_a))
+        try:
+            seen = {
+                r.business_unit_id
+                for r in db.query(LearnedHeuristic).filter(LearnedHeuristic.id.in_(heur_ids)).all()
+            }
+        finally:
+            reset_tenant_scope(token)
+        assert seen == {fx["bu_a_id"]}
+    finally:
+        db.close()

@@ -74,7 +74,8 @@ class HistoryAnalysis:
         return self.n_points < 6
 
     def _detect_structural_break(self) -> tuple[bool, str | None, int | None]:
-        """CUSUM on OLS residuals (statsmodels) with Chow fallback.
+        """CUSUM on OLS residuals (statsmodels) with Chow fallback, or, with
+        ``supf_break_test_enabled``, Andrews' sup-F on STL-adjusted data.
 
         Returns (detected, period_label, break_index). Truncation eligibility
         (≥12 post-break points) is decided by the caller.
@@ -82,6 +83,19 @@ class HistoryAnalysis:
         if self.n_points < 12:
             return False, None, None
         if self._break_cache is not None:
+            return self._break_cache
+        from app.config import settings as _settings
+
+        if _settings.supf_break_test_enabled:
+            detected_s, idx_s = supf_break(
+                self.values.values.astype(float), period=_season_length()
+            )
+            period_s = (
+                self.dates[idx_s].strftime("%Y-%m")
+                if detected_s and idx_s is not None and idx_s < len(self.dates)
+                else None
+            )
+            self._break_cache = (detected_s, period_s, idx_s if detected_s else None)
             return self._break_cache
 
         y = self.values.values.astype(float)
@@ -484,3 +498,82 @@ def check_generation_timeout(start_time: float, context: str = "") -> None:
         logger.warning(
             f"Forecast generation at {elapsed_minutes:.1f}/{max_minutes} minutes ({context})"
         )
+
+
+# Andrews (1993), corrected in Andrews (2003): asymptotic 5% critical value of
+# sup-F for p = 2 parameters changing (level and slope) with 15% trimming.
+SUPF_CRITICAL_5PCT = 11.79
+SUPF_TRIM = 0.15
+SUPF_MIN_SEGMENT = 6
+
+
+def _season_length() -> int:
+    try:
+        from app.domain.engines.base_model import seasonal_period_length
+
+        return int(seasonal_period_length())
+    except Exception:
+        return 12
+
+
+def _seasonally_adjust(y: np.ndarray, period: int) -> np.ndarray:
+    """Robust STL seasonal component removed, when two full cycles exist."""
+    if period < 2 or len(y) < 2 * period:
+        return y
+    try:
+        from statsmodels.tsa.seasonal import STL
+
+        res = STL(y, period=period, robust=True).fit()
+        return y - np.asarray(res.seasonal, dtype=float)
+    except Exception:
+        return y
+
+
+def supf_break(
+    y: np.ndarray,
+    *,
+    period: int = 12,
+    critical: float = SUPF_CRITICAL_5PCT,
+    trim: float = SUPF_TRIM,
+) -> tuple[bool, int | None]:
+    """Andrews' sup-F test for one break in level and slope.
+
+    On the STL-adjusted series, the null is one line ``a + b t``; for each
+    candidate break tau in the trimmed middle of the sample, the alternative
+    fits separate lines before and after. F(tau) compares the two residual
+    sums of squares with 2 restrictions; the largest F is compared with
+    Andrews' critical value (not the F distribution: choosing the best of
+    many splits and reading a single-test p-value, as the Chow fallback
+    does, finds breaks in pure noise far more often than 5%).
+
+    Returns (detected, index of the first post-break point).
+    """
+    y = np.asarray(y, dtype=float)
+    n = len(y)
+    if n < 2 * SUPF_MIN_SEGMENT or not np.all(np.isfinite(y)) or float(np.std(y)) < 1e-12:
+        return False, None
+    z = _seasonally_adjust(y, period)
+    t = np.arange(n, dtype=float)
+
+    def rss(seg_t: np.ndarray, seg_y: np.ndarray) -> float:
+        X = np.column_stack([np.ones_like(seg_t), seg_t])
+        beta, *_ = np.linalg.lstsq(X, seg_y, rcond=None)
+        r = seg_y - X @ beta
+        return float(r @ r)
+
+    rss0 = rss(t, z)
+    lo = max(SUPF_MIN_SEGMENT, int(np.ceil(trim * n)))
+    hi = min(n - SUPF_MIN_SEGMENT, int(np.floor((1 - trim) * n)))
+    best_f, best_i = -np.inf, None
+    for i in range(lo, hi + 1):
+        rss1 = rss(t[:i], z[:i]) + rss(t[i:], z[i:])
+        dof = n - 4
+        if rss1 <= 1e-12 * max(rss0, 1.0) or dof <= 0:
+            continue
+        f = ((rss0 - rss1) / 2.0) / (rss1 / dof)
+        if f > best_f:
+            best_f, best_i = f, i
+    if best_i is None:
+        return False, None
+    return bool(best_f > critical), best_i
+

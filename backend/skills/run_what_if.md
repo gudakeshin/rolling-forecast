@@ -21,6 +21,11 @@ parameters:
     required: true
     items:
       type: object
+  - name: method
+    type: string
+    description: "links (coefficients, instant) or foundation (re-forecast linked lines with Chronos-2)"
+    enum: [links, foundation]
+    default: links
   - name: open_panel
     type: boolean
     description: Open the what-if panel after creation
@@ -37,10 +42,17 @@ parameters:
 1. Resolve drivers by id or key
 2. Clone base forecast version immutably
 3. Persist shocked driver series as value_type=scenario
-4. Perturb linked line p50 via coefficient/elasticity; keep base p10/p90
+4. Perturb linked line p50 via coefficient/elasticity (method=links), or by
+   the change between two Chronos-2 forecasts of the line, one under the base
+   driver path and one under the shocked path (method=foundation). The band
+   keeps its own half-widths around the moved point. Lines Chronos-2 cannot
+   serve (under 12 months of history, no usable driver column, service down)
+   fall back to links, and the result says so.
 5. Open what-if / forecast panel
 
 ## Examples
 - "What if headcount is 10% lower?" →
   scenario_label=hc_down_10, shocks=[{driver_key: headcount_na, mode: pct, value: -10}]
 - "Replace oil price with 80 for the scenario" → mode=replace
+- "Re-forecast with headcount down 10%, not just the coefficient" →
+  method=foundation, shocks=[{driver_key: headcount_na, mode: pct, value: -10}]

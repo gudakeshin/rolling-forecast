@@ -13,6 +13,9 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///./test_app.db")
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-ci-at-least-32-chars")
 os.environ.setdefault("SEED_DEMO_USERS", "true")
+# No fm-service sidecar in tests; tests that need the range blend turn it on.
+os.environ.setdefault("FOUNDATION_RANGE_BLEND_ENABLED", "false")
+os.environ.setdefault("FOUNDATION_SHORT_LINES_ENABLED", "false")
 
 from app.database import Base
 from app.models.user import Role, User

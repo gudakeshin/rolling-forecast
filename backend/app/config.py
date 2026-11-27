@@ -127,6 +127,17 @@ class Settings(BaseSettings):
     outlier_cleaning_enabled: bool = True
     outlier_mad_z: float = 3.5
     # Structural break: require this many post-break points before truncating
+    # Structural breaks: Andrews' sup-F (level + slope) on STL-adjusted data
+    # instead of CUSUM with a Chow fallback whose best-of-many-splits p-value
+    # over-detects. Off until the backtest decides.
+    supf_break_test_enabled: bool = False
+    # Working-day effects (app/services/working_days.py): a line whose
+    # year-on-year changes track the change in working days is forecast per
+    # working day and scaled back by the future periods' counts. Off until the
+    # backtest decides. holiday_country: ISO code for public holidays ("" =
+    # weekdays only); a company sets its own through the AnalysisProfile.
+    working_day_adjustment_enabled: bool = False
+    holiday_country: str = ""
     structural_break_min_post_points: int = 12
     # Split-conformal interval calibration from CV fold residuals.
     # Off by default so an upgrade never silently changes published bands;
@@ -139,6 +150,12 @@ class Settings(BaseSettings):
     conformal_min_residuals_total: int = 8
     # Closed cycles of realized vintages before realized coverage overrides CV.
     conformal_realized_min_cycles: int = 3
+    # Widen a model's own band when rolling-origin CV showed it covering less
+    # than 80% out of sample (interval_calibration.widen_for_cv_coverage).
+    # Used when conformal calibration is off or could not run. On by default
+    # since the multi-origin backtest (ENHANCEMENT_PLAN_VERIFICATION.md):
+    # pooled 80% coverage 0.64 -> 0.70, pinball -1%, point forecasts unchanged.
+    cv_coverage_widening_enabled: bool = True
     # Global cross-series panel model (gradient-boosted quantile regressors,
     # fit once across all line items in a version) and top-2 blending inside
     # the 1-SE selection band (inverse-MASE weights). On by default, and only
@@ -150,6 +167,44 @@ class Settings(BaseSettings):
     # can switch either off in its AnalysisProfile.
     enable_global_gbm_model: bool = True
     enable_ensemble_blending: bool = True
+    # Phase C: Chronos-2 time-series foundation model, served by the
+    # self-hosted fm-service sidecar (torch lives there, never in this
+    # image). Dark by default: it ships only after it passes the
+    # scripts/backtest_roster.py gate (Phase D). A company can opt in through
+    # its AnalysisProfile. When on, it competes through the same two-stage
+    # cost gate, paired-SE band and blending as every other model.
+    enable_foundation_models: bool = False
+    # Range blend: keep the selected model's point forecast but average its
+    # P10/P90 with Chronos-2's (interval_calibration.blend_with_foundation_range).
+    # Builds the run's Chronos-2 batch on its own, without making Chronos-2 a
+    # selection candidate (that stays enable_foundation_models); skipped on
+    # lines where Chronos-2 is itself selected or blended. On by default since
+    # the multi-origin backtest (ENHANCEMENT_PLAN_VERIFICATION.md): pinball
+    # -5.3% [-8.2, -2.9], 80% coverage 0.70 -> 0.74, points unchanged. With
+    # fm-service down a run carries on without it (circuit breaker, skip reason).
+    foundation_range_blend_enabled: bool = True
+    foundation_range_blend_weight: float = 0.5
+    # New and short lines. A short line with no global-GBM candidate (which
+    # is otherwise forced to linear) takes Chronos-2's forecast, conditioned on
+    # its sibling lines; every short line of 3+ points joins the run's
+    # Chronos-2 batch, so the others (flat average below 6 points, the
+    # linear-vs-GBM contest) keep their point and take the range blend.
+    # On since the new-line backtest (backtest_roster.py --new-lines, see
+    # ENHANCEMENT_PLAN_VERIFICATION.md): pooled MASE -13.7%, pinball -28.9%,
+    # coverage 0.57 -> 0.72; the forced-linear case alone MASE -32%.
+    foundation_short_lines_enabled: bool = True
+    # Second opinion (Phase E2): flag a line for review when its published P50
+    # sits outside Chronos-2's P10-P90 for at least half the horizon. Changes
+    # no number; needs the run's Chronos-2 batch (the range blend builds it).
+    second_opinion_enabled: bool = True
+    fm_service_url: str = "http://fm-service:8100"
+    # One HTTP call carries every line and CV origin of a run, so the
+    # timeout is per run, not per line.
+    fm_service_timeout_seconds: float = 120.0
+    # Circuit breaker: after this many consecutive failures stop calling the
+    # service for fm_circuit_reset_seconds, then let one probe through.
+    fm_circuit_failure_threshold: int = 3
+    fm_circuit_reset_seconds: float = 300.0
 
     # Context Engine
     chroma_persist_dir: str = str(Path(__file__).parent.parent / "data" / "chroma")

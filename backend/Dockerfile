@@ -4,8 +4,11 @@
 
 FROM python:3.11-slim AS base
 
-# System dependencies for Prophet, numpy, etc.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# System dependencies for Prophet, numpy, etc. `apt-get upgrade` picks up
+# Debian security fixes released after the base image was built (the CI
+# Trivy scan fails on fixable HIGH/CRITICAL OS packages).
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
     g++ \

@@ -23,16 +23,18 @@ def redis_configured() -> bool:
 
 
 def _redis():
-    if not settings.redis_url:
-        return None
-    try:
-        import redis
+    """The shared client (``app.services.redis_client``), or None.
 
-        client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
-        client.ping()
-        return client
-    except Exception as e:
-        logger.warning("Redis unavailable for job queue (%s)", e)
+    Unlike the token denylist, the queue already degrades safely without
+    Redis: when async jobs are required, enqueue reports ``sync_required``
+    and the API answers 503 instead of running work in memory. So an
+    unavailable Redis is reported as None here, not raised."""
+    from app.services.redis_client import RedisUnavailable, get_redis
+
+    try:
+        return get_redis("job queue")
+    except RedisUnavailable as e:
+        logger.warning("%s", e)
         return None
 
 

@@ -17,8 +17,17 @@ logger = logging.getLogger(__name__)
 
 # Default MAD z-score threshold (~3.5 ≈ strong outlier under normality)
 DEFAULT_MAD_Z = 3.5
-MIN_POINTS_STL = 24  # ≥2 seasonal cycles for monthly period=12
-SEASONAL_PERIOD = 12
+# STL needs at least two full seasonal cycles. The cycle length comes from the
+# active fiscal calendar (seasonal_period_length) — never a hard-coded 12.
+MIN_STL_CYCLES = 2
+
+
+def _resolve_period(seasonal_period: int | None) -> int:
+    if seasonal_period is not None and seasonal_period > 1:
+        return int(seasonal_period)
+    from app.domain.engines.base_model import seasonal_period_length
+
+    return seasonal_period_length()
 
 
 @dataclass
@@ -52,7 +61,7 @@ def detect_outliers_stl_mad(
     dates: pd.DatetimeIndex,
     *,
     mad_z: float = DEFAULT_MAD_Z,
-    seasonal_period: int = SEASONAL_PERIOD,
+    seasonal_period: int | None = None,
 ) -> OutlierCleaningResult:
     """Flag outliers on STL remainder (or demeaned series if STL unavailable)."""
     n = len(values)
@@ -72,11 +81,12 @@ def detect_outliers_stl_mad(
     method = "mad"
     max_z = float(np.max(np.abs(z_raw))) if len(z_raw) else 0.0
 
-    if not spike_idx and n >= MIN_POINTS_STL:
+    period = _resolve_period(seasonal_period)
+    if not spike_idx and n >= MIN_STL_CYCLES * period:
         try:
             from statsmodels.tsa.seasonal import STL
 
-            stl = STL(arr, period=seasonal_period, robust=True)
+            stl = STL(arr, period=period, robust=True)
             res = stl.fit()
             remainder = np.asarray(res.resid, dtype=float)
             z = _loo_mad_z_scores(remainder)
@@ -91,7 +101,7 @@ def detect_outliers_stl_mad(
         cleaned_periods=[period_labels[i] for i in outlier_idx],
         outlier_indices=outlier_idx,
         method=method,
-        details={"mad_z_threshold": mad_z, "max_abs_z": max_z},
+        details={"mad_z_threshold": mad_z, "max_abs_z": max_z, "seasonal_period": period},
     )
 
 
@@ -100,7 +110,7 @@ def winsorize_outliers(
     dates: pd.DatetimeIndex,
     *,
     mad_z: float = DEFAULT_MAD_Z,
-    seasonal_period: int = SEASONAL_PERIOD,
+    seasonal_period: int | None = None,
 ) -> OutlierCleaningResult:
     """Detect outliers then winsorize at the MAD fence (never delete points)."""
     detected = detect_outliers_stl_mad(

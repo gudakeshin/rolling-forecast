@@ -7,7 +7,7 @@ import {
 import { apiPost, apiDelete, apiGet } from '../../api/client';
 import { useAuthStore } from '../../store/authStore';
 import { useWorkspaceStore } from '../../store/workspaceStore';
-import { usePanelStore } from '../../store/panelStore';
+import { usePanelStore, useSecondaryPanelStore } from '../../store/panelStore';
 import { DataTable, downloadCsv, type DataTableColumn } from '../ui/DataTable';
 
 const NEW_COMPANY = '__new__';
@@ -233,6 +233,7 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
     let failCount = 0;
     let lastError = '';
     let ingestedActuals = false;
+    let lastDatasetId: string | null = null;
     const ingestMessages: string[] = [];
     const businessUnitValue =
       businessUnitChoice === NEW_COMPANY ? newCompanyName.trim() : businessUnitChoice;
@@ -249,6 +250,7 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
           const res = await apiPost<any>('/upload/actuals', formData);
           successCount++;
           ingestedActuals = true;
+          lastDatasetId = res.ingest?.dataset_id ?? lastDatasetId;
           ingestMessages.push(res.message || `${file.name} ingested`);
         } else {
           const formData = new FormData();
@@ -284,6 +286,11 @@ export function DocumentLibraryPanel({ data }: { data: any }) {
     if (ingestedActuals) {
       if (businessUnitChoice === NEW_COMPANY) void useWorkspaceStore.getState().hydrate();
       void refreshDatasets();
+      // Instant Chronos-2 preview beside the library (second slot), while
+      // the full baseline is generated as usual.
+      if (lastDatasetId) {
+        useSecondaryPanelStore.getState().openPanel('forecast_preview', { dataset_id: lastDatasetId });
+      }
     }
     setTimeout(() => { setUploadSuccess(null); setUploadError(null); }, 5000);
   }, [refreshDocuments, refreshDatasets, businessUnitChoice, newCompanyName]);

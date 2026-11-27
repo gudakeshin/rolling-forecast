@@ -88,6 +88,47 @@ def scope_for_user(user) -> TenantScope:
 
 _registered_factories: set[int] = set()
 
+#: Tables that carry a ``business_unit_id`` column but are deliberately NOT
+#: filtered by this net, each with its reason. ``tests/test_tenant_scope.py``
+#: fails when a mapped model has a tenant column and is neither registered
+#: below nor listed here, so a new company-owned table cannot be forgotten.
+TENANT_NET_EXEMPT_TABLES: dict[str, str] = {
+    "users": "identity rows; the login path must read a user before any scope exists",
+    "model_presets": "filtered separately below: NULL business_unit_id is the global catalog",
+    "business_unit_settings": (
+        "every read is keyed by an explicit, access-checked business_unit_id; denying in an "
+        "unscoped context would silently revert a company's forecast settings to the defaults"
+    ),
+}
+
+
+def plain_scoped_models() -> tuple:
+    """Models filtered on their own ``business_unit_id`` column."""
+    from app.models.actuals import ActualsDataset
+    from app.models.budget import BudgetVersion
+    from app.models.driver import Driver
+    from app.models.driver_input import DriverFormConfig, DriverInput
+    from app.models.forecast import ForecastVersion
+    from app.models.heuristic import LearnedHeuristic
+    from app.models.integration import IntegrationConnection
+    from app.models.kpi import KpiDefinition
+    from app.models.line_item import LineItem
+    from app.models.saved_view import SavedView
+
+    return (
+        LineItem,
+        ForecastVersion,
+        ActualsDataset,
+        Driver,
+        BudgetVersion,
+        DriverInput,
+        DriverFormConfig,
+        IntegrationConnection,
+        SavedView,
+        KpiDefinition,
+        LearnedHeuristic,
+    )
+
 
 def register(session_factory) -> None:
     """Attach the do_orm_execute listener to `session_factory`. Call once,
@@ -99,39 +140,23 @@ def register(session_factory) -> None:
     _registered_factories.add(id(session_factory))
 
     from app.models.business_unit import BusinessUnit  # noqa: F401 -- ensures mappers configured
-    from app.models.driver import Driver
-    from app.models.driver_input import DriverFormConfig, DriverInput
     from app.models.forecast import ForecastVersion
     from app.models.actuals import ActualsDataset
     from app.models.budget import BudgetVersion
-    from app.models.integration import IntegrationConnection
     from app.models.line_item import LineItem
     from app.models.model_preset import ModelPreset
-    from app.models.saved_view import SavedView
-    from app.models.kpi import KpiDefinition
     from app.models.actuals import ActualsRecord
     from app.models.anomaly_dismissal import AnomalyDismissal
     from app.models.approval import ApprovalStep
     from app.models.budget import BudgetLineItem
-    from app.models.driver import DriverDiscoveryRun, DriverLink, DriverValue
+    from app.models.driver import Driver, DriverDiscoveryRun, DriverLink, DriverValue
     from app.models.forecast import ForecastLineResult, ModelMetadata
     from app.models.fx import ForecastAccuracyRecord
     from app.models.line_item import LineItemDependency
     from app.models.override import Override
     from app.models.review_undo import ReviewUndoSnapshot
 
-    plain_scoped_models = (
-        LineItem,
-        ForecastVersion,
-        ActualsDataset,
-        Driver,
-        BudgetVersion,
-        DriverInput,
-        DriverFormConfig,
-        IntegrationConnection,
-        SavedView,
-        KpiDefinition,
-    )
+    scoped_plain = plain_scoped_models()
 
     # (child, its owning FK column, the plain scoped parent that FK points at)
     child_scoped_models = (
@@ -170,7 +195,7 @@ def register(session_factory) -> None:
         # user every company-less legacy row instead of nothing.
         bu = scope.business_unit_id if scope is not None else None
         denied = bu is None
-        for cls in plain_scoped_models:
+        for cls in scoped_plain:
             criteria = false() if denied else cls.business_unit_id == bu
             orm_execute_state.statement = orm_execute_state.statement.options(
                 with_loader_criteria(cls, criteria, include_aliases=True)
