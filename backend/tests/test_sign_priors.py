@@ -18,7 +18,7 @@ from app.services.driver_discovery import (
     expected_sign_for,
     resolve_sign_prior,
 )
-from tests.test_phase9_discovery import (
+from tests.test_driver_discovery import (
     N_PERIODS,
     _add_actuals,
     _add_driver,

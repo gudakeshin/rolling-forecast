@@ -3,7 +3,7 @@ app/api/heuristics.py) -- see migration 029_heuristic_and_memory_scoping.
 
 Two kinds of tests:
 - `run_reflection_pass`'s own business_unit_id scoping, using the
-  `db_session`/`seed_*` fixture pattern (see tests/test_phase_m3_reflection.py
+  `db_session`/`seed_*` fixture pattern (see tests/test_reflection_heuristics.py
   for the exact accuracy-record shape this mirrors).
 - The REST layer (`GET /heuristics`, promote, reject), using the
   `client`/TestClient(app) pattern (see tests/test_tenant_scope.py), since
