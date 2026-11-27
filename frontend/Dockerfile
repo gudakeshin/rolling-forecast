@@ -21,6 +21,10 @@ RUN npm run build
 # Stage 2: Serve with nginx
 FROM nginx:alpine AS production
 
+# Pick up Alpine security fixes released after the base image was built (the
+# CI Trivy scan fails on fixable HIGH/CRITICAL OS packages, e.g. libxml2).
+RUN apk upgrade --no-cache
+
 # Copy custom nginx config
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY security-headers.conf /etc/nginx/snippets/security-headers.conf
