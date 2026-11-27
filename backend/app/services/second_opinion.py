@@ -14,8 +14,9 @@ from typing import Any
 
 import numpy as np
 
-# Line flag text; generate_baseline's remediation and the review queue key on
-# this prefix.
+# Line flag text shown in remediation. The review queue and the metrics key on
+# the ``second_opinion`` entry in the line's model metadata instead: the
+# remediation text is rewritten whenever review re-runs its AI triage.
 DISAGREE_FLAG = "Models disagree"
 # Share of horizon steps outside the band at which a line is flagged.
 DISAGREE_SHARE = 0.5
@@ -92,4 +93,77 @@ def cell_view(op: dict[str, Any] | None, period: str) -> dict[str, Any] | None:
         "line_outside_share": op.get("outside_share"),
         "line_disagrees": op.get("disagree"),
         "direction": op.get("direction"),
+    }
+
+
+def disagreeing_opinions(
+    db: Any, version_id: str, line_item_ids: list[int] | None = None
+) -> dict[int, dict[str, Any]]:
+    """line_item_id -> its second opinion, for lines where the models disagree.
+
+    Read from ModelMetadata (written once at generation), not from
+    ``ai_reasoning``, which review, rescoring and the review skill rewrite.
+    """
+    from app.models.forecast import ForecastLineResult, ModelMetadata
+
+    q = (
+        db.query(ForecastLineResult.line_item_id, ModelMetadata.parameters)
+        .join(ModelMetadata, ModelMetadata.line_result_id == ForecastLineResult.id)
+        .filter(ForecastLineResult.version_id == version_id)
+    )
+    if line_item_ids is not None:
+        if not line_item_ids:
+            return {}
+        q = q.filter(ForecastLineResult.line_item_id.in_(line_item_ids))
+    out: dict[int, dict[str, Any]] = {}
+    for li_id, params in q.all():
+        op = params.get("second_opinion") if isinstance(params, dict) else None
+        if isinstance(op, dict) and op.get("disagree"):
+            out[li_id] = op
+    return out
+
+
+def review_stats(db: Any, version_id: str, line_item_ids: list[int] | None = None) -> dict[str, Any]:
+    """How the review process treated lines where the models disagree.
+
+    A line counts as flagged when any of its cells carries the flag, and as
+    reviewed when any cell was approved or rejected. ``share_of_reviews`` is
+    the plan's measure: of the lines a human has reviewed, the share that were
+    flagged. ``flagged_reviewed_share`` is how many flagged lines have been
+    looked at at all.
+    """
+    from app.models.forecast import ForecastLineResult
+
+    q = db.query(
+        ForecastLineResult.line_item_id,
+        ForecastLineResult.review_status,
+        ForecastLineResult.is_overridden,
+    ).filter(ForecastLineResult.version_id == version_id)
+    if line_item_ids is not None:
+        if not line_item_ids:
+            return _empty_stats()
+        q = q.filter(ForecastLineResult.line_item_id.in_(line_item_ids))
+    flagged = set(disagreeing_opinions(db, version_id, line_item_ids))
+    reviewed: set[int] = set()
+    overridden: set[int] = set()
+    for li_id, status, is_overridden in q.all():
+        if status in ("approved", "rejected"):
+            reviewed.add(li_id)
+        if is_overridden:
+            overridden.add(li_id)
+    both = flagged & reviewed
+    return {
+        "flagged_lines": len(flagged),
+        "reviewed_lines": len(reviewed),
+        "flagged_reviewed": len(both),
+        "flagged_overridden": len(flagged & overridden),
+        "share_of_reviews": round(len(both) / len(reviewed), 3) if reviewed else None,
+        "flagged_reviewed_share": round(len(both) / len(flagged), 3) if flagged else None,
+    }
+
+
+def _empty_stats() -> dict[str, Any]:
+    return {
+        "flagged_lines": 0, "reviewed_lines": 0, "flagged_reviewed": 0,
+        "flagged_overridden": 0, "share_of_reviews": None, "flagged_reviewed_share": None,
     }

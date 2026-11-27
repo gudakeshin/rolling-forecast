@@ -449,6 +449,13 @@ def register_all_skills() -> SkillsRegistry:
     registry.register(AutoAccuracyReportSkill())
     registry.register(DetectAnomaliesSkill())
 
+    # Phase E — foundation-model usability skills
+    from app.domain.skills.list_model_disagreements import ListModelDisagreementsSkill
+    from app.domain.skills.preview_forecast import PreviewForecastSkill
+
+    registry.register(PreviewForecastSkill())
+    registry.register(ListModelDisagreementsSkill())
+
     # Context Engine skills
     from app.domain.skills.search_context import SearchContextSkill
     from app.domain.skills.web_search import WebSearchSkill

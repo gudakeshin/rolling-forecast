@@ -27,7 +27,7 @@ router = APIRouter(prefix="/panel", tags=["panel"])
 
 from app.services.accuracy_snapshot import realized_coverage_by_line
 from app.services.interval_calibration import DEFAULT_ALPHA
-from app.services.second_opinion import DISAGREE_FLAG, cell_view
+from app.services.second_opinion import cell_view, disagreeing_opinions
 
 
 def _extract_exog_payload(parameters: dict | None) -> dict | None:
@@ -627,6 +627,10 @@ async def get_review_queue(
     """Get items that need review, sorted by materiality."""
     from app.services.permissions import line_item_scope_filter
 
+    # Second opinion (Phase E2): lines where Chronos-2 disagrees join the
+    # queue whatever their own confidence. Read from model metadata, which
+    # review's AI triage does not rewrite.
+    disagree_lines = set(disagreeing_opinions(db, version_id))
     results = (
         line_item_scope_filter(
             db.query(ForecastLineResult)
@@ -635,9 +639,7 @@ async def get_review_queue(
                 ForecastLineResult.version_id == version_id,
                 or_(
                     ForecastLineResult.confidence_level.in_(["low", "medium"]),
-                    # Second opinion (Phase E2): Chronos-2 disagrees with the
-                    # published forecast, whatever its own confidence says.
-                    ForecastLineResult.ai_reasoning.like(f"%{DISAGREE_FLAG}%"),
+                    ForecastLineResult.line_item_id.in_(disagree_lines or [-1]),
                 ),
             ),
             current_user,
@@ -659,7 +661,7 @@ async def get_review_queue(
             "confidence_level": r.confidence_level,
             "model_type": r.model_type,
             "is_overridden": r.is_overridden,
-            "models_disagree": DISAGREE_FLAG in (r.ai_reasoning or ""),
+            "models_disagree": r.line_item_id in disagree_lines,
         })
 
     return PanelDataResponse(

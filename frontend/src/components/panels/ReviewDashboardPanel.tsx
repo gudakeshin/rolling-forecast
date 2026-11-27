@@ -16,7 +16,7 @@ import { chartTheme } from '../../theme/chartTheme';
 import { downloadCsv } from '../ui/DataTable';
 import { COLORS, ChartTooltip, exogGapForItem } from './ReviewBadges';
 import { BusinessAnalysisSummary } from './ReviewBusinessSummary';
-import { type ReviewBuckets, type ReviewItem } from './ReviewDashboardTypes';
+import { type ReviewBuckets, type ReviewItem, type SecondOpinionStats } from './ReviewDashboardTypes';
 import { ReviewItemRow, previewLines } from './ReviewItemRow';
 
 interface Props {
@@ -28,7 +28,7 @@ interface Props {
       buckets: ReviewBuckets;
       confidence_trend: any[];
       category_flag_chart: any[];
-      summary: Record<string, number | boolean>;
+      summary: Record<string, number | boolean> & { second_opinion?: SecondOpinionStats };
     };
   };
   onRefresh?: () => void;
@@ -360,6 +360,14 @@ export function ReviewDashboardPanel({ data, onRefresh, focusLineItemId }: Props
             <span className="text-amber-400 font-medium">{localBuckets.needs_review.total} need review</span>,{' '}
             <span className="text-red-400 font-medium">{localBuckets.flagged.total} flagged</span>
           </p>
+          {summary.second_opinion && summary.second_opinion.flagged_lines > 0 && (
+            <p className="text-[11px] text-amber-400 mt-0.5" data-testid="second-opinion-stats">
+              Models disagree on {summary.second_opinion.flagged_lines} line
+              {summary.second_opinion.flagged_lines === 1 ? '' : 's'}; {summary.second_opinion.flagged_reviewed} reviewed
+              {summary.second_opinion.share_of_reviews != null &&
+                ` · ${Math.round(summary.second_opinion.share_of_reviews * 100)}% of reviews so far were on them`}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <button

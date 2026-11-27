@@ -19,8 +19,8 @@ parameters:
     description: Forecast version to analyze (uses active version if not specified)
   - name: method
     type: string
-    description: "Detection method: zscore (default), iqr, trend_deviation, all"
-    enum: [zscore, iqr, trend_deviation, all]
+    description: "Detection method: zscore (default), iqr, trend_deviation, stl_mad, vintage_band (actuals outside an earlier forecast's P10-P90), all"
+    enum: [zscore, iqr, trend_deviation, stl_mad, vintage_band, all]
     default: all
   - name: sensitivity
     type: string

@@ -43,3 +43,13 @@ export interface ReviewBuckets {
   flagged: { items: ReviewItem[]; total: number; description: string };
   already_reviewed: { items: ReviewItem[]; total: number; description: string };
 }
+
+/** How review has treated lines where Chronos-2 disagrees (summary.second_opinion). */
+export interface SecondOpinionStats {
+  flagged_lines: number;
+  reviewed_lines: number;
+  flagged_reviewed: number;
+  flagged_overridden: number;
+  share_of_reviews: number | null;
+  flagged_reviewed_share: number | null;
+}
