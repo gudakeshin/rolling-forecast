@@ -127,8 +127,9 @@ def test_review_queue_and_why_this_number(db_session, seed_line_items, seed_user
         confidence_score=90.0, confidence_level="high",
         ai_reasoning=f"{DISAGREE_FLAG}: the forecast is outside Chronos-2's P10-P90 in 3 of 4 periods",
     )
-    calm = ForecastLineResult(
-        id="so-calm", version_id=v.id, line_item_id=li.id, period="2026-03",
+    other = next(x for k, x in seed_line_items.items() if k != "REV-001" and not x.is_calculated)
+    calm = ForecastLineResult(  # a different line: the flag is per line
+        id="so-calm", version_id=v.id, line_item_id=other.id, period="2026-03",
         p10=95.0, p50=100.0, p90=105.0, model_type="ets",
         confidence_score=90.0, confidence_level="high", ai_reasoning="All quality checks passed",
     )

@@ -22,6 +22,7 @@ from app.services.permissions import (
     get_accessible_forecast_version,
     require_permission,
 )
+from app.services.second_opinion import review_stats as second_opinion_review_stats
 
 # Scoring lives in services.confidence; remediation stays on the skill module.
 
@@ -535,6 +536,11 @@ async def get_review_dashboard(
                 "flagged_count": len(ai_flagged_items),
                 "already_reviewed_count": len(already_reviewed_items),
                 "ai_analysis_complete": True,
+                # Second opinion (Phase E2): how review treated the lines
+                # where Chronos-2 disagrees with the published forecast.
+                "second_opinion": second_opinion_review_stats(
+                    db, version_id, sorted(line_item_groups)
+                ),
             },
         },
     )
