@@ -21,7 +21,7 @@ Deviations from the plan text are called out in **Deviation** rows.
 | 1.2 | Composes with MinT reconciliation | `test_reconciliation_restores_the_non_negative_p10_floor`, `test_mint_coherence.py` |
 | 1.2 | **Deviation:** calibration runs *before* the exog delta-method inflation, so driver uncertainty compounds on the calibrated band (the plan's stated goal) rather than being overwritten by it | `forecast_pipeline.py` comment at the calibration block |
 | 1.3 | Realized vintage coverage blended in after ≥3 closed cycles | `test_realized_coverage_corrects_the_cv_band`, `test_rescale_is_clamped_against_noisy_coverage_estimates`; `conformal_realized_min_cycles = 3` |
-| 1.4 | What-if shocks propagate uncertainty instead of restoring base bands | `test_phase6b_7::test_what_if_band_widens_by_elasticity_estimation_error`, `test_what_if_shock_moves_forecast_periods_by_fitted_beta_at_lag` |
+| 1.4 | What-if shocks propagate uncertainty instead of restoring base bands | `test_identity_decomposition_and_what_if::test_what_if_band_widens_by_elasticity_estimation_error`, `test_what_if_shock_moves_forecast_periods_by_fitted_beta_at_lag` |
 | 1.5 | Table payload carries a calibration summary; honest analyst copy | `test_forecast_export::test_forecast_table_reports_calibration_provenance`, `CalibrationBanner.test.tsx` |
 
 ## Phase 2 — Models
@@ -80,7 +80,7 @@ Deviations from the plan text are called out in **Deviation** rows.
 | Item | Criterion (plan) | Evidence |
 |---|---|---|
 | 5.1 | "Why this number?": model + runner-up, cleaning/breaks, exog admit/reject reason, reconciliation delta, override history, calibration | `test_why_this_number.py` (all seven cases) |
-| 5.2 | Driver evidence incl. rejected candidates | `test_phase9_discovery.py` (FDR, placebo, sign priors, rejects kept on the run) |
+| 5.2 | Driver evidence incl. rejected candidates | `test_driver_discovery.py` (FDR, placebo, sign priors, rejects kept on the run) |
 | 5.3 | Agent's capability text generated from the registry, not hardcoded | `test_per_company_model_gates::test_agent_model_list_is_generated_from_the_registry` (equals the registry's selectable models, excludes benchmark/edge-case models, no "4 algorithms"), `test_agent_prompt_lists_the_companys_models` (follows the company's model switches) |
 
 ## Phase 6 — Time-to-value
@@ -346,7 +346,7 @@ the base and the shocked driver path as known-future covariate, and adds
 the difference to the published P50; the band keeps its half-widths. Lines
 it cannot serve (< 12 points, no usable driver column, service down) fall
 back to the link coefficients, and the result says so.
-`app/services/foundation_what_if.py`, `test_phase6b_7.py`.
+`app/services/foundation_what_if.py`, `test_identity_decomposition_and_what_if.py`.
 
 ### E4 — Instant preview
 
@@ -416,9 +416,18 @@ report-level tracking signal already existed.
   moves accuracy within noise, so it does not pass the gate: **stays off**.
   It is the statistically correct test, and the leading candidate to re-run
   on more lines.
-- **Not done:** splitting `api/dashboard.py` and the large panels, and renaming the 23
-  `test_phase*.py` files (churn that collides with parallel sessions; do as
-  a dedicated change).
+- **Large files split, tests renamed (2026-11-27, own change).**
+  `api/dashboard.py` (3,181 lines) is the package `app/api/dashboard/`, one
+  module per panel on one shared router; `__init__` re-exports every name,
+  so imports and patches of `app.api.dashboard.<name>` are unchanged, and
+  the 17 routes match the old file in path, method and order.
+  `ForecastTablePanel` (1,688 → 530 lines), `ReviewDashboardPanel`
+  (1,631 → 655) and `AdminConsolePanel` (1,086 → 109, one component per tab
+  that loads its own data) are split into sibling modules; the types and
+  `ExogModeScoresCard` the two forecast panels each declared are now one
+  copy in `panels/shared/`. The 23 `test_phase*.py` files are named by what
+  they test (e.g. `test_phase9_discovery.py` → `test_driver_discovery.py`);
+  same 837 tests collected.
 
 ### Working-day and holiday effects (2026-11-27)
 
@@ -526,7 +535,7 @@ has no evidence, so the plan and this audit cannot drift apart.
 | 5.1.d | `test_model_selection_and_exog_surfaced_from_metadata_parameters` |
 | 5.1.e | `test_reconciliation_delta_only_shown_when_mint_actually_moved_it` |
 | 5.1.f | `test_override_history_spans_versions_for_the_same_cell`, `test_realized_coverage_aggregated_across_vintages` |
-| 5.2.a | `test_phase9_discovery.py`; `DriversPanel.tsx` shows t, adjusted p and rejected candidates |
+| 5.2.a | `test_driver_discovery.py`; `DriversPanel.tsx` shows t, adjusted p and rejected candidates |
 | 5.3.a | `test_agent_model_list_is_generated_from_the_registry`, `test_agent_prompt_lists_the_companys_models` |
 | 6.1.a | `GettingStarted.test.tsx` (`EmptyForecastState` actions by permission) |
 | 6.1.b | `GettingStarted.test.tsx` (`firstRunSteps`), e2e empty workspace |
